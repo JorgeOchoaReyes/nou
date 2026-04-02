@@ -1,8 +1,5 @@
-import { exec } from "child_process";
-import { promisify } from "util";
+import shelljs from "shelljs";
 import fs from "fs/promises";
-
-const shell = promisify(exec);
 
 export const tools = [
     {
@@ -45,8 +42,13 @@ export const tools = [
 
 export async function executeTool(name: string, args: any) {
     if (name === "run_command") {
-        const { stdout, stderr } = await shell(args.command);
-        return stdout || stderr;
+        const result = shelljs.exec(args.command, { silent: true });
+
+        if (result.code !== 0) {
+            return `Error (Exit Code ${result.code}): ${result.stderr}`;
+        }
+
+        return result.stdout;
     }
     if (name === "read_file") {
         return await fs.readFile(args.path, "utf-8");
