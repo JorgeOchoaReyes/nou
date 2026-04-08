@@ -1,21 +1,24 @@
 import ollama from "ollama";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { tools, executeTool } from "./tools/index.js";
+import { tools, executeTool } from "./tools/index.js"; 
+import { getProjectMap } from "./util/index.js";
 
 async function main() {
   p.intro(chalk.cyan("Nou CLI Started! 🌞"));
 
+  const projectMap = await getProjectMap(process.cwd());
+
   const messages: any[] = [
     {
       role: "system",
-      content: "You are a helpful coding assistant. You can run commands and read files to help the user."
+      content: `You are a coding assistant. Current directory structure:\n${projectMap}`   
     }
   ];
 
   while (true) {
     const query = await p.text({
-      message: "What can I help with?",
+      message: "What can I help you with? (Type 'exit' to quit)",
       placeholder: "",
     });
 
@@ -27,6 +30,7 @@ async function main() {
     });
 
     const s = p.spinner();
+    
     s.start("Pondering.......");
 
     const response = await ollama.chat({
@@ -35,11 +39,26 @@ async function main() {
       tools: tools
     });
 
-    s.stop("Done!");
+    s.stop("Done thinking!");
 
     if (response.message.tool_calls) {
       for (const call of response.message.tool_calls) {
         p.log.step(`Executing: ${chalk.yellow(call.function.name)}....`);
+
+        p.log.info(`With arguments: ${chalk.blue(JSON.stringify(call.function.arguments))}`);
+
+        const confirm = await p.confirm({
+          message: `Nou wants to run: ${chalk.yellow(call.function.arguments.command)}. Allow?`,
+        });
+      
+        if (!confirm || p.isCancel(confirm)) {
+          messages.push({
+            role: 'tool',
+            content: "User denied permission to run this command.",
+            name: call.function.name
+          });
+          continue; 
+        }
 
         const result = - await executeTool(call.function.name, call.function.arguments);
 
@@ -56,9 +75,9 @@ async function main() {
         messages: messages
       });
 
-      console.log(`\n${chalk.green("AI: ")} ${finalResponse.message.content}\n`);
+      console.log(`\n${chalk.green("Nou: ")} ${finalResponse.message.content}\n`);
     } else {
-      console.log(`\n${chalk.green("AI: ")} ${response.message.content}\n`);
+      console.log(`\n${chalk.green("Nou: ")} ${response.message.content}\n`);
     }
   }
   p.outro(chalk.cyan("Bye bye!"));
