@@ -1,8 +1,10 @@
 import ollama from "ollama";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { tools, executeTool } from "./tools/index.js"; 
-import { artWork, ensureProjectContext, loadPermanentContext } from "./util/index.js";
+import { tools,  } from "./src/tools/index.js"; 
+import { executeTool } from "./src/commands/index.js";
+import { artWork } from "./src/util/index.js";
+import { ensureProjectContext, loadPermanentContext } from "./src/context/index.js";
 
 async function main() {
   p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞`));
@@ -11,7 +13,6 @@ async function main() {
  
   const permContext = await loadPermanentContext();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: { role: string; content: any; name?: string }[] = [
     {
       role: "system",
@@ -51,7 +52,7 @@ async function main() {
         p.log.info(`With arguments: ${chalk.blue(JSON.stringify(call.function.arguments))}`);
 
         const confirm = await p.confirm({
-          message: `Nou wants to run: ${chalk.yellow(call.function.arguments.command)}. Allow?`,
+          message: `Nou wants to run: ${chalk.yellow(call.function.arguments)}. Allow?`,
         });
       
         if (!confirm || p.isCancel(confirm)) {
@@ -66,6 +67,7 @@ async function main() {
         const result = - await executeTool(call.function.name, call.function.arguments);
 
         messages.push(response.message);
+
         messages.push({
           role: "tool",
           content: result,
