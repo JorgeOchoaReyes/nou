@@ -1,26 +1,66 @@
+ 
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { highlight } from "cli-highlight";
-import fs from 'fs/promises';
-import path from 'path';
+import fs from "fs/promises";
+import path from "path";
+import { readFile, runCommand } from "../tools/index.js";
+import ollama from "ollama";
+import * as p from "@clack/prompts";
 
 export const sugarfy = (str: string) => {
-    return highlight(str, { language: "typescript", ignoreIllegals: true });
+  return highlight(str, { language: "typescript", ignoreIllegals: true });
 };
 
-export async function getProjectMap(dir: string, depth = 0): Promise<string> {
-  if (depth > 2) return '';
-  
-  const files = await fs.readdir(dir, { withFileTypes: true });
-  let map = '';
+export async function generateContext(contextPath: string) {
+  const s = p.spinner();
+  s.start("Analyzing project structure to create NOU.md...");
+  const dirStructure = await runCommand("dir /b");
+  const packageJson = await readFile("package.json");
+  const response = await ollama.chat({
+    model: "llama3.1",
+    messages: [{
+      role: "user",
+      content: `I am starting a new project. Based on these files: \n${dirStructure}\n\nAnd this package.json: \n${packageJson}\n\nPlease generate a NOU.md file that summarizes: 
+      1. What this project is.
+      2. Commands to build, test, and run it.
+      3. Tech stack used.
+      Output ONLY the markdown content.`
+    }]
+  });
+  await fs.writeFile(contextPath, response.message.content);
+  s.stop("NOU.md generated! Nou is now context-aware.");
+}; 
 
-  for (const file of files) {
-    if (file.name === 'node_modules' || file.name === '.git') continue;
-    
-    const indentation = '  '.repeat(depth);
-    map += `${indentation}${file.isDirectory() ? '📁' : '📄'} ${file.name}\n`;
-    
-    if (file.isDirectory()) {
-      map += await getProjectMap(path.join(dir, file.name), depth + 1);
+export async function ensureProjectContext() {
+  const contextPath = path.join(process.cwd(), "NOU.md");
+
+  try {
+    await fs.access(contextPath);
+    const nonEmpty = (await fs.readFile(contextPath, "utf-8")).trim().length > 0;
+    if (!nonEmpty) {
+      await generateContext(contextPath);
     }
+  } catch {
+    await generateContext(contextPath);
   }
-  return map;
 }
+
+export async function loadPermanentContext(): Promise<string> {
+  const contextPath = path.join(process.cwd(), "NOU.md");
+  try {
+    const content = await fs.readFile(contextPath, "utf-8");
+    return `\n\nPROJECT SPECIFIC RULES (from NOU.md):\n${content}`;
+  } catch (_err: unknown) { 
+    return "";
+  }
+}
+
+export const artWork = `
+.__   __.   ______    __    __       ______  __       __  
+|  \\ |  |  /  __  \\  |  |  |  |     /      ||  |     |  | 
+|   \\|  | |  |  |  | |  |  |  |    |  ,----'|  |     |  | 
+|  . \`  | |  |  |  | |  |  |  |    |  |     |  |     |  | 
+|  |\\   | |  \`--'  | |  \`--'  |    |  \`----.|  \`----.|  | 
+|__| \\__|  \\______/   \\______/      \\______||_______||__| 
+                                                                                                           
+`;
