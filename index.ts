@@ -2,17 +2,20 @@ import ollama from "ollama";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { tools, executeTool } from "./tools/index.js"; 
-import { getProjectMap } from "./util/index.js";
+import { artWork, ensureProjectContext, loadPermanentContext } from "./util/index.js";
 
 async function main() {
-  p.intro(chalk.cyan("Nou CLI Started! 🌞"));
+  p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞`));
+ 
+  await ensureProjectContext(); 
+ 
+  const permContext = await loadPermanentContext();
 
-  const projectMap = await getProjectMap(process.cwd());
-
-  const messages: any[] = [
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const messages: { role: string; content: any; name?: string }[] = [
     {
       role: "system",
-      content: `You are a coding assistant. Current directory structure:\n${projectMap}`   
+      content: `You are a coding assistant. Current directory structure:\n${permContext}`   
     }
   ];
 
@@ -53,7 +56,7 @@ async function main() {
       
         if (!confirm || p.isCancel(confirm)) {
           messages.push({
-            role: 'tool',
+            role: "tool",
             content: "User denied permission to run this command.",
             name: call.function.name
           });
