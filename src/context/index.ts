@@ -1,9 +1,7 @@
- 
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import { highlight } from "cli-highlight";
 import fs from "fs/promises";
 import path from "path";
-import { readFile, runCommand } from "../tools/index.js";
+import { readFile, runCommand } from "../commands/index.js";
 import ollama from "ollama";
 import * as p from "@clack/prompts";
 
@@ -50,17 +48,7 @@ export async function loadPermanentContext(): Promise<string> {
   try {
     const content = await fs.readFile(contextPath, "utf-8");
     return `\n\nPROJECT SPECIFIC RULES (from NOU.md):\n${content}`;
-  } catch (_err: unknown) { 
+  } catch (err: unknown) { 
     return "";
   }
 }
-
-export const artWork = `
-.__   __.   ______    __    __       ______  __       __  
-|  \\ |  |  /  __  \\  |  |  |  |     /      ||  |     |  | 
-|   \\|  | |  |  |  | |  |  |  |    |  ,----'|  |     |  | 
-|  . \`  | |  |  |  | |  |  |  |    |  |     |  |     |  | 
-|  |\\   | |  \`--'  | |  \`--'  |    |  \`----.|  \`----.|  | 
-|__| \\__|  \\______/   \\______/      \\______||_______||__| 
-                                                                                                           
-`;
