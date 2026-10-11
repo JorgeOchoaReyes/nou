@@ -99,3 +99,14 @@ export function changedLines(before: string, after: string): Set<number> {
   }
   return lines;
 }
+
+/** Lines added and removed, for summaries like "+12 -3". */
+export function lineCounts(before: string, after: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const part of diffLines(before.replace(/\r\n/g, "\n"), after.replace(/\r\n/g, "\n"))) {
+    if (part.added) added += part.count ?? 0;
+    else if (part.removed) removed += part.count ?? 0;
+  }
+  return { added, removed };
+}

@@ -57,6 +57,38 @@ console.log("Undo history");
   check("rewind only takes this session's turn", turn.length === 1 && turn[0]!.path === "b.txt");
   for (const cp of turn) today.undo(cp);
   check("an earlier session's edit is untouched", readFileSync("a.txt", "utf-8") === "new a\n");
+
+  const sessions = today.sessions();
+  check("sessions are listed newest first", sessions.map((s) => s.id).join() === "sessionB,sessionA");
+  check("a session's diff is its own changes", JSON.stringify(today.sessionChanges("sessionA")) === JSON.stringify([{ path: "a.txt", before: "old a\n", after: "new a\n", isNew: false }]));
+  check("a change undone in the same session nets out", today.sessionChanges("sessionB").length === 0);
+  today.record({ path: "n.txt", before: null, after: "one\n", source: "nou", turn: "sessionC:1" });
+  today.record({ path: "n.txt", before: "one\n", after: "two\n", source: "you", turn: "sessionC:2" });
+  const created = today.sessionChanges("sessionC");
+  check("several edits to a file combine into one diff", created.length === 1 && created[0]!.isNew && created[0]!.before === "" && created[0]!.after === "two\n");
+}
+
+console.log("Reusing Claude Code and Codex config");
+{
+  const home = os.homedir();
+  mkdirSync(path.join(home, ".claude"), { recursive: true });
+  writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({ model: "opus", env: { ANTHROPIC_API_KEY: "sk-ant-test", ANTHROPIC_MODEL: "claude-sonnet-5-5" } }));
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  writeFileSync(path.join(home, ".codex", "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-codex-test" }));
+  writeFileSync(path.join(home, ".codex", "config.toml"), 'model = "gpt-5-codex"\n\n[profiles.fast]\nmodel = "gpt-5"\n');
+  const saved = { a: process.env.ANTHROPIC_API_KEY, t: process.env.ANTHROPIC_AUTH_TOKEN, o: process.env.OPENAI_API_KEY };
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  process.env.OPENAI_API_KEY = "sk-mine";
+  const { borrowToolConfig } = await import("../src/setup/index.js");
+  const borrowed = borrowToolConfig();
+  check("Claude Code's API key is used when none is set", process.env.ANTHROPIC_API_KEY === "sk-ant-test" && borrowed.some((b) => b.tool === "Claude Code"));
+  check("only a full Claude model id is taken", borrowed.find((b) => b.tool === "Claude Code")?.model === "claude-sonnet-5-5");
+  check("your own OpenAI key wins over Codex's", process.env.OPENAI_API_KEY === "sk-mine" && !borrowed.some((b) => b.tool === "Codex"));
+  for (const [name, value] of [["ANTHROPIC_API_KEY", saved.a], ["ANTHROPIC_AUTH_TOKEN", saved.t], ["OPENAI_API_KEY", saved.o]] as const) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 }
 
 console.log("Plugin trust");

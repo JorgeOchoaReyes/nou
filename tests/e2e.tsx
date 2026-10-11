@@ -83,6 +83,16 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press("p", 200);
   await press("u", 200);
   check("u with nothing to undo says so", frame().includes("Nothing of Nou"));
+  await press(KEY.esc, 150);
+  await type("/diff");
+  await press(KEY.enter, 600);
+  check("/diff lists this session's changes", frame().includes("Changes in this session") && frame().includes("a.ts  +1 -1"));
+  check("/diff opens the session diff", frame().includes("THIS SESSION"));
+  await press(KEY.esc, 150); // closes the diff
+  await press(KEY.esc, 150); // back to the chat
+  await type("/sessions");
+  await press(KEY.enter, 400);
+  check("/sessions lists sessions", frame().includes("(this session)"));
   await press(KEY.ctrlC, 150);
   check("first Ctrl+C asks to press again", frame().includes("Press again to quit"));
   check("version is shown in the header", /NOU v\d+\.\d+\.\d+/.test(frame()));

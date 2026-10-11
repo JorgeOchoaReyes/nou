@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { applyPatch, structuredPatch } from "diff";
 import { NOU_HOME } from "../config/index.js";
+import type { FileChange } from "../commands/index.js";
 
 /** One file change. `null` content means the file didn't exist (before) or was removed (after). */
 export type Checkpoint = {
@@ -18,6 +19,11 @@ export type Checkpoint = {
 };
 
 export type UndoResult = { ok: true; path: string; merged: boolean } | { ok: false; path: string; reason: string };
+
+export type SessionSummary = { id: string; start: number; end: number; files: string[] };
+
+/** "<session>:<turn>" -> session id (null for older entries that stored a bare turn number). */
+const sessionOf = (turn: string | number) => (typeof turn === "string" && turn.includes(":") ? turn.slice(0, turn.lastIndexOf(":")) : null);
 
 const MAX_CHECKPOINTS = 300;
 const MAX_FILE_BYTES = 1_000_000;
@@ -72,6 +78,36 @@ export class Timeline {
     const last = this.lastNouChange();
     if (!last) return [];
     return this.items.filter((c) => c.source === "nou" && !c.undone && c.turn === last.turn).reverse();
+  }
+
+  /** Sessions that changed files, newest first. Older history entries without a session id are skipped. */
+  sessions(): SessionSummary[] {
+    const byId = new Map<string, SessionSummary>();
+    for (const c of this.items) {
+      const id = sessionOf(c.turn);
+      if (!id) continue;
+      const s = byId.get(id) ?? { id, start: c.time, end: c.time, files: [] };
+      s.end = c.time;
+      if (!s.files.includes(c.path)) s.files.push(c.path);
+      byId.set(id, s);
+    }
+    return [...byId.values()].reverse();
+  }
+
+  /**
+   * The net change to each file over one session (yours and Nou's, undos included): from the file as it
+   * was before the session's first change to it, to after its last. Files that ended up unchanged are left out.
+   */
+  sessionChanges(session: string): FileChange[] {
+    const byPath = new Map<string, { before: string | null; after: string | null }>();
+    for (const c of this.items) {
+      if (sessionOf(c.turn) !== session) continue;
+      const seen = byPath.get(c.path);
+      byPath.set(c.path, { before: seen ? seen.before : c.before, after: c.after });
+    }
+    return [...byPath]
+      .filter(([, { before, after }]) => before !== after)
+      .map(([file, { before, after }]) => ({ path: file, before: before ?? "", after: after ?? "", isNew: before === null }));
   }
 
   /**
