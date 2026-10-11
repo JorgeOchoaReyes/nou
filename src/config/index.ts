@@ -8,6 +8,9 @@ const CONFIG_PATH = path.join(NOU_HOME, "config.json");
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+export const AUTO_SAVE = ["delay", "focus", "off"] as const;
+export type AutoSave = (typeof AUTO_SAVE)[number];
+
 export type Settings = {
   /** provider:model, e.g. "ollama:qwen3:8b". Empty means the built-in default. */
   model: string;
@@ -21,6 +24,8 @@ export type Settings = {
   autoApproveCommands: boolean;
   /** Give the model the git branch/status/log and git tools. */
   gitContext: boolean;
+  /** Editor auto-save: shortly after you stop typing, when you leave the editor, or never. */
+  autoSave: AutoSave;
   /** Plugin id -> enabled. Plugins are off until enabled here. */
   plugins: Record<string, boolean>;
 };
@@ -32,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoApproveEdits: false,
   autoApproveCommands: false,
   gitContext: true,
+  autoSave: "delay",
   plugins: {},
 };
 

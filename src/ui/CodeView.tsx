@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { FileChange } from "../commands/index.js";
+import type { Diagnostic } from "../diagnostics/index.js";
+import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
 import { highlightLines, sideBySide } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
@@ -19,15 +21,28 @@ type Props = {
   pending: boolean;
   /** Line numbers to flag in the gutter (recent edits). */
   marked: Set<number>;
+  /** Problems in this file, shown in the gutter and at the end of their line. */
+  problems: Diagnostic[];
+  /** Scroll so this line is in view (nonce lets the same line be requested twice). */
+  focusLine: { line: number; nonce: number } | null;
+  /** Bumped when a syntax grammar finishes loading, to re-highlight. */
+  syntaxVersion: number;
+  /** A one-line note for the problems count, e.g. "+2 problems" on a proposed edit. */
+  diffNote?: string | null;
   onViewport(top: number, bottom: number): void;
 };
 
-export function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, onViewport }: Props) {
+export function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, onViewport }: Props) {
   const [top, setTop] = useState(0);
   const rows = Math.max(1, height - 3);
   const inner = width - 2;
 
-  const lines = useMemo(() => (filePath ? highlightLines(filePath, content) : []), [filePath, content]);
+  const lines = useMemo(() => (filePath ? highlightLines(filePath, content) : []), [filePath, content, syntaxVersion]);
+  const problemsByLine = useMemo(() => {
+    const map = new Map<number, Diagnostic[]>();
+    for (const d of problems) map.set(d.line, [...(map.get(d.line) ?? []), d]);
+    return map;
+  }, [problems]);
   const diffRows = useMemo(() => (diff ? sideBySide(diff.before, diff.after) : []), [diff]);
   const total = diff ? diffRows.length : lines.length;
 
@@ -38,6 +53,10 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
       : marked.size ? Math.min(...marked) - 1 : 0;
     setTop(Math.max(0, first - 3));
   }, [filePath, diff, diffRows, marked]);
+
+  useEffect(() => {
+    if (focusLine && !diff) setTop(Math.max(0, focusLine.line - Math.floor(rows / 3)));
+  }, [focusLine]);
 
   const maxTop = Math.max(0, total - rows);
   const start = Math.min(top, maxTop);
@@ -86,6 +105,7 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
         {" "}<Text color={color}>{icon}</Text> {diff.path}{"  "}
         <Text backgroundColor={pending ? C.yellow : C.accent2} color="black">{pending ? (diff.isNew ? " NEW FILE " : " PROPOSED ") : ` ${diffLabel.toUpperCase()} `}</Text>
         {"  "}<Text color={C.green}>+{added}</Text> <Text color={C.red}>-{removed}</Text>
+        {diffNote ? <Text color={diffNote.startsWith("✓") ? C.green : C.red}>{"  "}{diffNote}</Text> : null}
         <Text color={C.dim}>{pending ? "   y accept · n reject" : "   n/N next/prev change"}{scroll}</Text>
       </>
     );
@@ -132,9 +152,13 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
 
   const gutter = String(lines.length).length;
   const { icon, color } = fileIcon(filePath);
+  const errorCount = problems.filter((d) => d.severity === "error").length;
+  const warningCount = problems.filter((d) => d.severity === "warning").length;
   const title = (
     <>
       {" "}<Text color={color}>{icon}</Text> {filePath}
+      {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
+      {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
       <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused ? "   e edit · v diff" : ""}</Text>
     </>
   );
@@ -144,11 +168,15 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
         {lines.slice(start, start + rows).map((line, i) => {
           const n = start + i + 1;
           const isMarked = marked.has(n);
+          const here = problemsByLine.get(n);
+          const worst = here?.[0];
+          const style = worst ? SEVERITY_STYLE[worst.severity] : null;
           return (
             <Text key={n} wrap="truncate-end">
-              <Text color={isMarked ? C.green : C.dim}>{String(n).padStart(gutter)}</Text>
-              <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>
+              <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
+              {style ? <Text color={style.color}>{style.icon}</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
               {line || " "}
+              {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
             </Text>
           );
         })}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { EFFORTS, type Settings as SettingsType } from "../config/index.js";
-import { PLUGIN_DIRS, type PluginEntry } from "../plugins/index.js";
+import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/index.js";
+import { PLUGIN_DIRS, isEnabled, type PluginEntry } from "../plugins/index.js";
+import { currentVersion } from "../update/index.js";
 import { describe, providers, type ModelChoice } from "../providers/index.js";
 import { C, SPINNER } from "./theme.js";
 
@@ -25,6 +26,7 @@ type Tab = (typeof TABS)[number];
 type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boolean };
 const PREFS: Pref[] = [
   { key: "effort", label: "Reasoning effort", help: "How hard Claude thinks (low → max). Higher is smarter but slower and pricier." },
+  { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
   { key: "followMode", label: "Follow mode on start", help: "The code view jumps to files Nou reads and edits." },
   { key: "gitContext", label: "Git context", help: "Give the model your branch, changes and commits, plus git tools." },
   { key: "autoApproveEdits", label: "Auto-approve edits", help: "Apply file edits without asking (diffs are still shown).", warn: true },
@@ -97,15 +99,17 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
       }
     } else if (tab === "Preferences" && (key.return || input === " " || key.leftArrow || key.rightArrow)) {
       const pref = PREFS[row]!;
+      const step = key.leftArrow ? -1 : 1;
       if (pref.key === "effort") {
-        const step = key.leftArrow ? -1 : 1;
         onChange({ effort: EFFORTS[(EFFORTS.indexOf(settings.effort) + step + EFFORTS.length) % EFFORTS.length]! });
+      } else if (pref.key === "autoSave") {
+        onChange({ autoSave: AUTO_SAVE[(AUTO_SAVE.indexOf(settings.autoSave) + step + AUTO_SAVE.length) % AUTO_SAVE.length]! });
       } else {
         onChange({ [pref.key]: !settings[pref.key] } as Partial<SettingsType>);
       }
     } else if (tab === "Plugins") {
       if (input === "r") onRescanPlugins();
-      else if ((key.return || input === " ") && plugins[row]) onTogglePlugin(plugins[row].id, !settings.plugins[plugins[row].id]);
+      else if ((key.return || input === " ") && plugins[row]) onTogglePlugin(plugins[row].id, !isEnabled(plugins[row], settings.plugins));
     }
   });
 
@@ -195,8 +199,8 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
                 <Text {...(selected ? { backgroundColor: C.panel } : {})}>
                   <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
                   <Text color={C.text} bold={selected}>{pref.label.padEnd(26)}</Text>
-                  {pref.key === "effort"
-                    ? <Text>{EFFORTS.map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
+                  {pref.key === "effort" || pref.key === "autoSave"
+                    ? <Text>{(pref.key === "effort" ? EFFORTS : AUTO_SAVE).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
                     : toggle(value as boolean, pref.warn)}
                 </Text>
                 <Text color={C.dim}>    {pref.help}</Text>
@@ -209,40 +213,40 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
 
     return (
       <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
-        {plugins.length === 0 ? (
-          <>
-            <Text color={C.text}>No plugins found.</Text>
-            <Text> </Text>
-            <Text color={C.dim}>Drop a .js/.mjs/.ts file (or a folder with index.*) into one of:</Text>
-            {PLUGIN_DIRS.map((d) => <Text key={d.dir} color={C.cyan}>  {d.dir}  <Text color={C.dim}>({d.scope})</Text></Text>)}
-            <Text> </Text>
-            <Text color={C.dim}>See examples/plugins/word-count.mjs for the shape. Press r to rescan.</Text>
-          </>
-        ) : plugins.map((p, i) => {
+        {plugins.map((p, i) => {
           const selected = i === row;
-          const enabled = !!settings.plugins[p.id];
+          const enabled = isEnabled(p, settings.plugins);
+          const parts = p.plugin
+            ? [
+              (p.plugin.tools ?? []).length && `${p.plugin.tools!.length} tools`,
+              (p.plugin.commands ?? []).length && `${p.plugin.commands!.length} commands`,
+              (p.plugin.diagnostics ?? []).length && "checker",
+            ].filter(Boolean)
+            : [];
           return (
-            <Box key={p.id} flexDirection="column" marginBottom={1}>
+            <Box key={p.id} flexDirection="column">
               <Text {...(selected ? { backgroundColor: C.panel } : {})}>
                 <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
                 {toggle(enabled)}
                 <Text color={C.text} bold> {p.plugin?.name ?? p.id}</Text>
-                <Text color={C.dim}> {p.plugin?.version ? `v${p.plugin.version} · ` : ""}{p.scope}</Text>
+                <Text color={C.dim}> {p.plugin?.version ? `v${p.plugin.version} · ` : ""}{p.scope}{parts.length ? ` · ${parts.join(", ")}` : ""}</Text>
               </Text>
               {p.error
-                ? <Text color={C.red}>    ✖ {p.error}</Text>
-                : <Text color={C.dim}>    {p.plugin?.description ?? (enabled ? "" : "Enable to load it.")}
-                  {p.plugin ? `  [${(p.plugin.tools ?? []).length} tools, ${(p.plugin.commands ?? []).length} commands]` : ""}</Text>}
+                ? <Text color={C.red} wrap="truncate-end">    ✖ {p.error}</Text>
+                : <Text color={C.dim} wrap="truncate-end">    {p.plugin?.description ?? (enabled ? "" : "Enable to load it.")}</Text>}
             </Box>
           );
         })}
+        <Text> </Text>
+        <Text color={C.dim} wrap="truncate-end">Add your own: drop a .js/.mjs file into {PLUGIN_DIRS.map((d) => d.dir).join(" or ")}, then press r.</Text>
+        <Text color={C.dim} wrap="truncate-end">Example: examples/plugins/word-count.mjs in the Nou repo.</Text>
       </Box>
     );
   };
 
   const hints = tab === "Model"
     ? column === "models" ? "↑↓ choose · Enter use model · ← providers" : "↑↓ provider · Enter/→ pick a model"
-    : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change effort" : "↑↓ move · Enter toggle · r rescan";
+    : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1}>
@@ -252,6 +256,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
           <Text key={t} {...(t === tab ? { backgroundColor: C.accent2, color: "black" } : { color: C.dim })} bold={t === tab}>{` ${t} `}</Text>
         ))}
         <Text color={C.dim}>   current: </Text><Text color={C.green}>{describe(choice)}</Text>
+        <Text color={C.dim}>   nou v{currentVersion()}</Text>
       </Text>
       <Text> </Text>
       {body()}

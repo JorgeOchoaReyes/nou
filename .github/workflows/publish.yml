@@ -28,6 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm test
 
       - name: Use the release tag as the version
         if: github.event_name == 'release'

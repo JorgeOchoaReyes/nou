@@ -40,8 +40,10 @@ export interface AgentHooks {
   onStream(partial: string): void;
   onBusy(label: string | null): void;
   onRead(path: string): void;
-  onChange(change: FileChange, status: ChangeStatus): void;
+  onChange(change: FileChange, status: ChangeStatus, turn: number): void;
   approve(request: ApprovalRequest): Promise<boolean>;
+  /** After an edit is applied: problems it introduced, reported back to the model so it can fix them. */
+  checkChange?(change: FileChange): Promise<string | null>;
 }
 
 export function buildSystemPrompt(permContext: string, extras: string[] = []): string {
@@ -71,6 +73,9 @@ export class Agent {
   private controller: AbortController | null = null;
   private extraTools: ExtraTool[] = [];
   private effort: string | undefined;
+  private notes: string[] = [];
+  /** Increments per user message; tags changes so a whole turn can be rewound. */
+  turn = 0;
 
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
 
@@ -91,6 +96,12 @@ export class Agent {
 
   clear() {
     this.messages = [];
+    this.notes = [];
+  }
+
+  /** Something the model should know before the next message (e.g. the user undid its edit). */
+  note(text: string) {
+    this.notes.push(text);
   }
 
   cancel() {
@@ -99,7 +110,10 @@ export class Agent {
 
   /** `context` (what the user is looking at) is sent to the model but not shown in the chat. */
   async send(text: string, context?: string) {
-    this.messages.push({ role: "user", content: context ? `${text}\n\n${context}` : text });
+    this.turn++;
+    const notes = this.notes.length ? `${this.notes.map((n) => `[Note: ${n}]`).join("\n")}\n\n` : "";
+    this.notes = [];
+    this.messages.push({ role: "user", content: `${notes}${text}${context ? `\n\n${context}` : ""}` });
     this.controller = new AbortController();
     const { signal } = this.controller;
     try {
@@ -233,16 +247,20 @@ export class Agent {
   }
 
   private async reviewChange(change: FileChange): Promise<string> {
-    this.hooks.onChange(change, "pending");
+    this.hooks.onChange(change, "pending", this.turn);
     const ok = await this.hooks.approve({ kind: "change", change });
     if (!ok) {
-      this.hooks.onChange(change, "rejected");
+      this.hooks.onChange(change, "rejected", this.turn);
       this.hooks.onEntry({ kind: "tool", text: `Rejected edit to ${change.path}` });
       return "User rejected this change. Ask them what they would like instead.";
     }
     const result = await applyChange(change);
-    this.hooks.onChange(change, "applied");
+    this.hooks.onChange(change, "applied", this.turn);
     this.hooks.onEntry({ kind: "tool", text: result });
-    return result;
+    if (result.startsWith("Failed")) return result;
+    this.hooks.onBusy(`Checking ${change.path} for problems...`);
+    const problems = await this.hooks.checkChange?.(change).catch(() => null);
+    if (problems) this.hooks.onEntry({ kind: "error", text: `New problems in ${change.path}:\n${problems}` });
+    return problems ? `${result}\n\nThis edit introduced problems; fix them:\n${problems}` : result;
   }
 }

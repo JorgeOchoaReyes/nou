@@ -58,17 +58,19 @@ const code = COLS - tree - chat;
 
 const ansi = renderToString(
   <Box flexDirection="column" width={COLS}>
-    <Header width={COLS} branch="master" changes={git.size} model="anthropic:claude-opus-5-5" local={false} busy={null} />
+    <Header width={COLS} branch="master" changes={git.size} model="anthropic:claude-opus-5-5" local={false} busy={null} update={null} />
     <Box flexDirection="row">
-      <FileTree width={tree} height={height} focused={false} openFile={file} reveal={file} version={0} changed={new Set()} git={git} onOpen={() => {}} onHover={() => {}} />
+      <FileTree width={tree} height={height} focused={false} openFile={file} reveal={file} version={0} changed={new Set()} git={git} problemCounts={new Map([["src/ui/Editor.tsx", { errors: 0, warnings: 2 }], ["index.ts", { errors: 1, warnings: 0 }]])} onOpen={() => {}} onHover={() => {}} />
       <CodeView width={code} height={height} focused={false} filePath={file} content={before}
-        diff={{ path: file, before, after, isNew: false }} diffLabel="" pending={true} marked={new Set()} onViewport={() => {}} />
+        diff={{ path: file, before, after, isNew: false }} diffLabel="" pending={true} marked={new Set()} problems={[]} focusLine={null} syntaxVersion={0} diffNote="✓ no new problems" onViewport={() => {}} />
       <Chat width={chat} height={height} focused={true} entries={entries} streaming="" busy={null}
         approval={{ kind: "change", change: { path: file, before, after, isNew: false } }} contextChip={`${file}:15-22`} onSubmit={() => {}} />
     </Box>
     <Text>
       <Text backgroundColor={C.yellow} color="black" bold> APPROVE </Text>
       <Text backgroundColor={C.panel} color={C.green}> ◉ follow </Text>
+      <Text backgroundColor={C.panel} color={C.red}> ✖ 1</Text>
+      <Text backgroundColor={C.panel} color={C.yellow}> ▲ 2 </Text>
       <Text color={C.dim}>  y accept · n reject · Esc stop</Text>
     </Text>
   </Box>,

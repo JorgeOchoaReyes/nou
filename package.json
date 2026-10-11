@@ -1,6 +1,6 @@
 {
   "name": "nou-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nou: an IDE-style AI coding assistant for your terminal. Local (Ollama, LM Studio) and cloud (Claude, OpenAI, Gemini...) models, live diffs, git-aware, built-in editor.",
   "type": "module",
   "bin": {
@@ -16,12 +16,13 @@
   },
   "scripts": {
     "dev": "npx tsx index.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-grammars.mjs",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p .",
     "lint": "eslint index.ts src",
     "prepublishOnly": "npm run build",
-    "screenshot": "node -e \"process.env.FORCE_COLOR='3';require('child_process').execSync('npx tsx scripts/screenshot.tsx',{stdio:'inherit'})\""
+    "screenshot": "node -e \"process.env.FORCE_COLOR='3';require('child_process').execSync('npx tsx scripts/screenshot.tsx',{stdio:'inherit'})\"",
+    "test": "tsx tests/e2e.tsx"
   },
   "repository": {
     "type": "git",
@@ -51,6 +52,7 @@
     "ollama": "^0.6.3",
     "openai": "^7.32.0",
     "react": "^19.3.0",
+    "web-tree-sitter": "0.25.10",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -59,7 +61,9 @@
     "@types/react": "^19.3.0",
     "eslint": "^10.2.0",
     "globals": "^17.4.0",
+    "ink-testing-library": "^4.0.0",
     "jiti": "^2.6.1",
+    "tree-sitter-wasms": "0.1.13",
     "tsx": "^4.23.15",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1"

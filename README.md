@@ -48,7 +48,12 @@ Needs **Node 20.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | --- | --- |
 | 🗂️ **File explorer** | Browse your project with file icons and git status (`M` modified, `?` new). Press <kbd>c</kbd> to see only changed files. |
 | 🔀 **Live diffs** | Every edit Nou proposes shows up side by side. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
-| ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself: <kbd>Ctrl</kbd>+<kbd>S</kbd> save, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo. |
+| ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself, with undo/redo and **auto-save**. |
+| ↶ **Undo anything** | Every change, Nou's or yours, is recorded. <kbd>u</kbd> undoes Nou's last edit, `/rewind` undoes its whole last turn, and your own later edits are kept. |
+| 🩺 **Problems, live** | Syntax errors instantly, plus ESLint, TypeScript, Ruff and language servers when your project has them. Shown in the gutter, inline, and in a <kbd>p</kbd> Problems panel. |
+| 🤖 **Self-correcting** | Nou checks its own edits: you see "⚠ +1 problem" *before* approving, and any problems it introduced are fed back so it fixes them. |
+| 🎨 **Real syntax highlighting** | tree-sitter parsing for 14 languages (TS, JS, Python, Go, Rust, Java, C, JSON, YAML…). |
+| 🧭 **Code intelligence** | <kbd>Ctrl</kbd>+<kbd>K</kbd> hover info and <kbd>Ctrl</kbd>+<kbd>G</kbd> go-to-definition via language servers (typescript-language-server, pyright, rust-analyzer, gopls, clangd). |
 | 👀 **Knows what you're looking at** | The open file, visible lines, your cursor and unsaved edits ride along with each message. "Fix this function" just works. |
 | 🌿 **Git aware** | Sees your branch, uncommitted changes and recent commits, and can diff on its own. Press <kbd>v</kbd> to diff any file against `HEAD`. |
 | 🔌 **Any model** | Local (Ollama, LM Studio, llama.cpp) or cloud (Claude, OpenAI, Gemini, OpenRouter, Groq, DeepSeek). Switch mid-conversation. |
@@ -70,15 +75,18 @@ Every change is reviewed like a code review:
 | --- | --- |
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file |
-| <kbd>e</kbd> | edit the open file (<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Esc</kbd> close) |
+| <kbd>e</kbd> | edit the open file (<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>K</kbd> info · <kbd>Ctrl</kbd>+<kbd>G</kbd> definition · <kbd>Esc</kbd> close) |
+| <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
+| <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD` (or Nou's last edit) · <kbd>n</kbd>/<kbd>N</kbd> jump between changes |
 | <kbd>c</kbd> | in the file tree: show only changed files |
 | <kbd>f</kbd> | follow mode: jump to files as Nou reads and edits them |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command |
 | <kbd>Esc</kbd> | stop Nou · close a diff · back to chat |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/clear` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/undo` · `/rewind` · `/history` · `/problems` · `/clear` · `/help`
 
 ## 🧠 Models
 
@@ -102,15 +110,31 @@ Pick one in <kbd>s</kbd> settings, with `/model anthropic` or `/model ollama:qwe
 
 </details>
 
+## 🔄 Updating
+
+Nou checks npm once a day and offers to update when a new version is out (one keypress, then it restarts itself). Or run it yourself:
+
+```bash
+nou update          # or: npm install -g nou-cli@latest
+nou --version
+```
+
+Set `NOU_NO_UPDATE_CHECK=1` to turn the check off.
+
 ## 🧩 Plugins *(early)*
 
-Drop a `.js` / `.mjs` file into `.nou/plugins/` (this project) or `~/.nou/plugins/` (everywhere), then switch it on in <kbd>s</kbd> settings → **Plugins**. A plugin can give the model new tools, add slash commands, and add to the system prompt.
+Drop a `.js` / `.mjs` file into `.nou/plugins/` (this project) or `~/.nou/plugins/` (everywhere), then switch it on in <kbd>s</kbd> settings → **Plugins**. A plugin can give the model new tools, add slash commands, add to the system prompt, and add **checkers** (linters) whose problems show in the editor. The built-in ESLint, TypeScript, Ruff, syntax and language-server checkers are plugins too, so you can switch any of them off.
 
 ```js
 export default {
   name: "word-count",
   tools: [{ readOnly: true, definition: { name: "word_count", /* ... */ }, run: (args) => "42 words" }],
   commands: [{ name: "wc", description: "Count words", run: (args) => "42 words" }],
+  diagnostics: [{
+    id: "todo", name: "TODOs", checksText: true, matches: (f) => f.endsWith(".ts"), available: () => true,
+    check: async (file, text) => text.split("\n").flatMap((l, i) => l.includes("TODO")
+      ? [{ file, line: i + 1, col: 1, severity: "info", message: "TODO left here", source: "todo" }] : []),
+  }],
 };
 ```
 
@@ -124,7 +148,8 @@ Full example: [examples/plugins/word-count.mjs](examples/plugins/word-count.mjs)
 ```bash
 npm install
 npm run dev          # run from source
-npm run build        # compile to dist/
+npm run build        # compile to dist/ (and copy the syntax grammars)
+npm test             # end-to-end tests: drives the real UI with simulated keys
 npm run screenshot   # regenerate docs/screenshot.svg
 ```
 

@@ -14,6 +14,8 @@ type Props = {
   streaming: string;
   busy: string | null;
   approval: ApprovalRequest | null;
+  /** Problems a proposed edit would add, shown with the approval prompt. */
+  approvalNote?: string | null;
   /** Short description of the editor context sent with the next message, e.g. "src/a.ts:10-40". */
   contextChip: string | null;
   onSubmit(text: string): void;
@@ -23,7 +25,7 @@ type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?:
 
 export const COMMANDS = ["/model", "/models", "/settings", "/clear", "/help"];
 
-export function Chat({ width, height, focused, entries, streaming, busy, approval, contextChip, onSubmit }: Props) {
+export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, onSubmit }: Props) {
   const [input, setInput] = useState("");
   const [scrollBack, setScrollBack] = useState(0);
   const { frame } = useAnimation({ interval: 80, isActive: !!busy });
@@ -69,6 +71,10 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     footer.push({ text: " [y] allow   [n] deny   [Esc] stop", color: C.yellow });
   } else if (approval?.kind === "change") {
     footer.push({ text: `✎ Review ${approval.change.path} →`, color: C.yellow, bold: true });
+    if (approvalNote) {
+      footer.push({ text: "⚠ This edit adds problems:", color: C.red, bold: true });
+      for (const line of wrap(approvalNote, inner - 2).slice(0, 6)) footer.push({ text: ` ${line}`, color: C.red });
+    }
     footer.push({ text: " [y] accept   [n] reject   [Esc] stop", color: C.yellow });
   } else if (busy) {
     footer.push({ text: `${SPINNER[frame % SPINNER.length]} ${busy}`, color: C.accent2 });
