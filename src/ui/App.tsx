@@ -16,6 +16,7 @@ import { onGrammarLoaded, preload } from "../syntax/index.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
 import { changedLines } from "./text.js";
 import { ProblemsView } from "./ProblemsView.js";
+import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
@@ -93,6 +94,10 @@ export function App({ initialModel, permContext }: Props) {
   const [pendingNote, setPendingNote] = useState<{ short: string; detail: string | null } | null>(null);
   const [exitArmed, setExitArmed] = useState(false);
   const [update, setUpdate] = useState<string | null>(null);
+  const [wheel, setWheel] = useState<{ pane: Focus; dir: number; nonce: number } | null>(null);
+  const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
+  // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
+  const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
   diagnosticsRef.current ??= new DiagnosticsManager();
   const diagnostics = diagnosticsRef.current;
@@ -327,6 +332,23 @@ export function App({ initialModel, permContext }: Props) {
     setExitArmed(true);
     setTimeout(() => setExitArmed(false), 2000);
   };
+
+  // Mouse: the wheel scrolls whatever pane is under the pointer; a click focuses that pane
+  // (and in the file tree, opens the clicked file).
+  useMouse((event) => {
+    if (view !== "main" || quickOpen) return;
+    const { treeWidth, codeWidth, paneHeight } = layout.current;
+    if (event.y < 1 || event.y > paneHeight) return; // header or status bar
+    const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
+    if (event.kind === "wheel") {
+      setWheel((w) => ({ pane, dir: event.dir, nonce: (w?.nonce ?? 0) + 1 }));
+      return;
+    }
+    if (approval) return;
+    setFocus(pane);
+    // Rows start under the pane's top border (y=1) and title (y=2).
+    if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
+  }, settings.mouse);
 
   // Ctrl+C: stop Nou if it's working; otherwise press twice to quit.
   useInput((input, key) => {
@@ -626,6 +648,8 @@ ${snippet}
   const treeWidth = Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(20, columns - treeWidth - chatWidth);
+  layout.current = { treeWidth, codeWidth, paneHeight: height };
+  const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const edited = new Set([...changes].filter(([, c]) => c.status === "applied").map(([p]) => p));
   const fileProblems = openFile ? diagnostics.get(openFile) : [];
   const totals = diagnostics.counts();
@@ -644,7 +668,7 @@ ${snippet}
     : showEditor && focus === "code"
       ? `Ctrl+S save${settings.autoSave === "off" ? "" : " (auto-save on)"} · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G definition · Esc close`
       : focus === "chat"
-        ? busy ? "Esc stop · Tab switch pane" : "Enter send · / commands · Ctrl+P find file · Tab switch pane"
+        ? busy ? "Esc stop · Shift+↑↓ scroll chat · Tab switch pane" : "Enter send · Shift+↑↓ / PgUp scroll · / commands · Ctrl+P find file · Tab switch pane"
         : focus === "tree"
           ? "↑↓ move · Enter open · c changes · e edit · p problems · u undo · Ctrl+P find · s settings"
           : diff ? "n/N next/prev change · v cycle diff · Esc close diff" : "↑↓ scroll · e edit · v diff · p problems · u undo · s settings";
@@ -663,6 +687,8 @@ ${snippet}
           changed={edited}
           git={git}
           problemCounts={diagnostics.fileCounts()}
+          wheel={wheelFor("tree")}
+          click={treeClick}
           onOpen={(filePath) => {
             open(filePath);
             setFocus("code");
@@ -676,6 +702,7 @@ ${snippet}
             focused={focus === "code" && !approval}
             problems={diagnostics.all()}
             checking={checking}
+            wheel={wheelFor("code")}
             onJump={(file, line) => openAt(file, line)}
             onClose={() => setCodePanel("code")}
           />
@@ -692,6 +719,7 @@ ${snippet}
             problems={fileProblems}
             autoSave={settings.autoSave}
             syntaxVersion={syntaxVersion}
+            wheel={wheelFor("code")}
             onHover={(text, line, col) => (lspEnabled ? lsp.hover(openFile, text, line, col) : Promise.resolve(null))}
             onDefinition={(text, line, col) => {
               if (!lspEnabled) return info("Go to definition needs a language server (see /settings → Plugins).", "error");
@@ -729,6 +757,7 @@ ${snippet}
             focusLine={focusLine}
             syntaxVersion={syntaxVersion}
             diffNote={pendingChange ? pendingNote?.short ?? (checking.length ? "checking…" : null) : null}
+            wheel={wheelFor("code")}
             onViewport={(top, bottom) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom }))}
           />
         )}
@@ -742,6 +771,7 @@ ${snippet}
           approval={approval?.request ?? null}
           approvalNote={pendingChange ? pendingNote?.detail ?? null : null}
           contextChip={contextChip}
+          wheel={wheelFor("chat")}
           onSubmit={send}
         />
       </Box>

@@ -23,6 +23,9 @@ type Props = {
   git: GitStatus;
   /** Problem counts per file, from the checkers. */
   problemCounts: Map<string, { errors: number; warnings: number }>;
+  wheel?: { dir: number; nonce: number } | null;
+  /** A click on a visible row (0 = first row under the title). */
+  click?: { row: number; nonce: number } | null;
   onOpen(filePath: string): void;
   onHover(filePath: string | null): void;
 };
@@ -51,7 +54,7 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export function FileTree({ width, height, focused, openFile, reveal, version, changed, git, problemCounts, onOpen, onHover }: Props) {
+export function FileTree({ width, height, focused, openFile, reveal, version, changed, git, problemCounts, wheel, click, onOpen, onHover }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
   const [changesOnly, setChangesOnly] = useState(false);
@@ -130,6 +133,20 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
 
   const start = Math.max(0, Math.min(cursor - Math.floor(rows / 2), nodes.length - rows));
   const visible = nodes.slice(start, start + rows);
+
+  useEffect(() => {
+    if (wheel) setCursor((c) => Math.max(0, Math.min(nodes.length - 1, c + wheel.dir * 3)));
+  }, [wheel?.nonce]);
+
+  // Clicking a row selects it; a file opens, a folder expands or collapses.
+  useEffect(() => {
+    if (!click) return;
+    const node = visible[click.row];
+    if (!node) return;
+    setCursor(start + click.row);
+    if (node.isDir) toggle(node.path);
+    else onOpen(node.path);
+  }, [click?.nonce]);
   const inner = width - 2;
   const title = changesOnly
     ? <> <Text color={C.yellow}>±</Text> Changes <Text color={C.dim}>({nodes.length})  c: all files</Text></>

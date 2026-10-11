@@ -73,6 +73,8 @@ Every change is reviewed like a code review:
 
 | Key | Does |
 | --- | --- |
+| 🖱️ Mouse | wheel scrolls the pane under the pointer · click a pane to focus it · click a file to open it (hold <kbd>Shift</kbd> to select text; turn off in settings) |
+| <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | scroll the chat history |
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file |
 | <kbd>e</kbd> | edit the open file (<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>K</kbd> info · <kbd>Ctrl</kbd>+<kbd>G</kbd> definition · <kbd>Esc</kbd> close) |

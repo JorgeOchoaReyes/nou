@@ -11,6 +11,7 @@ type Props = {
   problems: Diagnostic[];
   /** Checkers still running, e.g. ["TypeScript"]. */
   checking: string[];
+  wheel?: { dir: number; nonce: number } | null;
   onJump(file: string, line: number): void;
   onClose(): void;
 };
@@ -23,7 +24,7 @@ export const SEVERITY_STYLE = {
   info: { icon: "ℹ", color: C.accent },
 } as const;
 
-export function ProblemsView({ width, height, focused, problems, checking, onJump, onClose }: Props) {
+export function ProblemsView({ width, height, focused, problems, checking, wheel, onJump, onClose }: Props) {
   const [cursor, setCursor] = useState(0);
   const [onlyErrors, setOnlyErrors] = useState(false);
   const { frame } = useAnimation({ interval: 80, isActive: checking.length > 0 });
@@ -49,6 +50,9 @@ export function ProblemsView({ width, height, focused, problems, checking, onJum
   }, [problems, onlyErrors]);
 
   useEffect(() => setCursor((c) => Math.min(c, Math.max(0, rows.length - 1))), [rows.length]);
+  useEffect(() => {
+    if (wheel) setCursor((c) => Math.max(0, Math.min(rows.length - 1, c + wheel.dir * 3)));
+  }, [wheel?.nonce]);
 
   const visibleRows = Math.max(1, height - 4);
   useInput((input, key) => {

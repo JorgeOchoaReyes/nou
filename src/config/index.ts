@@ -26,6 +26,8 @@ export type Settings = {
   gitContext: boolean;
   /** Editor auto-save: shortly after you stop typing, when you leave the editor, or never. */
   autoSave: AutoSave;
+  /** Mouse wheel scrolls the pane under the pointer; clicks focus panes and open files. */
+  mouse: boolean;
   /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
   /**
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoApproveCommands: false,
   gitContext: true,
   autoSave: "delay",
+  mouse: true,
   plugins: {},
   trustedPlugins: {},
 };
