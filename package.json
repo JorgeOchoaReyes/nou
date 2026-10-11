@@ -65,7 +65,7 @@
     "jiti": "^2.6.1",
     "tree-sitter-wasms": "0.1.13",
     "tsx": "^4.23.15",
-    "typescript": "^6.0.2",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.58.1"
   }
 }
