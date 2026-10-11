@@ -1,24 +1,68 @@
 {
-  "name": "nou",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "name": "nou-cli",
+  "version": "0.1.0",
+  "description": "Nou: an IDE-style AI coding assistant for your terminal. Local (Ollama, LM Studio) and cloud (Claude, OpenAI, Gemini...) models, live diffs, git-aware, built-in editor.",
   "type": "module",
-  "keywords": [],
-  "author": "",
+  "bin": {
+    "nou": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".env.example",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "dev": "npx tsx index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "eslint index.ts src",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JorgeOchoaReyes/nou.git"
+  },
+  "homepage": "https://github.com/JorgeOchoaReyes/nou#readme",
+  "keywords": [
+    "ai",
+    "cli",
+    "tui",
+    "coding-assistant",
+    "ollama",
+    "claude",
+    "llm",
+    "agent"
+  ],
+  "author": "Jorge Raul Ochoa-Reyes",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@clack/prompts": "^1.1.0",
     "chalk": "^5.6.2",
+    "cli-highlight": "^2.1.11",
+    "diff": "^9.0.0",
+    "ink": "^8.0.0",
+    "ink-text-input": "^6.0.0",
     "ollama": "^0.6.3",
+    "openai": "^7.32.0",
+    "react": "^19.3.0",
+    "shelljs": "^0.10.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
+    "@types/react": "^19.3.0",
+    "@types/shelljs": "^0.10.0",
+    "eslint": "^10.2.0",
+    "globals": "^17.4.0",
+    "jiti": "^2.6.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1"
   }
 }

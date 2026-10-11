@@ -1,67 +1,42 @@
-import ollama from "ollama";
+#!/usr/bin/env node
+import { existsSync } from "fs";
+import { createElement } from "react";
+import { render } from "ink";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { tools, executeTool } from "./tools/index.js";
+import { artWork } from "./src/util/index.js";
+import { ensureProjectContext, loadPermanentContext } from "./src/context/index.js";
+import { describe, initialModel, resolveModel } from "./src/providers/index.js";
+import { App } from "./src/ui/App.js";
 
 async function main() {
-    p.intro(chalk.cyan("Nou CLI Started! 🌞"));
+  if (!process.stdin.isTTY) {
+    console.error("Nou needs an interactive terminal (try Windows Terminal / PowerShell).");
+    process.exit(1);
+  }
+  // API keys can live in a .env next to the project (it's gitignored).
+  if (existsSync(".env")) process.loadEnvFile(".env");
 
-    const messages: any[] = [
-        {
-            role: "system",
-            content: "You are a helpful coding assistant. You can run commands and read files to help the user."
-        }
-    ];
+  p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞`));
 
-    while (true) {
-        const query = await p.text({
-            message: "What can I help with?",
-            placeholder: "",
-        });
+  let choice = initialModel();
+  const problem = choice.provider.unavailable();
+  if (problem) {
+    p.log.warn(`${choice.provider.label} isn't set up (${problem}), falling back to local Ollama.`);
+    choice = resolveModel("ollama");
+  }
+  p.log.info(`Model: ${chalk.yellow(describe(choice))}  (change it any time with /model)`);
 
-        if (p.isCancel(query)) break;
+  await ensureProjectContext(choice);
 
-        messages.push({
-            role: "user",
-            content: query as string
-        });
+  const permContext = await loadPermanentContext();
 
-        const s = p.spinner();
-        s.start("Pondering.......");
+  const app = render(createElement(App, { initialModel: choice, permContext }), {
+    alternateScreen: true,
+  });
+  await app.waitUntilExit();
 
-        const response = await ollama.chat({
-            model: "lllama3.1",
-            messages: messages,
-            tools: tools
-        });
-
-        s.stop("Done!");
-
-        if (response.message.tool_calls) {
-            for (const call of response.message.tool_calls) {
-                p.log.step(`Executing: ${chalk.yellow(call.function.name)}....`);
-
-                const result = - await executeTool(call.function.name, call.function.arguments);
-
-                messages.push(response.message);
-                messages.push({
-                    role: "tool",
-                    content: result,
-                    name: call.function.name
-                });
-            }
-
-            const finalResponse = await ollama.chat({
-                model: "llama3.1",
-                messages: messages
-            });
-
-            console.log(`\n${chalk.green("AI: ")} ${finalResponse.message.content}\n`);
-        } else {
-            console.log(`\n${chalk.green("AI: ")} ${response.message.content}\n`);
-        }
-    }
-    p.outro(chalk.cyan("Bye bye!"));
+  p.outro(chalk.cyan("Bye bye!"));
 }
 
-main().catch(console.error); 
+main().catch(console.error);

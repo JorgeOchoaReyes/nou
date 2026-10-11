@@ -1,0 +1,120 @@
+import OpenAI from "openai";
+import type { ChatMessage, ChatRequest, ChatResult, Provider, ToolCall } from "./types.js";
+
+type Preset = {
+  id: string;
+  label: string;
+  baseURL: string;
+  /** Env var holding the API key; omitted for local servers. */
+  keyEnv?: string;
+  /** Env var that overrides the base URL. */
+  urlEnv?: string;
+  defaultModel: string;
+  local: boolean;
+};
+
+/** Everything that speaks the OpenAI chat completions API. */
+export const OPENAI_COMPATIBLE: Preset[] = [
+  { id: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", keyEnv: "OPENAI_API_KEY", defaultModel: "gpt-5", local: false },
+  { id: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-2.5-pro", local: false },
+  { id: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", keyEnv: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-opus-5-5", local: false },
+  { id: "groq", label: "Groq", baseURL: "https://api.groq.com/openai/v1", keyEnv: "GROQ_API_KEY", defaultModel: "llama-3.3-70b-versatile", local: false },
+  { id: "deepseek", label: "DeepSeek", baseURL: "https://api.deepseek.com/v1", keyEnv: "DEEPSEEK_API_KEY", defaultModel: "deepseek-chat", local: false },
+  { id: "lmstudio", label: "LM Studio", baseURL: "http://localhost:1234/v1", urlEnv: "LMSTUDIO_BASE_URL", defaultModel: "local-model", local: true },
+  { id: "llamacpp", label: "llama.cpp server", baseURL: "http://localhost:8080/v1", urlEnv: "LLAMACPP_BASE_URL", defaultModel: "local-model", local: true },
+  { id: "custom", label: "Custom OpenAI-compatible", baseURL: "", urlEnv: "NOU_BASE_URL", keyEnv: "NOU_API_KEY", defaultModel: "default", local: true },
+];
+
+function toOpenAI(system: string, messages: ChatMessage[]): OpenAI.ChatCompletionMessageParam[] {
+  const out: OpenAI.ChatCompletionMessageParam[] = [{ role: "system", content: system }];
+  for (const m of messages) {
+    if (m.role === "user") out.push({ role: "user", content: m.content });
+    else if (m.role === "tool") out.push({ role: "tool", tool_call_id: m.callId, content: m.content });
+    else {
+      out.push({
+        role: "assistant",
+        content: m.content || null,
+        ...(m.toolCalls.length
+          ? {
+            tool_calls: m.toolCalls.map((c) => ({
+              id: c.id,
+              type: "function" as const,
+              function: { name: c.name, arguments: JSON.stringify(c.args) },
+            })),
+          }
+          : {}),
+      });
+    }
+  }
+  return out;
+}
+
+export function openAICompatibleProvider(preset: Preset): Provider {
+  const baseURL = (preset.urlEnv && process.env[preset.urlEnv]) || preset.baseURL;
+  const apiKey = (preset.keyEnv && process.env[preset.keyEnv]) || (preset.local ? "not-needed" : "");
+  let client: OpenAI | null = null;
+  const getClient = () => (client ??= new OpenAI({ baseURL, apiKey }));
+
+  return {
+    id: preset.id,
+    label: preset.label,
+    local: preset.local,
+    defaultModel: preset.defaultModel,
+
+    unavailable() {
+      if (!baseURL) return `set ${preset.urlEnv}`;
+      if (!apiKey) return `set ${preset.keyEnv}`;
+      return null;
+    },
+
+    async chat({ model, system, messages, tools, onText, signal }: ChatRequest): Promise<ChatResult> {
+      const stream = await getClient().chat.completions.create(
+        {
+          model,
+          messages: toOpenAI(system, messages),
+          ...(tools.length ? { tools: tools.map((t) => ({ type: "function" as const, function: t })) } : {}),
+          stream: true,
+        },
+        signal ? { signal } : {},
+      );
+
+      let text = "";
+      let finish: string | null = null;
+      // Tool calls stream in fragments keyed by index.
+      const partial = new Map<number, { id: string; name: string; args: string }>();
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+        if (choice.delta.content) {
+          text += choice.delta.content;
+          onText(choice.delta.content);
+        }
+        for (const delta of choice.delta.tool_calls ?? []) {
+          const call = partial.get(delta.index) ?? { id: "", name: "", args: "" };
+          if (delta.id) call.id = delta.id;
+          if (delta.function?.name) call.name += delta.function.name;
+          if (delta.function?.arguments) call.args += delta.function.arguments;
+          partial.set(delta.index, call);
+        }
+        if (choice.finish_reason) finish = choice.finish_reason;
+      }
+
+      const toolCalls: ToolCall[] = [...partial.values()].map((c, i) => {
+        let args: Record<string, any>;
+        try {
+          args = c.args ? JSON.parse(c.args) : {};
+        } catch {
+          args = { __invalid_json: c.args };
+        }
+        return { id: c.id || `call_${i}`, name: c.name, args };
+      });
+      return { text, toolCalls, ...(finish === "length" && toolCalls.length ? { stop: "max_tokens" as const } : {}) };
+    },
+
+    async listModels() {
+      const models: string[] = [];
+      for await (const m of getClient().models.list()) models.push(m.id);
+      return models.sort();
+    },
+  };
+}
