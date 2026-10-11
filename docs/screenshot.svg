@@ -7,11 +7,11 @@
     <text x="43.8" y="57.5" fill="rgb(187,154,247)" font-weight="bold" textLength="8.6" lengthAdjust="spacingAndGlyphs">N</text>
     <text x="52.4" y="57.5" fill="rgb(195,154,242)" font-weight="bold" textLength="8.6" lengthAdjust="spacingAndGlyphs">O</text>
     <text x="61.0" y="57.5" fill="rgb(224,138,214)" font-weight="bold" textLength="8.6" lengthAdjust="spacingAndGlyphs">U</text>
-    <text x="86.8" y="57.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="112.6" y="57.5" fill="rgb(192,202,245)" textLength="25.8" lengthAdjust="spacingAndGlyphs">nou</text>
-    <text x="155.6" y="57.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="181.4" y="57.5" fill="rgb(187,154,247)" textLength="68.8" lengthAdjust="spacingAndGlyphs">⎇ master</text>
-    <text x="258.8" y="57.5" fill="rgb(224,175,104)" textLength="17.2" lengthAdjust="spacingAndGlyphs">±3</text>
+    <text x="78.2" y="57.5" fill="rgb(86,95,137)" textLength="77.4" lengthAdjust="spacingAndGlyphs">v0.2.1  │</text>
+    <text x="172.8" y="57.5" fill="rgb(192,202,245)" textLength="25.8" lengthAdjust="spacingAndGlyphs">nou</text>
+    <text x="215.8" y="57.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="241.6" y="57.5" fill="rgb(187,154,247)" textLength="68.8" lengthAdjust="spacingAndGlyphs">⎇ master</text>
+    <text x="319.0" y="57.5" fill="rgb(224,175,104)" textLength="17.2" lengthAdjust="spacingAndGlyphs">±3</text>
     <rect x="989.8" y="44" width="77.9" height="18" fill="rgb(187,154,247)"/>
     <text x="998.4" y="57.5" fill="#15161e" font-weight="bold" textLength="60.2" lengthAdjust="spacingAndGlyphs">☁ CLOUD</text>
     <rect x="1067.2" y="44" width="232.7" height="18" fill="rgb(31,35,53)"/>
@@ -256,8 +256,8 @@
     <text x="912.4" y="453.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="1299.4" y="453.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="471.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="471.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">▸</text>
-    <text x="43.8" y="471.5" fill="rgb(192,202,245)" textLength="43.0" lengthAdjust="spacingAndGlyphs">tests</text>
+    <text x="43.8" y="471.5" fill="rgb(49,120,198)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◆</text>
+    <text x="61.0" y="471.5" fill="#c0caf5" textLength="51.6" lengthAdjust="spacingAndGlyphs">env.ts</text>
     <text x="267.4" y="471.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="471.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="471.5" fill="rgb(247,118,142)" textLength="292.4" lengthAdjust="spacingAndGlyphs">19-    throw new Error(`${filePat…</text>
@@ -267,8 +267,8 @@
     <text x="912.4" y="471.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="1299.4" y="471.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="489.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="489.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">⚿</text>
-    <text x="43.8" y="489.5" fill="#c0caf5" textLength="103.2" lengthAdjust="spacingAndGlyphs">.env.example</text>
+    <text x="26.6" y="489.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">▸</text>
+    <text x="43.8" y="489.5" fill="rgb(192,202,245)" textLength="43.0" lengthAdjust="spacingAndGlyphs">tests</text>
     <text x="267.4" y="489.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="489.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="489.5" fill="rgb(86,95,137)" textLength="51.6" lengthAdjust="spacingAndGlyphs">20   }</text>
@@ -277,8 +277,8 @@
     <text x="912.4" y="489.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="1299.4" y="489.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="507.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="507.5" fill="rgb(255,158,100)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◌</text>
-    <text x="43.8" y="507.5" fill="#c0caf5" textLength="86.0" lengthAdjust="spacingAndGlyphs">.gitignore</text>
+    <text x="26.6" y="507.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">⚿</text>
+    <text x="43.8" y="507.5" fill="#c0caf5" textLength="103.2" lengthAdjust="spacingAndGlyphs">.env.example</text>
     <text x="267.4" y="507.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="507.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="507.5" fill="rgb(86,95,137)" textLength="180.6" lengthAdjust="spacingAndGlyphs">21   return fullPath;</text>
@@ -287,8 +287,8 @@
     <text x="912.4" y="507.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="1299.4" y="507.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="525.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="525.5" fill="rgb(49,120,198)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◆</text>
-    <text x="43.8" y="525.5" fill="#c0caf5" textLength="137.6" lengthAdjust="spacingAndGlyphs">eslint.config.ts</text>
+    <text x="26.6" y="525.5" fill="rgb(255,158,100)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◌</text>
+    <text x="43.8" y="525.5" fill="#c0caf5" textLength="86.0" lengthAdjust="spacingAndGlyphs">.gitignore</text>
     <text x="267.4" y="525.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="525.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="525.5" fill="rgb(86,95,137)" textLength="34.4" lengthAdjust="spacingAndGlyphs">22 }</text>
@@ -298,7 +298,7 @@
     <text x="1299.4" y="525.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="543.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="26.6" y="543.5" fill="rgb(49,120,198)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◆</text>
-    <text x="43.8" y="543.5" fill="rgb(247,118,142)" textLength="223.6" lengthAdjust="spacingAndGlyphs">index.ts                 ✖</text>
+    <text x="43.8" y="543.5" fill="#c0caf5" textLength="137.6" lengthAdjust="spacingAndGlyphs">eslint.config.ts</text>
     <text x="267.4" y="543.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="543.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="543.5" fill="rgb(86,95,137)" textLength="17.2" lengthAdjust="spacingAndGlyphs">23</text>
@@ -308,8 +308,8 @@
     <text x="921.0" y="543.5" fill="rgb(224,175,104)" font-weight="bold" textLength="275.2" lengthAdjust="spacingAndGlyphs">✎ Review src/commands/index.ts →</text>
     <text x="1299.4" y="543.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="561.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="561.5" fill="rgb(192,202,245)" textLength="8.6" lengthAdjust="spacingAndGlyphs">≡</text>
-    <text x="43.8" y="561.5" fill="#c0caf5" textLength="51.6" lengthAdjust="spacingAndGlyphs">NOU.md</text>
+    <text x="26.6" y="561.5" fill="rgb(49,120,198)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◆</text>
+    <text x="43.8" y="561.5" fill="rgb(247,118,142)" textLength="223.6" lengthAdjust="spacingAndGlyphs">index.ts                 ✖</text>
     <text x="267.4" y="561.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="561.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="561.5" fill="rgb(86,95,137)" textLength="610.6" lengthAdjust="spacingAndGlyphs">24 export function toRelative(fil…│ 26 export function toRelative(file…</text>
@@ -318,8 +318,8 @@
     <text x="929.6" y="561.5" fill="rgb(224,175,104)" textLength="309.6" lengthAdjust="spacingAndGlyphs">[y] accept   [n] reject   [Esc] stop</text>
     <text x="1299.4" y="561.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="579.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="579.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◇</text>
-    <text x="43.8" y="579.5" fill="#c0caf5" textLength="146.2" lengthAdjust="spacingAndGlyphs">package-lock.json</text>
+    <text x="26.6" y="579.5" fill="rgb(192,202,245)" textLength="8.6" lengthAdjust="spacingAndGlyphs">≡</text>
+    <text x="43.8" y="579.5" fill="#c0caf5" textLength="51.6" lengthAdjust="spacingAndGlyphs">NOU.md</text>
     <text x="267.4" y="579.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="579.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="579.5" fill="rgb(86,95,137)" textLength="610.6" lengthAdjust="spacingAndGlyphs">25   return path.relative(process…│ 27   return path.relative(process.…</text>
@@ -329,8 +329,8 @@
     <text x="938.2" y="579.5" fill="rgb(86,95,137)" textLength="232.2" lengthAdjust="spacingAndGlyphs">src/commands/index.ts:15-22</text>
     <text x="1299.4" y="579.5" fill="rgb(122,162,247)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="18.0" y="597.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="597.5" fill="rgb(158,206,106)" textLength="8.6" lengthAdjust="spacingAndGlyphs">⬢</text>
-    <text x="43.8" y="597.5" fill="#c0caf5" textLength="103.2" lengthAdjust="spacingAndGlyphs">package.json</text>
+    <text x="26.6" y="597.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">◇</text>
+    <text x="43.8" y="597.5" fill="#c0caf5" textLength="146.2" lengthAdjust="spacingAndGlyphs">package-lock.json</text>
     <text x="267.4" y="597.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="597.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="597.5" fill="rgb(86,95,137)" textLength="34.4" lengthAdjust="spacingAndGlyphs">26 }</text>
@@ -338,8 +338,8 @@
     <text x="903.8" y="597.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="912.4" y="597.5" fill="rgb(122,162,247)" textLength="395.6" lengthAdjust="spacingAndGlyphs">│────────────────────────────────────────────│</text>
     <text x="18.0" y="615.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
-    <text x="26.6" y="615.5" fill="rgb(192,202,245)" textLength="8.6" lengthAdjust="spacingAndGlyphs">≡</text>
-    <text x="43.8" y="615.5" fill="rgb(224,175,104)" textLength="223.6" lengthAdjust="spacingAndGlyphs">README.md                M</text>
+    <text x="26.6" y="615.5" fill="rgb(158,206,106)" textLength="8.6" lengthAdjust="spacingAndGlyphs">⬢</text>
+    <text x="43.8" y="615.5" fill="#c0caf5" textLength="103.2" lengthAdjust="spacingAndGlyphs">package.json</text>
     <text x="267.4" y="615.5" fill="rgb(86,95,137)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="276.0" y="615.5" fill="rgb(224,175,104)" textLength="8.6" lengthAdjust="spacingAndGlyphs">│</text>
     <text x="293.2" y="615.5" fill="rgb(86,95,137)" textLength="17.2" lengthAdjust="spacingAndGlyphs">27</text>

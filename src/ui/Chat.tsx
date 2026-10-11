@@ -23,7 +23,7 @@ type Props = {
 
 type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string };
 
-export const COMMANDS = ["/model", "/models", "/settings", "/clear", "/help"];
+export const COMMANDS = ["/model", "/models", "/settings", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
 
 export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, onSubmit }: Props) {
   const [input, setInput] = useState("");

@@ -13,7 +13,7 @@ import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostic
 import { Timeline } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
-import { checkForUpdate } from "../update/index.js";
+import { checkForUpdate, currentVersion } from "../update/index.js";
 import { changedLines } from "./text.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { C } from "./theme.js";
@@ -40,6 +40,7 @@ const HELP = `Commands:
   /undo                undo Nou's last change (also: u)
   /rewind              undo everything from Nou's last turn
   /history             recent changes
+  /version             which version of Nou this is
 Keys:
   Ctrl+P  find a file      Tab  switch pane      Esc  stop / back
   e  edit open file        v    diff (git / Nou)  f   follow mode
@@ -553,6 +554,8 @@ ${snippet}
       agentRef.current!.clear();
       setEntries([]);
       return;
+    case "version":
+      return info(`nou v${currentVersion()}${update ? ` · v${update} is available, run \`nou update\`` : " · up to date"}`);
     case "help":
       return info(HELP);
     default: {

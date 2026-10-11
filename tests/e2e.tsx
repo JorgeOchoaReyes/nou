@@ -84,6 +84,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("u with nothing to undo says so", frame().includes("Nothing of Nou"));
   await press(KEY.ctrlC, 150);
   check("first Ctrl+C asks to press again", frame().includes("Press again to quit"));
+  check("version is shown in the header", /NOU v\d+\.\d+\.\d+/.test(frame()));
 });
 
 console.log("Agent edits: problem feedback, undo, rewind");
@@ -120,6 +121,9 @@ await session({ provider: fake, model: "fake" }, async ({ press, type, frame }) 
   await type("/history");
   await press(KEY.enter, 400);
   check("/history lists changes", frame().includes("Recent changes"));
+  await type("/version");
+  await press(KEY.enter, 400);
+  check("/version shows the version", /nou v\d+\.\d+\.\d+/.test(frame()));
 });
 
 console.log("Quitting and sideways scrolling");
