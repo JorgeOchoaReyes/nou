@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="260" viewBox="0 0 900 260">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a1b26"/>
+      <stop offset="1" stop-color="#24283b"/>
+    </linearGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7aa2f7"/>
+      <stop offset="0.35" stop-color="#bb9af7"/>
+      <stop offset="0.7" stop-color="#f7768e"/>
+      <stop offset="1" stop-color="#e0af68"/>
+    </linearGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7aa2f7" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#bb9af7"/>
+      <stop offset="1" stop-color="#7dcfff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="900" height="260" rx="18" fill="url(#bg)"/>
+
+  <!-- faint grid of code-ish dots -->
+  <g fill="#414868" opacity="0.35">
+    <circle cx="60" cy="40" r="2"/><circle cx="90" cy="40" r="2"/><circle cx="120" cy="40" r="2"/>
+    <circle cx="780" cy="220" r="2"/><circle cx="810" cy="220" r="2"/><circle cx="840" cy="220" r="2"/>
+  </g>
+
+  <text x="450" y="128" text-anchor="middle" font-family="'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace" font-size="96" font-weight="800" letter-spacing="14" fill="url(#title)" filter="url(#glow)">◆ NOU</text>
+
+  <rect x="200" y="152" width="500" height="2" fill="url(#rule)"/>
+
+  <text x="450" y="186" text-anchor="middle" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" fill="#c0caf5">Your AI coding companion, right in the terminal.</text>
+
+  <g font-family="'Cascadia Code', Menlo, Consolas, monospace" font-size="16" text-anchor="middle">
+    <text x="450" y="224"><tspan fill="#9ece6a">$</tspan><tspan fill="#c0caf5"> npm i -g nou-cli</tspan><tspan fill="#565f89">  &amp;&amp;  </tspan><tspan fill="#7dcfff">nou</tspan></text>
+  </g>
+</svg>

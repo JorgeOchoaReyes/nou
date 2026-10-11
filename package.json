@@ -20,7 +20,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p .",
     "lint": "eslint index.ts src",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "screenshot": "node -e \"process.env.FORCE_COLOR='3';require('child_process').execSync('npx tsx scripts/screenshot.tsx',{stdio:'inherit'})\""
   },
   "repository": {
     "type": "git",
