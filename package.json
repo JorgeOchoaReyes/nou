@@ -1,15 +1,43 @@
 {
-  "name": "nou",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "npx tsx index.ts"
-  },
+  "name": "nou-cli",
+  "version": "0.1.0",
+  "description": "Nou: an IDE-style AI coding assistant for your terminal. Local (Ollama, LM Studio) and cloud (Claude, OpenAI, Gemini...) models, live diffs, git-aware, built-in editor.",
   "type": "module",
-  "keywords": [],
-  "author": "",
+  "bin": {
+    "nou": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".env.example",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "dev": "npx tsx index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "eslint index.ts src",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JorgeOchoaReyes/nou.git"
+  },
+  "homepage": "https://github.com/JorgeOchoaReyes/nou#readme",
+  "keywords": [
+    "ai",
+    "cli",
+    "tui",
+    "coding-assistant",
+    "ollama",
+    "claude",
+    "llm",
+    "agent"
+  ],
+  "author": "Jorge Raul Ochoa-Reyes",
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

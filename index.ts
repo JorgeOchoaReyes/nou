@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { existsSync } from "fs";
 import { createElement } from "react";
 import { render } from "ink";
@@ -5,7 +6,6 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { artWork } from "./src/util/index.js";
 import { ensureProjectContext, loadPermanentContext } from "./src/context/index.js";
-import { buildSystemPrompt } from "./src/agent/index.js";
 import { describe, initialModel, resolveModel } from "./src/providers/index.js";
 import { App } from "./src/ui/App.js";
 
@@ -31,7 +31,7 @@ async function main() {
 
   const permContext = await loadPermanentContext();
 
-  const app = render(createElement(App, { initialModel: choice, systemPrompt: buildSystemPrompt(permContext) }), {
+  const app = render(createElement(App, { initialModel: choice, permContext }), {
     alternateScreen: true,
   });
   await app.waitUntilExit();

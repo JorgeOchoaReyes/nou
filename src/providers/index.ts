@@ -1,6 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import os from "os";
-import path from "path";
+import { loadSettings, saveSettings } from "../config/index.js";
 import { anthropicProvider } from "./anthropic.js";
 import { ollamaProvider } from "./ollama.js";
 import { OPENAI_COMPATIBLE, openAICompatibleProvider } from "./openai.js";
@@ -35,28 +33,14 @@ export function resolveModel(spec: string): ModelChoice {
 
 export const describe = (choice: ModelChoice) => `${choice.provider.id}:${choice.model}`;
 
-const CONFIG_PATH = path.join(os.homedir(), ".nou", "config.json");
-
-/** NOU_MODEL wins, then the last model picked with /model, then local Ollama. */
+/** NOU_MODEL wins, then the model saved in settings, then local Ollama. */
 export function initialModel(): ModelChoice {
   if (process.env.NOU_MODEL) return resolveModel(process.env.NOU_MODEL);
-  try {
-    const saved = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-    if (typeof saved.model === "string") return resolveModel(saved.model);
-  } catch {
-    // no saved choice yet
-  }
-  return resolveModel("ollama");
+  return resolveModel(loadSettings().model || "ollama");
 }
 
 export function saveModel(choice: ModelChoice) {
-  try {
-    mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-    const existing = existsSync(CONFIG_PATH) ? JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) : {};
-    writeFileSync(CONFIG_PATH, JSON.stringify({ ...existing, model: describe(choice) }, null, 2));
-  } catch {
-    // remembering the model is best effort
-  }
+  saveSettings({ model: describe(choice) });
 }
 
 /** One-shot completion without tools, used for things like generating NOU.md. */

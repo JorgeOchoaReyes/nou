@@ -3,6 +3,8 @@ import { readdirSync } from "fs";
 import path from "path";
 import { Box, Text, useInput } from "ink";
 import { IGNORED } from "../commands/index.js";
+import type { GitStatus } from "../git/index.js";
+import { C, GIT_COLORS, fileIcon } from "./theme.js";
 import { Pane } from "./Pane.js";
 
 type Node = { path: string; name: string; depth: number; isDir: boolean };
@@ -16,8 +18,11 @@ type Props = {
   reveal: string | null;
   /** Bump to re-read the disk (e.g. after a file is created). */
   version: number;
+  /** Files Nou edited this session. */
   changed: Set<string>;
+  git: GitStatus;
   onOpen(filePath: string): void;
+  onHover(filePath: string | null): void;
 };
 
 function listDir(dir: string): { name: string; isDir: boolean }[] {
@@ -44,11 +49,26 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export function FileTree({ width, height, focused, openFile, reveal, version, changed, onOpen }: Props) {
+export function FileTree({ width, height, focused, openFile, reveal, version, changed, git, onOpen, onHover }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
-  const nodes = useMemo(() => flatten(expanded), [expanded, version]);
+  const [changesOnly, setChangesOnly] = useState(false);
+
+  const nodes = useMemo(() => {
+    if (!changesOnly) return flatten(expanded);
+    return [...new Set([...git.keys(), ...changed])].sort().map((p) => ({ path: p, name: p, depth: 0, isDir: false }));
+  }, [expanded, version, changesOnly, git, changed]);
   const rows = Math.max(1, height - 3);
+
+  // Folders that contain git changes get a dot.
+  const dirtyDirs = useMemo(() => {
+    const dirs = new Set<string>();
+    for (const file of git.keys()) {
+      const parts = file.split("/");
+      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+    }
+    return dirs;
+  }, [git]);
 
   // Expand the folders leading to whatever the agent is touching and move to it.
   useEffect(() => {
@@ -67,6 +87,14 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
     if (index >= 0) setCursor(index);
   }, [nodes, reveal]);
 
+  useEffect(() => {
+    setCursor((c) => Math.min(c, Math.max(0, nodes.length - 1)));
+  }, [nodes.length]);
+
+  useEffect(() => {
+    onHover(focused ? nodes[cursor]?.path ?? null : null);
+  }, [focused, cursor, nodes]);
+
   const toggle = (dir: string, open?: boolean) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -77,7 +105,10 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
 
   useInput((input, key) => {
     const node = nodes[cursor];
-    if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
+    if (input === "c") {
+      setChangesOnly((v) => !v);
+      setCursor(0);
+    } else if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
     else if (key.downArrow || input === "j") setCursor((c) => Math.min(nodes.length - 1, c + 1));
     else if (key.pageUp) setCursor((c) => Math.max(0, c - rows));
     else if (key.pageDown) setCursor((c) => Math.min(nodes.length - 1, c + rows));
@@ -97,17 +128,35 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
 
   const start = Math.max(0, Math.min(cursor - Math.floor(rows / 2), nodes.length - rows));
   const visible = nodes.slice(start, start + rows);
+  const inner = width - 2;
+  const title = changesOnly
+    ? <> <Text color={C.yellow}>±</Text> Changes <Text color={C.dim}>({nodes.length})  c: all files</Text></>
+    : <> <Text color={C.accent}>▤</Text> Explorer{git.size ? <Text color={C.dim}>  c: changes ({git.size})</Text> : null}</>;
 
   return (
-    <Pane title=" Files" width={width} height={height} focused={focused}>
+    <Pane title={title} width={width} height={height} focused={focused}>
       <Box flexDirection="column">
+        {visible.length === 0 && <Text color={C.dim}>  {changesOnly ? "No changes ✓" : "(empty)"}</Text>}
         {visible.map((node, i) => {
           const selected = start + i === cursor;
-          const icon = node.isDir ? (expanded.has(node.path) ? "▾ " : "▸ ") : "  ";
-          const color = node.path === openFile ? "cyan" : changed.has(node.path) ? "green" : node.isDir ? "blue" : undefined;
+          const code = git.get(node.path);
+          const isOpen = node.path === openFile;
+          const { icon, color } = node.isDir
+            ? { icon: expanded.has(node.path) ? "▾" : "▸", color: C.accent }
+            : fileIcon(node.path);
+          const marker = code ?? (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
+          const markerColor = code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
+          const label = `${"  ".repeat(node.depth)}${icon} ${node.name}`;
+          const nameColor = isOpen ? C.cyan : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
+          const room = Math.max(1, inner - marker.length - 1);
+          const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label.padEnd(room);
+          const iconAt = shown.indexOf(icon);
           return (
-            <Text key={node.path} wrap="truncate-end" inverse={selected && focused} {...(color ? { color } : {})}>
-              {"  ".repeat(node.depth)}{icon}{node.name}{changed.has(node.path) ? " ●" : ""}
+            <Text key={node.path} wrap="truncate-end" {...(selected && focused ? { backgroundColor: C.panel } : {})}>
+              <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen}>{shown.slice(0, iconAt)}</Text>
+              <Text color={color}>{shown.slice(iconAt, iconAt + icon.length)}</Text>
+              <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen} inverse={selected && focused}>{shown.slice(iconAt + icon.length)}</Text>
+              <Text color={markerColor}> {marker}</Text>
             </Text>
           );
         })}

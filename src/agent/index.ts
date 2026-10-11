@@ -9,7 +9,7 @@ import {
   toRelative,
   type FileChange,
 } from "../commands/index.js";
-import { describe, type ChatMessage, type ModelChoice, type ToolCall } from "../providers/index.js";
+import { describe, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
 
 const MAX_STEPS = 25;
 
@@ -20,7 +20,17 @@ export type ChatEntry = {
 
 export type ApprovalRequest =
   | { kind: "command"; command: string }
-  | { kind: "change"; change: FileChange };
+  | { kind: "change"; change: FileChange }
+  | { kind: "tool"; name: string; args: Record<string, any> };
+
+/** Tools added on top of the built-ins (git, plugins). */
+export type ExtraTool = {
+  definition: ToolDef;
+  /** Read-only tools run without asking. */
+  readOnly: boolean;
+  source: string;
+  run(args: Record<string, any>): Promise<string> | string;
+};
 
 export type ChangeStatus = "pending" | "applied" | "rejected";
 
@@ -34,7 +44,7 @@ export interface AgentHooks {
   approve(request: ApprovalRequest): Promise<boolean>;
 }
 
-export function buildSystemPrompt(permContext: string): string {
+export function buildSystemPrompt(permContext: string, extras: string[] = []): string {
   return `You are Nou, a coding assistant running in the user's terminal, working in ${process.cwd()}.
 You can read, edit and create files and run commands with the tools you have.
 - Read a file before editing it. Prefer edit_file for small changes and write_file for new files.
@@ -43,23 +53,36 @@ You can read, edit and create files and run commands with the tools you have.
 
 Project files:
 ${fileTree(".", 3)}
+${extras.map((e) => `\n${e}`).join("")}
 ${permContext}`;
 }
 
 /** Checks required arguments are present before a tool runs (models, especially small local ones, skip them). */
-function invalidArgs(call: ToolCall): string | null {
+function invalidArgs(call: ToolCall, tools: ToolDef[]): string | null {
   if ("__invalid_json" in call.args) return `The arguments were not valid JSON: ${JSON.stringify(call.args.__invalid_json)}`;
-  const def = toolDefs.find((t) => t.name === call.name);
+  const def = tools.find((t) => t.name === call.name);
   if (!def) return null;
-  const missing = def.parameters.required.filter((key) => typeof call.args[key] !== "string");
+  const missing = def.parameters.required.filter((key) => call.args[key] === undefined || call.args[key] === null);
   return missing.length ? `Missing or non-string arguments: ${missing.join(", ")}` : null;
 }
 
 export class Agent {
   private messages: ChatMessage[] = [];
   private controller: AbortController | null = null;
+  private extraTools: ExtraTool[] = [];
+  private effort: string | undefined;
 
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
+
+  configure(options: { system?: string; extraTools?: ExtraTool[]; effort?: string }) {
+    if (options.system !== undefined) this.system = options.system;
+    if (options.extraTools) this.extraTools = options.extraTools;
+    if (options.effort) this.effort = options.effort;
+  }
+
+  get tools(): ToolDef[] {
+    return [...toolDefs, ...this.extraTools.map((t) => t.definition)];
+  }
 
   /** Switches model; the conversation carries over. */
   setModel(choice: ModelChoice) {
@@ -74,8 +97,9 @@ export class Agent {
     this.controller?.abort();
   }
 
-  async send(text: string) {
-    this.messages.push({ role: "user", content: text });
+  /** `context` (what the user is looking at) is sent to the model but not shown in the chat. */
+  async send(text: string, context?: string) {
+    this.messages.push({ role: "user", content: context ? `${text}\n\n${context}` : text });
     this.controller = new AbortController();
     const { signal } = this.controller;
     try {
@@ -86,8 +110,9 @@ export class Agent {
           model: this.choice.model,
           system: this.system,
           messages: this.messages,
-          tools: toolDefs,
+          tools: this.tools,
           signal,
+          ...(this.effort ? { effort: this.effort } : {}),
           onText: (delta) => {
             streamed += delta;
             this.hooks.onStream(streamed);
@@ -119,7 +144,7 @@ export class Agent {
         for (const call of result.toolCalls) {
           if (signal.aborted) break;
           this.hooks.onBusy(`Running ${call.name}...`);
-          const problem = invalidArgs(call);
+          const problem = invalidArgs(call, this.tools);
           const output = problem ?? await this.runTool(call);
           this.messages.push({
             role: "tool",
@@ -190,8 +215,16 @@ export class Agent {
         const output = await runCommand(args.command);
         return output.trim() || "(no output)";
       }
-      default:
-        return `Unknown tool: ${name}`;
+      default: {
+        const extra = this.extraTools.find((t) => t.definition.name === name);
+        if (!extra) return `Unknown tool: ${name}`;
+        if (!extra.readOnly && !(await this.hooks.approve({ kind: "tool", name, args }))) {
+          this.hooks.onEntry({ kind: "tool", text: `Denied: ${name}` });
+          return "User denied permission to run this tool.";
+        }
+        this.hooks.onEntry({ kind: "tool", text: `${extra.source}: ${name}${args.path ? ` ${args.path}` : ""}` });
+        return String(await extra.run(args));
+      }
       }
     } catch (error: any) {
       this.hooks.onEntry({ kind: "error", text: `${name}: ${error.message}` });

@@ -30,6 +30,8 @@ export type ChatRequest = {
   tools: ToolDef[];
   onText(delta: string): void;
   signal?: AbortSignal;
+  /** Reasoning effort, for models that support it. */
+  effort?: string;
 };
 
 export type ChatResult = {

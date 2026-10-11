@@ -57,9 +57,9 @@ export function anthropicProvider(): Provider {
     defaultModel: "claude-opus-5-5",
     unavailable: () => (hasCredentials() ? null : "set ANTHROPIC_API_KEY (or run `ant auth login`)"),
 
-    async chat({ model, system, messages, tools, onText, signal }: ChatRequest): Promise<ChatResult> {
+    async chat({ model, system, messages, tools, onText, signal, effort: requested }: ChatRequest): Promise<ChatResult> {
       const fallbacks = FALLBACK_MODELS.test(model);
-      const effort = process.env.NOU_EFFORT ?? (EFFORT_MODELS.test(model) ? "high" : undefined);
+      const effort = EFFORT_MODELS.test(model) ? process.env.NOU_EFFORT ?? requested ?? "high" : undefined;
       const body: Anthropic.Beta.Messages.MessageCreateParamsStreaming = {
         model,
         max_tokens: 64000,
