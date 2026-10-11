@@ -1,91 +1,42 @@
-import ollama from "ollama";
+import { existsSync } from "fs";
+import { createElement } from "react";
+import { render } from "ink";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { tools,  } from "./src/tools/index.js"; 
-import { executeTool } from "./src/commands/index.js";
 import { artWork } from "./src/util/index.js";
 import { ensureProjectContext, loadPermanentContext } from "./src/context/index.js";
+import { buildSystemPrompt } from "./src/agent/index.js";
+import { describe, initialModel, resolveModel } from "./src/providers/index.js";
+import { App } from "./src/ui/App.js";
 
 async function main() {
+  if (!process.stdin.isTTY) {
+    console.error("Nou needs an interactive terminal (try Windows Terminal / PowerShell).");
+    process.exit(1);
+  }
+  // API keys can live in a .env next to the project (it's gitignored).
+  if (existsSync(".env")) process.loadEnvFile(".env");
+
   p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞`));
- 
-  await ensureProjectContext(); 
- 
+
+  let choice = initialModel();
+  const problem = choice.provider.unavailable();
+  if (problem) {
+    p.log.warn(`${choice.provider.label} isn't set up (${problem}), falling back to local Ollama.`);
+    choice = resolveModel("ollama");
+  }
+  p.log.info(`Model: ${chalk.yellow(describe(choice))}  (change it any time with /model)`);
+
+  await ensureProjectContext(choice);
+
   const permContext = await loadPermanentContext();
 
-  const messages: { role: string; content: any; name?: string }[] = [
-    {
-      role: "system",
-      content: `You are a coding assistant. Current directory structure:\n${permContext}`   
-    }
-  ];
+  const app = render(createElement(App, { initialModel: choice, systemPrompt: buildSystemPrompt(permContext) }), {
+    alternateScreen: true,
+  });
+  await app.waitUntilExit();
 
-  while (true) {
-    const query = await p.text({
-      message: "What can I help you with? (Type 'exit' to quit)",
-      placeholder: "",
-    });
-
-    if (p.isCancel(query)) break;
-
-    messages.push({
-      role: "user",
-      content: query as string
-    });
-
-    const s = p.spinner();
-    
-    s.start("Pondering.......");
-
-    const response = await ollama.chat({
-      model: "llama3.1",
-      messages: messages,
-      tools: tools
-    });
-
-    s.stop("Done thinking!");
-
-    if (response.message.tool_calls) {
-      for (const call of response.message.tool_calls) {
-        p.log.step(`Executing: ${chalk.yellow(call.function.name)}....`);
-
-        p.log.info(`With arguments: ${chalk.blue(JSON.stringify(call.function.arguments))}`);
-
-        const confirm = await p.confirm({
-          message: `Nou wants to run: ${chalk.yellow(call.function.arguments)}. Allow?`,
-        });
-      
-        if (!confirm || p.isCancel(confirm)) {
-          messages.push({
-            role: "tool",
-            content: "User denied permission to run this command.",
-            name: call.function.name
-          });
-          continue; 
-        }
-
-        const result = - await executeTool(call.function.name, call.function.arguments);
-
-        messages.push(response.message);
-
-        messages.push({
-          role: "tool",
-          content: result,
-          name: call.function.name
-        });
-      }
-
-      const finalResponse = await ollama.chat({
-        model: "llama3.1",
-        messages: messages
-      });
-
-      console.log(`\n${chalk.green("Nou: ")} ${finalResponse.message.content}\n`);
-    } else {
-      console.log(`\n${chalk.green("Nou: ")} ${response.message.content}\n`);
-    }
-  }
   p.outro(chalk.cyan("Bye bye!"));
 }
 
-main().catch(console.error); 
+main().catch(console.error);
