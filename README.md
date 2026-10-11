@@ -145,6 +145,10 @@ Full example: [examples/plugins/word-count.mjs](examples/plugins/word-count.mjs)
 > [!WARNING]
 > Plugins run code on your machine, so they stay **off** until you enable them.
 
+## 🗺️ Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for what's planned next (automatic updates, more language-server features, plugin sharing, and more).
+
 ## 🛠️ Development
 
 ```bash
