@@ -14,6 +14,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # NPM_TOKEN lives in this environment's secrets; its protection rules (reviewers) apply before publishing.
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
