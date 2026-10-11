@@ -13,6 +13,13 @@ updates:
       # Update both together, by hand, and check `npm test` (it exercises syntax highlighting).
       - dependency-name: web-tree-sitter
       - dependency-name: tree-sitter-wasms
+      # Node's types must match the oldest Node we support (22, see "engines" in package.json), or the
+      # type checker would allow APIs that crash on Node 22. Raise this together with "engines".
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+      # typescript-eslint doesn't support TypeScript 7 yet (peer: <6.1.0). Revisit when it does.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
