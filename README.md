@@ -52,4 +52,4 @@ npm run dev        # run from source
 npm run build      # compile to dist/
 ```
 
-Releases: create a GitHub release tagged `vX.Y.Z` and the Publish workflow builds and publishes that version to npm (needs an `NPM_TOKEN` repository secret).
+Releases: create a GitHub release tagged `vX.Y.Z` and the Publish workflow builds and publishes that version to npm (needs an `NPM_TOKEN` secret in the `production` environment).
