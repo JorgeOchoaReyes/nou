@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs/promises";
 import { readdirSync } from "fs";
-import shelljs from "shelljs";
+import { exec } from "child_process";
 
 export const IGNORED = new Set(["node_modules", ".git", "dist", "build", ".next", "__pycache__", ".venv"]);
 
@@ -35,12 +35,19 @@ export async function readFile(filepath: string): Promise<string> {
   }
 };
 
-export async function runCommand(command: string): Promise<string> {
-  const result = shelljs.exec(command, { silent: true });
-  if (result.code !== 0) {
-    return `Error (Exit Code ${result.code}): ${result.stderr}`;
-  }
-  return result.stdout;
+export function runCommand(command: string): Promise<string> {
+  // Async so the UI keeps rendering while the command runs.
+  return new Promise((resolve) => {
+    exec(command, { cwd: process.cwd(), timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        const reason = error.killed ? "timed out after 2 minutes" : `Exit Code ${error.code ?? "?"}`;
+        resolve(`Error (${reason}): ${stderr || error.message}${stdout ? `
+${stdout}` : ""}`);
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
 }
 
 export function fileTree(dir = ".", maxDepth = 3): string {
