@@ -1,0 +1,24 @@
+name: CodeQL
+
+# GitHub's security scanner: looks for things like command injection and path traversal.
+# Results show under the repo's Security tab.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, to catch newly added rules
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3

@@ -9,6 +9,7 @@ import path from "path";
 const dir = mkdtempSync(path.join(os.tmpdir(), "nou-e2e-"));
 writeFileSync(path.join(dir, "a.ts"), "const a = 1;\n");
 writeFileSync(path.join(dir, "b.ts"), "function broken( {\n  return 1;\n}\n");
+writeFileSync(path.join(dir, "long.ts"), `const one = "${"a".repeat(150)}END1";\nconst two = "${"b".repeat(150)}END2";\n`);
 process.chdir(dir);
 process.env.NOU_NO_UPDATE_CHECK = "1";
 // Keep test runs out of the real ~/.nou (history, settings).
@@ -82,7 +83,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press("u", 200);
   check("u with nothing to undo says so", frame().includes("Nothing of Nou"));
   await press(KEY.ctrlC, 150);
-  check("first Ctrl+C asks to press again", frame().includes("Press Ctrl+C again"));
+  check("first Ctrl+C asks to press again", frame().includes("Press again to quit"));
 });
 
 console.log("Agent edits: problem feedback, undo, rewind");
@@ -119,6 +120,21 @@ await session({ provider: fake, model: "fake" }, async ({ press, type, frame }) 
   await type("/history");
   await press(KEY.enter, 400);
   check("/history lists changes", frame().includes("Recent changes"));
+});
+
+console.log("Quitting and sideways scrolling");
+await session(resolveModel("ollama"), async ({ press, frame }) => {
+  await press(KEY.tab);
+  await press("q", 150);
+  check("a single q asks to press again instead of quitting", frame().includes("Press again to quit"));
+  await delay(2200);
+  await press(KEY.down);
+  await press(KEY.down);
+  await press(KEY.enter, 800);
+  await press("e", 300);
+  await press(KEY.end, 300);
+  check("scrolled sideways, other lines scroll too", frame().includes("END1") && frame().includes("END2"));
+  await press(KEY.esc, 300);
 });
 
 process.chdir(os.tmpdir());

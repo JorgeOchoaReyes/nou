@@ -224,8 +224,10 @@ export function Editor({ width, height, focused, filePath, initial, baseline, st
 
   const visible = buf.lines.slice(v.top, v.top + rows);
   const colored = useMemo(
-    () => (v.left === 0 ? highlightLines(filePath, visible.join("\n")) : visible.map(expand)),
-    [filePath, visible.join("\n"), v.left, syntaxVersion],
+    // Scrolled sideways: every line shifts by the same amount as the cursor line (plain text, since
+    // slicing highlighted text could cut a color code in half).
+    () => (v.left === 0 ? highlightLines(filePath, visible.join("\n")) : visible.map((l) => expand(l).slice(v.left, v.left + textWidth))),
+    [filePath, visible.join("\n"), v.left, textWidth, syntaxVersion],
   );
 
   const { icon, color } = fileIcon(filePath);

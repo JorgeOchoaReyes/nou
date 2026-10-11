@@ -1,5 +1,6 @@
 import { Ollama, type Message } from "ollama";
 import type { ChatMessage, ChatRequest, ChatResult, Provider, ToolCall } from "./types.js";
+import { newCallId } from "./ids.js";
 
 export function ollamaProvider(): Provider {
   const host = process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434";
@@ -44,7 +45,7 @@ export function ollamaProvider(): Provider {
             onText(part.message.content);
           }
           for (const call of part.message.tool_calls ?? []) {
-            toolCalls.push({ id: `call_${toolCalls.length}`, name: call.function.name, args: call.function.arguments ?? {} });
+            toolCalls.push({ id: newCallId(), name: call.function.name, args: call.function.arguments ?? {} });
           }
         }
       } finally {

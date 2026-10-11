@@ -71,12 +71,21 @@ export function fileTree(dir = ".", maxDepth = 3): string {
   return lines.join("\n") || "(empty)";
 }
 
-function cleanContent(content: string): string {
-  return content
-    .replace(/\\n/g, "\n")
-    .replace(/^```[a-z]*\n/i, "")
-    .replace(/\n```$/g, "")
-    .trim() + "\n";
+/**
+ * Undoes common model mistakes in write_file content without touching real code:
+ * - a whole file sent as one line with literal "\n" escapes (no real newlines at all) is unescaped;
+ *   files that already have real newlines are left alone, so "\n" inside strings and regexes survives
+ * - a whole file wrapped in a markdown code fence is unwrapped
+ * Indentation and blank lines are kept; a final newline is added if missing.
+ */
+export function cleanContent(content: string): string {
+  let text = content;
+  if (!text.includes("\n") && text.includes("\\n")) {
+    text = text.replace(/\\r\\n|\\n/g, "\n").replace(/\\t/g, "\t");
+  }
+  const fenced = text.match(/^\s*```[\w+-]*\r?\n([\s\S]*?)\r?\n```\s*$/);
+  if (fenced) text = fenced[1]!;
+  return text.endsWith("\n") || text === "" ? text : `${text}\n`;
 }
 
 async function readOrEmpty(fullPath: string): Promise<string | null> {

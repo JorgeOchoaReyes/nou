@@ -40,7 +40,7 @@ nou
 > [!TIP]
 > Want it fully local and free? Install [Ollama](https://ollama.com), run `ollama pull qwen3:8b`, and you're set. That's the default model.
 
-Needs **Node 20.12+** and an interactive terminal (Windows Terminal, PowerShell, macOS/Linux terminals).
+Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell, macOS/Linux terminals).
 
 ## ✨ What it does
 
@@ -153,6 +153,12 @@ npm test             # end-to-end tests: drives the real UI with simulated keys
 npm run screenshot   # regenerate docs/screenshot.svg
 ```
 
-Releasing: bump `version` in `package.json`, merge to `master`, then run **Actions → Publish to npm** (or publish a GitHub release tagged `vX.Y.Z`). The token lives in the `production` environment as `NPM_TOKEN`.
+Releasing: bump `version` in `package.json`, merge to `master`, then run **Actions → Publish to npm**. It tests, publishes with provenance, and creates the git tag and GitHub Release. (Or publish a GitHub release tagged `vX.Y.Z`.) The token lives in the `production` environment as `NPM_TOKEN`.
+
+Upkeep runs on its own:
+- **CI** on every PR: type-check, lint, build, unit and end-to-end tests on Linux, macOS and Windows (Node 22.12 and 24 too), plus installing the packed tarball to check the package works.
+- **Dependabot** opens weekly PRs for dependency and GitHub Actions updates.
+- **CodeQL** scans for security issues on every PR and weekly.
+- **npm audit** fails CI if a dependency users install has a high-severity vulnerability.
 
 <p align="center"><sub>Made with 🌞 by <a href="https://github.com/JorgeOchoaReyes">Jorge Ochoa-Reyes</a></sub></p>

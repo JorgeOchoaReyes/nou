@@ -97,18 +97,33 @@ export class LspManager {
     const client = this.client(file);
     if (!client) return [];
     const key = fromUri(toUri(file)).toLowerCase();
+    let wake!: () => void;
     const published = new Promise<void>((resolve) => {
-      const list = this.waiters.get(key) ?? [];
-      list.push(resolve);
-      this.waiters.set(key, list);
+      wake = resolve;
+      this.waiters.set(key, [...(this.waiters.get(key) ?? []), resolve]);
     });
+    const stopWaiting = () => {
+      const left = (this.waiters.get(key) ?? []).filter((w) => w !== wake);
+      if (left.length) this.waiters.set(key, left);
+      else this.waiters.delete(key);
+    };
+    let changed: boolean;
     try {
-      await client.sync(file, text);
+      changed = await client.sync(file, text);
     } catch {
+      stopWaiting();
       return [];
     }
+    // Same text as last time: the server won't publish again, so its last results are current.
+    if (!changed && this.published.has(key)) {
+      stopWaiting();
+      return this.published.get(key)!;
+    }
     // Servers often publish twice (syntax, then semantic); wait for the first, then a short quiet period.
-    await Promise.race([published, new Promise((r) => setTimeout(r, timeout))]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([published, new Promise((r) => (timer = setTimeout(r, timeout)))]);
+    clearTimeout(timer);
+    stopWaiting();
     await new Promise((r) => setTimeout(r, 400));
     return this.published.get(key) ?? [];
   }

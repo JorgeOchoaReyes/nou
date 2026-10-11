@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
 
+# A newer push to the same branch/PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     # Nou runs in people's terminals on all three, so test on all three.
@@ -12,12 +17,20 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22]
+        include:
+          # The oldest Node that package.json allows (Ink 8 and the OpenAI SDK need 22), and the newest.
+          - os: ubuntu-latest
+            node: 22.12.0
+          - os: ubuntu-latest
+            node: 24
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -26,3 +39,36 @@ jobs:
       - run: npm test
       - name: CLI smoke test
         run: node dist/index.js --version
+
+  package:
+    # Installs the exact tarball npm would publish and runs it, catching packaging mistakes
+    # (missing files, missing grammars, bad bin) before they reach users.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Pack and install like a user would
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          npm install -g ./nou-cli-*.tgz
+          nou --version
+          nou --help
+          node -e "import('$(npm root -g)/nou-cli/dist/src/syntax/index.js').then(async (m) => { if (!m.syntaxProvider.available()) throw new Error('grammars missing from package'); const d = await m.syntaxProvider.check('x.py', 'def f(:\n'); if (!d.length) throw new Error('syntax check failed'); console.log('grammars OK'); })"
+
+  audit:
+    # Fails when a dependency users install has a known high-severity vulnerability.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=high

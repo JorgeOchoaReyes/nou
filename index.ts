@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync } from "fs";
+// Must stay the first import: loads .env before any provider reads its keys and URLs.
+import "./src/env.js";
 import { createElement } from "react";
 import { render } from "ink";
 import * as p from "@clack/prompts";
@@ -47,9 +48,6 @@ async function main() {
     console.error("Nou needs an interactive terminal (try Windows Terminal, PowerShell, or Terminal/iTerm on macOS).");
     process.exit(1);
   }
-  // API keys can live in a .env next to the project (it's gitignored).
-  if (existsSync(".env")) process.loadEnvFile(".env");
-
   p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞  ${chalk.dim(`v${currentVersion()}`)}`));
 
   const latest = await checkForUpdate();

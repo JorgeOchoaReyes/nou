@@ -146,11 +146,11 @@ export class LspClient {
     this.send({ method, params });
   }
 
-  /** Opens or updates a document with the given (possibly unsaved) text. */
-  async sync(file: string, text: string) {
+  /** Opens or updates a document with the given (possibly unsaved) text. Returns false if it was already current. */
+  async sync(file: string, text: string): Promise<boolean> {
     await this.ready;
     const uri = toUri(file);
-    if (this.texts.get(uri) === text) return;
+    if (this.texts.get(uri) === text) return false;
     const version = (this.versions.get(uri) ?? 0) + 1;
     this.versions.set(uri, version);
     if (!this.texts.has(uri)) {
@@ -160,6 +160,7 @@ export class LspClient {
       this.notify("textDocument/didChange", { textDocument: { uri, version }, contentChanges: [{ text }] });
     }
     this.texts.set(uri, text);
+    return true;
   }
 
   stop() {

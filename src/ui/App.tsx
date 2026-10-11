@@ -8,7 +8,7 @@ import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, summary as gitSummary, type GitStatus } from "../git/index.js";
 import { gitTools } from "../git/tools.js";
-import { BUILTIN_PLUGINS, discoverPlugins, isEnabled, loadPlugin, type PluginEntry } from "../plugins/index.js";
+import { BUILTIN_PLUGINS, discoverPlugins, isEnabled, loadPlugin, trustPatch, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
 import { Timeline } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
@@ -175,13 +175,13 @@ export function App({ initialModel, permContext }: Props) {
   useEffect(() => {
     void (async () => {
       const found = discoverPlugins();
-      const enabled = loadSettings().plugins;
-      setPlugins(await Promise.all(found.map((p) => (enabled[p.id] ? loadPlugin(p) : p))));
+      const saved = loadSettings();
+      setPlugins(await Promise.all(found.map((p) => (isEnabled(p, saved) ? loadPlugin(p) : p))));
     })();
   }, []);
 
   const allPlugins = useMemo(() => [...BUILTIN_PLUGINS, ...plugins], [plugins]);
-  const activePlugins = useMemo(() => allPlugins.filter((p) => isEnabled(p, settings.plugins) && p.plugin), [allPlugins, settings.plugins]);
+  const activePlugins = useMemo(() => allPlugins.filter((p) => isEnabled(p, settings) && p.plugin), [allPlugins, settings.plugins, settings.trustedPlugins]);
 
   // Checkers come from enabled plugins (built-in ones included).
   const firstCheck = useRef(true);
@@ -264,10 +264,11 @@ export function App({ initialModel, permContext }: Props) {
   };
 
   const togglePlugin = async (id: string, enabled: boolean) => {
-    updateSettings({ plugins: { ...settings.plugins, [id]: enabled } });
-    if (!enabled) return;
     const entry = allPlugins.find((p) => p.id === id);
-    if (entry && !entry.plugin) {
+    if (!entry) return;
+    updateSettings(trustPatch(entry, enabled, settings));
+    if (!enabled) return;
+    if (!entry.plugin) {
       const loaded = await loadPlugin(entry);
       setPlugins((prev) => prev.map((p) => (p.id === id ? loaded : p)));
     }
@@ -319,7 +320,14 @@ export function App({ initialModel, permContext }: Props) {
     exit();
   };
 
-  // Ctrl+C: stop Nou if it's working; otherwise press twice within 2 seconds to quit.
+  /** Quitting always takes two presses (Ctrl+C or q) within 2 seconds, so a stray key never loses work. */
+  const requestQuit = () => {
+    if (exitArmed) return quit();
+    setExitArmed(true);
+    setTimeout(() => setExitArmed(false), 2000);
+  };
+
+  // Ctrl+C: stop Nou if it's working; otherwise press twice to quit.
   useInput((input, key) => {
     if (!(key.ctrl && input === "c")) return;
     if (busy || approval) {
@@ -328,9 +336,7 @@ export function App({ initialModel, permContext }: Props) {
       setApproval(null);
       return;
     }
-    if (exitArmed) return quit();
-    setExitArmed(true);
-    setTimeout(() => setExitArmed(false), 2000);
+    requestQuit();
   });
 
   const info = (text: string, kind: ChatEntry["kind"] = "info") => setEntries((prev) => [...prev, { kind, text }]);
@@ -379,12 +385,23 @@ export function App({ initialModel, permContext }: Props) {
     }).join("\n")}\nUndo with /undo (last) or /rewind (whole last turn).`);
   };
 
+  /**
+   * Before editing another file: an unsaved draft of a different file is saved (auto-save on) or kept and
+   * the switch refused (auto-save off). Never silently dropped. Returns whether it's OK to continue.
+   */
+  const settleDraft = (target: string): boolean => {
+    if (!draft.current || draft.current.path === target) return true;
+    if (settings.autoSave !== "off") {
+      saveFromEditor(draft.current.text, draft.current.path);
+      return true;
+    }
+    info(`You have unsaved edits in ${draft.current.path}. Open it and save (Ctrl+S) first, or turn on auto-save in settings.`, "error");
+    return false;
+  };
+
   /** Opens a file at a line, in the editor if `edit` (used by the Problems list and go-to-definition). */
   const openAt = (file: string, line: number, edit = false) => {
-    if (draft.current && draft.current.path !== file) {
-      if (settings.autoSave !== "off") saveFromEditor(draft.current.text, draft.current.path);
-      else return info(`Save ${draft.current.path} first (Ctrl+S), or turn on auto-save in settings.`, "error");
-    }
+    if (!settleDraft(file)) return;
     if (file !== openFile) open(file);
     setReveal(file);
     setCodePanel("code");
@@ -398,8 +415,7 @@ export function App({ initialModel, permContext }: Props) {
   };
 
   const startEditing = () => {
-    if (!openFile) return;
-    if (draft.current && draft.current.path !== openFile) draft.current = null;
+    if (!openFile || !settleDraft(openFile)) return;
     setDiffMode("off");
     setCodePanel("code");
     setEditorStart((s) => ({ line: viewport?.top ?? 1, nonce: s.nonce + 1 }));
@@ -459,7 +475,7 @@ export function App({ initialModel, permContext }: Props) {
     else if (input === "r") {
       refreshGit();
       setTreeVersion((v) => v + 1);
-    } else if (input === "q") quit();
+    } else if (input === "q") requestQuit();
   }, { isActive: view === "main" && !quickOpen && !(codePanel === "problems" && focus === "code") });
 
   /** What the user is looking at, attached to each message so "this file" / "here" make sense. */
@@ -571,7 +587,7 @@ ${snippet}
       const full = path.resolve(process.cwd(), file);
       const before = readText(file);
       writeFileSync(full, text, "utf-8");
-      timeline.record({ path: file, before, after: text, source: "you", turn: agentRef.current!.turn });
+      timeline.record({ path: file, before, after: text, source: "you", turn: agentRef.current!.turnId });
       if (file === openFile) setContent(text);
       if (draft.current?.path === file) draft.current = null;
       setTreeVersion((v) => v + 1);
@@ -734,7 +750,7 @@ ${snippet}
           <Text backgroundColor={C.panel} color={totals.warnings ? C.yellow : C.dim}>{` ▲ ${totals.warnings} `}</Text>
           {checking.length > 0 && <Text color={C.accent2}> ⟳ {checking.join(", ")}</Text>}
           {exitArmed
-            ? <Text color={C.yellow} bold>{"  "}Press Ctrl+C again to quit{draft.current && settings.autoSave === "off" ? ` (unsaved changes in ${draft.current.path} will be lost)` : ""}</Text>
+            ? <Text color={C.yellow} bold>{"  "}Press again to quit{draft.current && settings.autoSave === "off" ? ` (unsaved changes in ${draft.current.path} will be lost)` : ""}</Text>
             : <Text color={C.dim}>{"  "}{hints}</Text>}
         </Text>
       </Box>

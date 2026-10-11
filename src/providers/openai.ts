@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatMessage, ChatRequest, ChatResult, Provider, ToolCall } from "./types.js";
+import { newCallId } from "./ids.js";
 
 type Preset = {
   id: string;
@@ -99,14 +100,14 @@ export function openAICompatibleProvider(preset: Preset): Provider {
         if (choice.finish_reason) finish = choice.finish_reason;
       }
 
-      const toolCalls: ToolCall[] = [...partial.values()].map((c, i) => {
+      const toolCalls: ToolCall[] = [...partial.values()].map((c) => {
         let args: Record<string, any>;
         try {
           args = c.args ? JSON.parse(c.args) : {};
         } catch {
           args = { __invalid_json: c.args };
         }
-        return { id: c.id || `call_${i}`, name: c.name, args };
+        return { id: c.id || newCallId(), name: c.name, args };
       });
       return { text, toolCalls, ...(finish === "length" && toolCalls.length ? { stop: "max_tokens" as const } : {}) };
     },

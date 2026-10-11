@@ -10,6 +10,7 @@ import {
   type FileChange,
 } from "../commands/index.js";
 import { describe, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
+import { newCallId } from "../providers/ids.js";
 
 const MAX_STEPS = 25;
 
@@ -40,7 +41,8 @@ export interface AgentHooks {
   onStream(partial: string): void;
   onBusy(label: string | null): void;
   onRead(path: string): void;
-  onChange(change: FileChange, status: ChangeStatus, turn: number): void;
+  /** `turn` is unique across sessions (session id + turn number), so undo can target one turn exactly. */
+  onChange(change: FileChange, status: ChangeStatus, turn: string): void;
   approve(request: ApprovalRequest): Promise<boolean>;
   /** After an edit is applied: problems it introduced, reported back to the model so it can fix them. */
   checkChange?(change: FileChange): Promise<string | null>;
@@ -76,6 +78,12 @@ export class Agent {
   private notes: string[] = [];
   /** Increments per user message; tags changes so a whole turn can be rewound. */
   turn = 0;
+  /** Distinguishes this run from earlier ones, since turn numbers restart at 1 every session. */
+  readonly session = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+  get turnId(): string {
+    return `${this.session}:${this.turn}`;
+  }
 
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
 
@@ -133,6 +141,15 @@ export class Agent {
           },
         });
         this.hooks.onStream("");
+
+        // Tool-call ids must be unique across the conversation (results are matched by id, and some APIs
+        // reject duplicates). Some providers reuse ids, so rename any repeat. Claude's own copy of the turn
+        // (raw) keeps its ids, which the API guarantees are unique.
+        const used = new Set(this.messages.flatMap((m) => (m.role === "assistant" ? m.toolCalls.map((c) => c.id) : [])));
+        for (const call of result.toolCalls) {
+          if (used.has(call.id) && !result.raw) call.id = newCallId();
+          used.add(call.id);
+        }
 
         this.messages.push({
           role: "assistant",
@@ -247,15 +264,15 @@ export class Agent {
   }
 
   private async reviewChange(change: FileChange): Promise<string> {
-    this.hooks.onChange(change, "pending", this.turn);
+    this.hooks.onChange(change, "pending", this.turnId);
     const ok = await this.hooks.approve({ kind: "change", change });
     if (!ok) {
-      this.hooks.onChange(change, "rejected", this.turn);
+      this.hooks.onChange(change, "rejected", this.turnId);
       this.hooks.onEntry({ kind: "tool", text: `Rejected edit to ${change.path}` });
       return "User rejected this change. Ask them what they would like instead.";
     }
     const result = await applyChange(change);
-    this.hooks.onChange(change, "applied", this.turn);
+    this.hooks.onChange(change, "applied", this.turnId);
     this.hooks.onEntry({ kind: "tool", text: result });
     if (result.startsWith("Failed")) return result;
     this.hooks.onBusy(`Checking ${change.path} for problems...`);

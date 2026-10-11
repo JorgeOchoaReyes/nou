@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, statSync } from "fs";
+import { createHash } from "crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
-import { NOU_HOME } from "../config/index.js";
+import { NOU_HOME, type Settings } from "../config/index.js";
 import type { ToolDef } from "../providers/types.js";
 import type { DiagnosticsProvider } from "../diagnostics/types.js";
 import { eslintProvider, ruffProvider, typescriptProvider } from "../diagnostics/providers.js";
@@ -42,7 +43,12 @@ export type NouPlugin = {
 
 export type PluginEntry = {
   id: string;
+  /** Entry point to import. */
   file: string;
+  /** The plugin's file or folder: what gets trusted. */
+  root?: string;
+  /** Hash of everything under `root`, so edits to a trusted plugin need approving again. */
+  hash?: string;
   scope: "project" | "user" | "built-in";
   plugin?: NouPlugin;
   error?: string;
@@ -86,9 +92,44 @@ export const BUILTIN_PLUGINS: PluginEntry[] = [
   },
 ];
 
-/** Built-ins are on unless switched off; your own plugins are off until switched on. */
-export function isEnabled(entry: PluginEntry, enabled: Record<string, boolean>): boolean {
-  return entry.scope === "built-in" ? enabled[entry.id] !== false : enabled[entry.id] === true;
+type TrustSettings = Pick<Settings, "plugins" | "trustedPlugins">;
+
+/**
+ * Built-ins are on unless switched off. Your own plugins run only if you approved this exact file and
+ * content; approval is never by name, so `.nou/plugins/x.js` in a cloned repo can't ride on an approval
+ * you gave a different `x.js`.
+ */
+export function isEnabled(entry: PluginEntry, settings: TrustSettings): boolean {
+  if (entry.scope === "built-in") return settings.plugins[entry.id] !== false;
+  return !!entry.root && !!entry.hash && settings.trustedPlugins[entry.root] === entry.hash;
+}
+
+/** "changed" means you approved this plugin, but its code has changed since. */
+export function trustState(entry: PluginEntry, settings: TrustSettings): "on" | "off" | "changed" {
+  if (isEnabled(entry, settings)) return "on";
+  return entry.root && settings.trustedPlugins[entry.root] ? "changed" : "off";
+}
+
+/** The settings change that switches a plugin on or off. */
+export function trustPatch(entry: PluginEntry, on: boolean, settings: TrustSettings): Partial<TrustSettings> {
+  if (entry.scope === "built-in") return { plugins: { ...settings.plugins, [entry.id]: on } };
+  const trusted = { ...settings.trustedPlugins };
+  if (on && entry.root && entry.hash) trusted[entry.root] = entry.hash;
+  else if (entry.root) delete trusted[entry.root];
+  return { trustedPlugins: trusted };
+}
+
+function hashPlugin(root: string): string {
+  const hash = createHash("sha256");
+  const add = (p: string) => {
+    if (statSync(p).isDirectory()) {
+      for (const name of readdirSync(p).sort()) if (name !== "node_modules" && name !== ".git") add(path.join(p, name));
+    } else {
+      hash.update(path.relative(root, p)).update(readFileSync(p));
+    }
+  };
+  add(root);
+  return hash.digest("hex");
 }
 
 export const PLUGIN_DIRS = [
@@ -112,7 +153,15 @@ export function discoverPlugins(): PluginEntry[] {
         file = full;
       }
       const id = path.basename(name, path.extname(name));
-      if (file && !found.some((p) => p.id === id)) found.push({ id, file, scope });
+      if (file && !found.some((p) => p.id === id)) {
+        let hash: string | undefined;
+        try {
+          hash = hashPlugin(full);
+        } catch {
+          // unreadable: stays untrusted
+        }
+        found.push({ id, file, root: full, scope, ...(hash ? { hash } : {}) });
+      }
     }
   }
   return found;

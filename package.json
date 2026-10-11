@@ -12,7 +12,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20.12"
+    "node": ">=22.12"
   },
   "scripts": {
     "dev": "npx tsx index.ts",
@@ -22,7 +22,7 @@
     "lint": "eslint index.ts src",
     "prepublishOnly": "npm run build",
     "screenshot": "node -e \"process.env.FORCE_COLOR='3';require('child_process').execSync('npx tsx scripts/screenshot.tsx',{stdio:'inherit'})\"",
-    "test": "tsx tests/e2e.tsx"
+    "test": "tsx tests/unit.ts && tsx tests/e2e.tsx"
   },
   "repository": {
     "type": "git",

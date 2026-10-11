@@ -11,8 +11,8 @@ export type Checkpoint = {
   before: string | null;
   after: string | null;
   source: "nou" | "you";
-  /** Chat turn that produced it (Nou's changes only). */
-  turn: number;
+  /** Chat turn that produced it: "<session>:<turn>" (older history files stored a bare number). */
+  turn: string | number;
   time: number;
   undone?: boolean;
 };

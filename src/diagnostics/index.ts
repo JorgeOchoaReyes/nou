@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import path from "path";
+import { diffLines } from "diff";
 import type { Diagnostic, DiagnosticsProvider, Severity } from "./types.js";
 
 export type * from "./types.js";
@@ -39,6 +40,19 @@ function dedupe(list: Diagnostic[]): Diagnostic[] {
   });
 }
 
+/** Line numbers in `after` that an edit added or changed, plus the line where text was removed. */
+export function touchedLines(before: string, after: string): Set<number> {
+  const touched = new Set<number>();
+  let line = 1;
+  for (const part of diffLines(before.replace(/\r\n/g, "\n"), after.replace(/\r\n/g, "\n"))) {
+    const count = part.count ?? part.value.split("\n").length - 1;
+    if (part.added) for (let i = 0; i < count; i++) touched.add(line + i);
+    if (part.removed) touched.add(line);
+    else line += count;
+  }
+  return touched;
+}
+
 function readText(file: string): string | null {
   try {
     return readFileSync(path.resolve(process.cwd(), file), "utf-8");
@@ -54,6 +68,11 @@ export class DiagnosticsManager {
   /** file -> provider id -> problems */
   private results = new Map<string, Map<string, Diagnostic[]>>();
   private projectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Project checks run one at a time; a queued run is shared by everyone who asks while it waits. */
+  private projectChain: Promise<void> = Promise.resolve();
+  private projectQueued: Promise<void> | null = null;
+  /** Whether a full project check has finished, i.e. we know which problems already existed. */
+  private projectBaseline = false;
   private running = new Set<string>();
   private listeners = new Set<() => void>();
 
@@ -127,8 +146,22 @@ export class DiagnosticsManager {
     return this.get(file);
   }
 
-  /** Runs project-wide checkers (like tsc) and replaces their results everywhere. */
-  async checkProject(): Promise<void> {
+  /**
+   * Runs project-wide checkers (like tsc) and replaces their results everywhere. Runs never overlap (they'd
+   * overwrite each other); asking while one is queued reuses it, since it will see the latest files anyway.
+   */
+  checkProject(): Promise<void> {
+    if (this.projectQueued) return this.projectQueued;
+    const run = this.projectChain.then(() => {
+      this.projectQueued = null;
+      return this.runProject();
+    });
+    this.projectQueued = run;
+    this.projectChain = run.catch(() => {});
+    return run;
+  }
+
+  private async runProject(): Promise<void> {
     const providers = (await this.activeProviders()).filter((p) => p.projectWide);
     await Promise.all(providers.map(async (p) => {
       const list = await this.runProvider(p, ".", "");
@@ -137,6 +170,7 @@ export class DiagnosticsManager {
       for (const d of list) byFile.set(d.file, [...(byFile.get(d.file) ?? []), d]);
       for (const [file, items] of byFile) this.store(file, p.id, items);
     }));
+    this.projectBaseline = true;
     this.emit();
   }
 
@@ -186,12 +220,20 @@ export class DiagnosticsManager {
    */
   async introducedBy(file: string, before: string, after: string): Promise<Diagnostic[]> {
     const projectIds = (await this.activeProviders()).filter((p) => p.projectWide && p.matches(file)).map((p) => p.id);
+    const hadBaseline = this.projectBaseline;
     const projectBefore = this.getFrom(file, projectIds);
     // One after the other: language servers hold a single copy of each document.
     const beforeList = await this.checkText(file, before);
     const afterList = await this.checkFile(file, after);
     if (projectIds.length) await this.checkProject();
-    return [...newProblems(beforeList, afterList), ...newProblems(projectBefore, this.getFrom(file, projectIds))];
+    let projectNew = newProblems(projectBefore, this.getFrom(file, projectIds));
+    if (!hadBaseline) {
+      // No check finished before this edit, so old and new problems look the same.
+      // Only blame the edit for problems on lines it actually touched.
+      const touched = touchedLines(before, after);
+      projectNew = projectNew.filter((d) => touched.has(d.line));
+    }
+    return [...newProblems(beforeList, afterList), ...projectNew];
   }
 
   private getFrom(file: string, providerIds: string[]): Diagnostic[] {

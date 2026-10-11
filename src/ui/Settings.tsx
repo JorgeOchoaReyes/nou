@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/index.js";
-import { PLUGIN_DIRS, isEnabled, type PluginEntry } from "../plugins/index.js";
+import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
 import { currentVersion } from "../update/index.js";
 import { describe, providers, type ModelChoice } from "../providers/index.js";
 import { C, SPINNER } from "./theme.js";
@@ -109,7 +109,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
       }
     } else if (tab === "Plugins") {
       if (input === "r") onRescanPlugins();
-      else if ((key.return || input === " ") && plugins[row]) onTogglePlugin(plugins[row].id, !isEnabled(plugins[row], settings.plugins));
+      else if ((key.return || input === " ") && plugins[row]) onTogglePlugin(plugins[row].id, !isEnabled(plugins[row], settings));
     }
   });
 
@@ -215,7 +215,8 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
       <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
         {plugins.map((p, i) => {
           const selected = i === row;
-          const enabled = isEnabled(p, settings.plugins);
+          const state = trustState(p, settings);
+          const enabled = state === "on";
           const parts = p.plugin
             ? [
               (p.plugin.tools ?? []).length && `${p.plugin.tools!.length} tools`,
@@ -231,9 +232,11 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
                 <Text color={C.text} bold> {p.plugin?.name ?? p.id}</Text>
                 <Text color={C.dim}> {p.plugin?.version ? `v${p.plugin.version} · ` : ""}{p.scope}{parts.length ? ` · ${parts.join(", ")}` : ""}</Text>
               </Text>
-              {p.error
-                ? <Text color={C.red} wrap="truncate-end">    ✖ {p.error}</Text>
-                : <Text color={C.dim} wrap="truncate-end">    {p.plugin?.description ?? (enabled ? "" : "Enable to load it.")}</Text>}
+              {state === "changed"
+                ? <Text color={C.yellow} wrap="truncate-end">    ⚠ Changed since you enabled it. Review the code, then press Enter to enable again.</Text>
+                : p.error
+                  ? <Text color={C.red} wrap="truncate-end">    ✖ {p.error}</Text>
+                  : <Text color={C.dim} wrap="truncate-end">    {p.plugin?.description ?? (enabled ? "" : "Enable to load it.")}</Text>}
             </Box>
           );
         })}

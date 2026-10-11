@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # One PR for all the small updates instead of a dozen.
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Pinned on purpose: newer web-tree-sitter can't load the prebuilt grammars in tree-sitter-wasms.
+      # Update both together, by hand, and check `npm test` (it exercises syntax highlighting).
+      - dependency-name: web-tree-sitter
+      - dependency-name: tree-sitter-wasms
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
