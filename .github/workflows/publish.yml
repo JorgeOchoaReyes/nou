@@ -24,7 +24,7 @@ jobs:
     # NPM_TOKEN lives in this environment's secrets; its protection rules (reviewers) apply before publishing.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
