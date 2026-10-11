@@ -8,6 +8,9 @@ const CONFIG_PATH = path.join(NOU_HOME, "config.json");
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+export const AUTO_SAVE = ["delay", "focus", "off"] as const;
+export type AutoSave = (typeof AUTO_SAVE)[number];
+
 export type Settings = {
   /** provider:model, e.g. "ollama:qwen3:8b". Empty means the built-in default. */
   model: string;
@@ -21,8 +24,15 @@ export type Settings = {
   autoApproveCommands: boolean;
   /** Give the model the git branch/status/log and git tools. */
   gitContext: boolean;
-  /** Plugin id -> enabled. Plugins are off until enabled here. */
+  /** Editor auto-save: shortly after you stop typing, when you leave the editor, or never. */
+  autoSave: AutoSave;
+  /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
+  /**
+   * Your own plugins that you've switched on: plugin path -> hash of its code. A plugin only runs if this
+   * exact file, with this exact content, was approved, so a same-named plugin in another repo never runs.
+   */
+  trustedPlugins: Record<string, string>;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,15 +42,17 @@ export const DEFAULT_SETTINGS: Settings = {
   autoApproveEdits: false,
   autoApproveCommands: false,
   gitContext: true,
+  autoSave: "delay",
   plugins: {},
+  trustedPlugins: {},
 };
 
 export function loadSettings(): Settings {
   try {
     const saved = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-    return { ...DEFAULT_SETTINGS, ...saved, plugins: { ...saved.plugins } };
+    return { ...DEFAULT_SETTINGS, ...saved, plugins: { ...saved.plugins }, trustedPlugins: { ...saved.trustedPlugins } };
   } catch {
-    return { ...DEFAULT_SETTINGS, plugins: {} };
+    return { ...DEFAULT_SETTINGS, plugins: {}, trustedPlugins: {} };
   }
 }
 

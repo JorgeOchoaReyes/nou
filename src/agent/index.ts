@@ -10,6 +10,7 @@ import {
   type FileChange,
 } from "../commands/index.js";
 import { describe, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
+import { newCallId } from "../providers/ids.js";
 
 const MAX_STEPS = 25;
 
@@ -40,8 +41,11 @@ export interface AgentHooks {
   onStream(partial: string): void;
   onBusy(label: string | null): void;
   onRead(path: string): void;
-  onChange(change: FileChange, status: ChangeStatus): void;
+  /** `turn` is unique across sessions (session id + turn number), so undo can target one turn exactly. */
+  onChange(change: FileChange, status: ChangeStatus, turn: string): void;
   approve(request: ApprovalRequest): Promise<boolean>;
+  /** After an edit is applied: problems it introduced, reported back to the model so it can fix them. */
+  checkChange?(change: FileChange): Promise<string | null>;
 }
 
 export function buildSystemPrompt(permContext: string, extras: string[] = []): string {
@@ -71,6 +75,15 @@ export class Agent {
   private controller: AbortController | null = null;
   private extraTools: ExtraTool[] = [];
   private effort: string | undefined;
+  private notes: string[] = [];
+  /** Increments per user message; tags changes so a whole turn can be rewound. */
+  turn = 0;
+  /** Distinguishes this run from earlier ones, since turn numbers restart at 1 every session. */
+  readonly session = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+  get turnId(): string {
+    return `${this.session}:${this.turn}`;
+  }
 
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
 
@@ -91,6 +104,12 @@ export class Agent {
 
   clear() {
     this.messages = [];
+    this.notes = [];
+  }
+
+  /** Something the model should know before the next message (e.g. the user undid its edit). */
+  note(text: string) {
+    this.notes.push(text);
   }
 
   cancel() {
@@ -99,7 +118,10 @@ export class Agent {
 
   /** `context` (what the user is looking at) is sent to the model but not shown in the chat. */
   async send(text: string, context?: string) {
-    this.messages.push({ role: "user", content: context ? `${text}\n\n${context}` : text });
+    this.turn++;
+    const notes = this.notes.length ? `${this.notes.map((n) => `[Note: ${n}]`).join("\n")}\n\n` : "";
+    this.notes = [];
+    this.messages.push({ role: "user", content: `${notes}${text}${context ? `\n\n${context}` : ""}` });
     this.controller = new AbortController();
     const { signal } = this.controller;
     try {
@@ -119,6 +141,15 @@ export class Agent {
           },
         });
         this.hooks.onStream("");
+
+        // Tool-call ids must be unique across the conversation (results are matched by id, and some APIs
+        // reject duplicates). Some providers reuse ids, so rename any repeat. Claude's own copy of the turn
+        // (raw) keeps its ids, which the API guarantees are unique.
+        const used = new Set(this.messages.flatMap((m) => (m.role === "assistant" ? m.toolCalls.map((c) => c.id) : [])));
+        for (const call of result.toolCalls) {
+          if (used.has(call.id) && !result.raw) call.id = newCallId();
+          used.add(call.id);
+        }
 
         this.messages.push({
           role: "assistant",
@@ -233,16 +264,20 @@ export class Agent {
   }
 
   private async reviewChange(change: FileChange): Promise<string> {
-    this.hooks.onChange(change, "pending");
+    this.hooks.onChange(change, "pending", this.turnId);
     const ok = await this.hooks.approve({ kind: "change", change });
     if (!ok) {
-      this.hooks.onChange(change, "rejected");
+      this.hooks.onChange(change, "rejected", this.turnId);
       this.hooks.onEntry({ kind: "tool", text: `Rejected edit to ${change.path}` });
       return "User rejected this change. Ask them what they would like instead.";
     }
     const result = await applyChange(change);
-    this.hooks.onChange(change, "applied");
+    this.hooks.onChange(change, "applied", this.turnId);
     this.hooks.onEntry({ kind: "tool", text: result });
-    return result;
+    if (result.startsWith("Failed")) return result;
+    this.hooks.onBusy(`Checking ${change.path} for problems...`);
+    const problems = await this.hooks.checkChange?.(change).catch(() => null);
+    if (problems) this.hooks.onEntry({ kind: "error", text: `New problems in ${change.path}:\n${problems}` });
+    return problems ? `${result}\n\nThis edit introduced problems; fix them:\n${problems}` : result;
   }
 }

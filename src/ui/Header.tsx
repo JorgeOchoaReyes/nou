@@ -9,9 +9,11 @@ type Props = {
   model: string;
   local: boolean;
   busy: string | null;
+  /** Newer version on npm, if any. */
+  update: string | null;
 };
 
-export function Header({ width, branch, changes, model, local, busy }: Props) {
+export function Header({ width, branch, changes, model, local, busy, update }: Props) {
   const { frame } = useAnimation({ interval: 120, isActive: !!busy });
   const project = path.basename(process.cwd());
   return (
@@ -31,6 +33,7 @@ export function Header({ width, branch, changes, model, local, busy }: Props) {
         {busy && <Text color={C.accent2}>{"  "}{SPINNER[frame % SPINNER.length]} {busy}</Text>}
       </Text>
       <Text>
+        {update && <Text color={C.green} bold>⬆ v{update} available · run `nou update`  </Text>}
         <Text backgroundColor={local ? C.green : C.accent2} color="black" bold>{` ${local ? "⌂ LOCAL" : "☁ CLOUD"} `}</Text>
         <Text backgroundColor={C.panel} color={C.text}>{` ${model} `}</Text>
         {" "}

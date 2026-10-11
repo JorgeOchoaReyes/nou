@@ -21,6 +21,8 @@ type Props = {
   /** Files Nou edited this session. */
   changed: Set<string>;
   git: GitStatus;
+  /** Problem counts per file, from the checkers. */
+  problemCounts: Map<string, { errors: number; warnings: number }>;
   onOpen(filePath: string): void;
   onHover(filePath: string | null): void;
 };
@@ -49,7 +51,7 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export function FileTree({ width, height, focused, openFile, reveal, version, changed, git, onOpen, onHover }: Props) {
+export function FileTree({ width, height, focused, openFile, reveal, version, changed, git, problemCounts, onOpen, onHover }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
   const [changesOnly, setChangesOnly] = useState(false);
@@ -144,10 +146,12 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
           const { icon, color } = node.isDir
             ? { icon: expanded.has(node.path) ? "▾" : "▸", color: C.accent }
             : fileIcon(node.path);
-          const marker = code ?? (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
-          const markerColor = code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
+          const counts = problemCounts.get(node.path);
+          const problemMark = counts?.errors ? "✖" : counts?.warnings ? "▲" : "";
+          const marker = problemMark || code || (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
+          const markerColor = counts?.errors ? C.red : counts?.warnings ? C.yellow : code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
           const label = `${"  ".repeat(node.depth)}${icon} ${node.name}`;
-          const nameColor = isOpen ? C.cyan : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
+          const nameColor = isOpen ? C.cyan : counts?.errors ? C.red : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
           const room = Math.max(1, inner - marker.length - 1);
           const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label.padEnd(room);
           const iconAt = shown.indexOf(icon);

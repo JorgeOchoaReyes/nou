@@ -1,19 +1,26 @@
 name: Publish to npm
 
-# Publishes when you create a GitHub release (tag like v0.2.0); the tag sets the package version.
-# Can also be run by hand from the Actions tab (publishes the version in package.json).
+# Two ways to release:
+# - Actions tab -> Run workflow: publishes the version in package.json, then tags it and creates a
+#   GitHub Release with generated notes.
+# - Publish a GitHub release tagged vX.Y.Z: the tag sets the version.
 on:
   release:
     types: [published]
   workflow_dispatch:
 
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 permissions:
-  contents: read
+  contents: write # tag + GitHub Release
   id-token: write # npm provenance
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # NPM_TOKEN lives in this environment's secrets; its protection rules (reviewers) apply before publishing.
     environment: production
     steps:
@@ -28,13 +35,29 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm test
 
       - name: Use the release tag as the version
         if: github.event_name == 'release'
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - name: Make sure this version isn't already on npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          if npm view "nou-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::nou-cli@$VERSION is already published. Bump \"version\" in package.json first."
+            exit 1
+          fi
 
       - run: npm run build
 
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Tag and create a GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes

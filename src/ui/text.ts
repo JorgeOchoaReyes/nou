@@ -1,6 +1,7 @@
 import path from "path";
 import { highlight, supportsLanguage } from "cli-highlight";
 import { diffLines } from "diff";
+import { highlightTree } from "../syntax/index.js";
 
 const LANGUAGES: Record<string, string> = {
   ".ts": "typescript", ".tsx": "typescript", ".mts": "typescript", ".cts": "typescript",
@@ -18,8 +19,11 @@ export function splitLines(text: string): string[] {
 }
 
 export function highlightLines(filePath: string, text: string): string[] {
-  const language = LANGUAGES[path.extname(filePath).toLowerCase()];
   const plain = splitLines(text);
+  // tree-sitter when the grammar is loaded (accurate); highlight.js otherwise.
+  const tree = highlightTree(filePath, plain.join("\n"));
+  if (tree) return tree;
+  const language = LANGUAGES[path.extname(filePath).toLowerCase()];
   if (!language || !supportsLanguage(language) || text.length > 200_000) return plain;
   try {
     return highlight(plain.join("\n"), { language, ignoreIllegals: true }).split("\n");
