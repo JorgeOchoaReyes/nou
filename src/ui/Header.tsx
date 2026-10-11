@@ -1,6 +1,9 @@
 import path from "path";
 import { Box, Text, useAnimation } from "ink";
 import { C, SPINNER, gradient } from "./theme.js";
+import { currentVersion } from "../update/index.js";
+
+const VERSION = `v${currentVersion()}`;
 
 type Props = {
   width: number;
@@ -21,6 +24,7 @@ export function Header({ width, branch, changes, model, local, busy, update }: P
       <Text wrap="truncate-end">
         {" "}
         {gradient("◆ NOU", busy ? frame : 0).map((g, i) => <Text key={i} bold color={g.color}>{g.ch}</Text>)}
+        <Text color={C.dim}> {VERSION}</Text>
         <Text color={C.dim}>  │  </Text>
         <Text color={C.text}>{project}</Text>
         {branch && (

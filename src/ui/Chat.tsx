@@ -18,14 +18,16 @@ type Props = {
   approvalNote?: string | null;
   /** Short description of the editor context sent with the next message, e.g. "src/a.ts:10-40". */
   contextChip: string | null;
+  /** Mouse wheel over the chat: dir -1 up, 1 down; nonce changes per event. */
+  wheel?: { dir: number; nonce: number } | null;
   onSubmit(text: string): void;
 };
 
 type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string };
 
-export const COMMANDS = ["/model", "/models", "/settings", "/clear", "/help"];
+export const COMMANDS = ["/model", "/models", "/settings", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
 
-export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, onSubmit }: Props) {
+export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, onSubmit }: Props) {
   const [input, setInput] = useState("");
   const [scrollBack, setScrollBack] = useState(0);
   const { frame } = useAnimation({ interval: 80, isActive: !!busy });
@@ -91,6 +93,10 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
   const back = Math.min(scrollBack, maxBack);
   const visible = lines.slice(Math.max(0, lines.length - rows - back), lines.length - back);
 
+  useEffect(() => {
+    if (wheel) setScrollBack((b) => Math.max(0, Math.min(maxBack, b - wheel.dir * 3)));
+  }, [wheel?.nonce]);
+
   useInput((_input, key) => {
     if (key.pageUp || (key.upArrow && key.shift)) setScrollBack((b) => Math.min(maxBack, b + Math.max(1, rows - 2)));
     else if (key.pageDown || (key.downArrow && key.shift)) setScrollBack((b) => Math.max(0, b - Math.max(1, rows - 2)));
@@ -112,7 +118,14 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
   );
 
   const empty = entries.length === 0 && !streaming;
-  const title = <> <Text color={C.accent2}>◆</Text> Chat{back ? <Text color={C.dim}> ↑{back} more</Text> : null}</>;
+  const title = (
+    <>
+      {" "}<Text color={C.accent2}>◆</Text> Chat
+      {back
+        ? <Text color={C.yellow}>  ↑ scrolled {back} lines · Shift+↓ / PgDn / wheel to go back</Text>
+        : maxBack > 0 ? <Text color={C.dim}>  Shift+↑ / PgUp / wheel to scroll</Text> : null}
+    </>
+  );
 
   return (
     <Pane title={title} width={width} height={height} focused={focused}>

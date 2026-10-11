@@ -29,10 +29,11 @@ type Props = {
   syntaxVersion: number;
   /** A one-line note for the problems count, e.g. "+2 problems" on a proposed edit. */
   diffNote?: string | null;
+  wheel?: { dir: number; nonce: number } | null;
   onViewport(top: number, bottom: number): void;
 };
 
-export function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, onViewport }: Props) {
+export function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, onViewport }: Props) {
   const [top, setTop] = useState(0);
   const rows = Math.max(1, height - 3);
   const inner = width - 2;
@@ -60,6 +61,10 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
 
   const maxTop = Math.max(0, total - rows);
   const start = Math.min(top, maxTop);
+
+  useEffect(() => {
+    if (wheel) setTop((t) => Math.max(0, Math.min(maxTop, Math.min(t, maxTop) + wheel.dir * 3)));
+  }, [wheel?.nonce]);
 
   useEffect(() => {
     if (filePath && !diff) onViewport(start + 1, Math.min(total, start + rows));

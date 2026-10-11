@@ -23,6 +23,7 @@ type Props = {
   problems: Diagnostic[];
   autoSave: AutoSave;
   syntaxVersion: number;
+  wheel?: { dir: number; nonce: number } | null;
   onSave(text: string): void;
   onExit(): void;
   onState(state: EditorState): void;
@@ -37,7 +38,7 @@ type Buffer = { lines: string[]; row: number; col: number };
 const expand = (s: string) => s.replace(/\t/g, "  ");
 
 /** A small modal text editor: arrows to move, type to insert, Ctrl+S save, Ctrl+Z undo, Esc leave. */
-export function Editor({ width, height, focused, filePath, initial, baseline, startLine, problems, autoSave, syntaxVersion, onSave, onExit, onState, onHover, onDefinition }: Props) {
+export function Editor({ width, height, focused, filePath, initial, baseline, startLine, problems, autoSave, syntaxVersion, wheel, onSave, onExit, onState, onHover, onDefinition }: Props) {
   const eol = useMemo(() => (baseline.includes("\r\n") ? "\r\n" : "\n"), [baseline]);
   const indentUnit = useMemo(() => (/^\t/m.test(initial) ? "\t" : "  "), [initial]);
   const [buf, setBuf] = useState<Buffer>(() => {
@@ -129,6 +130,10 @@ export function Editor({ width, height, focused, filePath, initial, baseline, st
   const position = () => ({ text: buf.lines.join("\n"), line: buf.row + 1, col: buf.col + 1 });
 
   const rows = Math.max(1, height - 4);
+
+  useEffect(() => {
+    if (wheel) move((b) => ({ row: b.row + wheel.dir * 3 }));
+  }, [wheel?.nonce]);
 
   usePaste((text) => insert(text), { isActive: focused });
 

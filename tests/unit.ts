@@ -25,6 +25,17 @@ const { discoverPlugins, isEnabled, trustPatch } = await import("../src/plugins/
 const { Agent } = await import("../src/agent/index.js");
 const { DiagnosticsManager, touchedLines } = await import("../src/diagnostics/index.js");
 const { DEFAULT_SETTINGS } = await import("../src/config/index.js");
+const { parseMouse } = await import("../src/ui/mouse.js");
+
+console.log("Mouse input");
+{
+  const events = parseMouse("\x1b[<64;10;5M\x1b[<65;10;5M\x1b[<68;3;4M\x1b[<0;20;8M\x1b[<0;20;8m");
+  check("wheel up and down", events[0]?.kind === "wheel" && events[0].dir === -1 && events[1]?.kind === "wheel" && events[1].dir === 1);
+  check("wheel with Shift held still counts", events[2]?.kind === "wheel" && events[2].dir === -1);
+  check("click press is reported once (release ignored)", events.filter((e) => e.kind === "click").length === 1);
+  check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);
+  check("ordinary keys are not mouse events", parseMouse("hello\x1b[A").length === 0);
+}
 
 console.log("write_file content");
 check("keeps \\n inside string literals", cleanContent('log("a\\nb");\n') === 'log("a\\nb");\n');

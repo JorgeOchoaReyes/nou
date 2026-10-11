@@ -27,6 +27,7 @@ type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boole
 const PREFS: Pref[] = [
   { key: "effort", label: "Reasoning effort", help: "How hard Claude thinks (low → max). Higher is smarter but slower and pricier." },
   { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
+  { key: "mouse", label: "Mouse", help: "Wheel scrolls the pane under the pointer; click to focus or open files. Hold Shift to select text." },
   { key: "followMode", label: "Follow mode on start", help: "The code view jumps to files Nou reads and edits." },
   { key: "gitContext", label: "Git context", help: "Give the model your branch, changes and commits, plus git tools." },
   { key: "autoApproveEdits", label: "Auto-approve edits", help: "Apply file edits without asking (diffs are still shown).", warn: true },

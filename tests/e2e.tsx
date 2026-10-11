@@ -9,6 +9,7 @@ import path from "path";
 const dir = mkdtempSync(path.join(os.tmpdir(), "nou-e2e-"));
 writeFileSync(path.join(dir, "a.ts"), "const a = 1;\n");
 writeFileSync(path.join(dir, "b.ts"), "function broken( {\n  return 1;\n}\n");
+writeFileSync(path.join(dir, "many.ts"), Array.from({ length: 100 }, (_, i) => `const line${i + 1} = ${i + 1};`).join("\n") + "\n");
 writeFileSync(path.join(dir, "long.ts"), `const one = "${"a".repeat(150)}END1";\nconst two = "${"b".repeat(150)}END2";\n`);
 process.chdir(dir);
 process.env.NOU_NO_UPDATE_CHECK = "1";
@@ -84,6 +85,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("u with nothing to undo says so", frame().includes("Nothing of Nou"));
   await press(KEY.ctrlC, 150);
   check("first Ctrl+C asks to press again", frame().includes("Press again to quit"));
+  check("version is shown in the header", /NOU v\d+\.\d+\.\d+/.test(frame()));
 });
 
 console.log("Agent edits: problem feedback, undo, rewind");
@@ -120,6 +122,9 @@ await session({ provider: fake, model: "fake" }, async ({ press, type, frame }) 
   await type("/history");
   await press(KEY.enter, 400);
   check("/history lists changes", frame().includes("Recent changes"));
+  await type("/version");
+  await press(KEY.enter, 400);
+  check("/version shows the version", /nou v\d+\.\d+\.\d+/.test(frame()));
 });
 
 console.log("Quitting and sideways scrolling");
@@ -135,6 +140,30 @@ await session(resolveModel("ollama"), async ({ press, frame }) => {
   await press(KEY.end, 300);
   check("scrolled sideways, other lines scroll too", frame().includes("END1") && frame().includes("END2"));
   await press(KEY.esc, 300);
+});
+
+console.log("Mouse");
+// SGR mouse reports, 1-based like a real terminal sends them. The test screen is 100 columns:
+// files 0-23, code 24-65, chat 66-99. Pane rows start at y=3 (0-based) under the border and title.
+const wheel = (dir: "up" | "down", x: number, y: number) => `\x1b[<${dir === "up" ? 64 : 65};${x + 1};${y + 1}M`;
+const click = (x: number, y: number) => `\x1b[<0;${x + 1};${y + 1}M`;
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  for (let i = 0; i < 4; i++) {
+    await type("/help");
+    await press(KEY.enter, 150);
+  }
+  await press(wheel("up", 80, 8), 200);
+  await press(wheel("up", 80, 8), 200);
+  check("wheel over the chat scrolls it back", frame().includes("scrolled"));
+  check("mouse events don't leak into the chat input", !frame().includes("[<"));
+  await press(wheel("down", 80, 8), 200);
+  await press(wheel("down", 80, 8), 200);
+  check("wheel down returns to the latest messages", !frame().includes("scrolled"));
+  await press(click(5, 3 + 3), 800); // 4th row in the tree: many.ts
+  check("clicking a file in the tree opens it", frame().includes("many.ts") && frame().includes("const line1 = 1;"));
+  await press(wheel("down", 40, 10), 200);
+  await press(wheel("down", 40, 10), 200);
+  check("wheel over the code scrolls it", !frame().includes("const line1 = 1;") && frame().includes("const line7 = 7;"));
 });
 
 process.chdir(os.tmpdir());
