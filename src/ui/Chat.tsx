@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
-import TextInput from "ink-text-input";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
 import { wrap } from "./text.js";
+import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
 
@@ -78,7 +78,9 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     ? COMMANDS.filter((c) => c.startsWith(input) && c !== input)
     : [];
 
-  const rows = Math.max(1, height - 3 - footer.length - 3);
+  const inputRows = inputHeight(input, inner);
+  const rows = Math.max(1, height - 3 - footer.length - 2 - inputRows);
+  const history = useMemo(() => entries.filter((e) => e.kind === "user").map((e) => e.text), [entries]);
   const maxBack = Math.max(0, lines.length - rows);
   const back = Math.min(scrollBack, maxBack);
   const visible = lines.slice(Math.max(0, lines.length - rows - back), lines.length - back);
@@ -129,16 +131,15 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
           : contextChip ? <><Text color={C.cyan}>@</Text> {contextChip}</> : " "}
       </Text>
       <Text color={focused ? C.accent : C.dim}>{"─".repeat(Math.max(0, inner))}</Text>
-      <Box height={1} overflow="hidden">
-        <Text color={focused ? C.accent2 : C.dim} bold>{"❯ "}</Text>
-        <TextInput
-          value={input}
-          onChange={setInput}
-          onSubmit={submit}
-          focus={focused && !approval}
-          placeholder={busy ? "working… Esc to stop" : "Ask anything · / for commands"}
-        />
-      </Box>
+      <ChatInput
+        value={input}
+        onChange={setInput}
+        onSubmit={submit}
+        focus={focused && !approval}
+        width={inner}
+        history={history}
+        placeholder={busy ? "working… Esc to stop" : "Ask anything · / for commands · ↑ history"}
+      />
     </Pane>
   );
 }
