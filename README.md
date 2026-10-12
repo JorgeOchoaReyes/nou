@@ -49,6 +49,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🗂️ **File explorer** | Browse your project with file icons and git status (`M` modified, `?` new). Press <kbd>c</kbd> to see only changed files. |
 | 🔀 **Live diffs** | Every edit Nou proposes shows up side by side. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
 | ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself, with undo/redo and **auto-save**. |
+| 🔎 **Finds its way around** | The agent searches your code (`grep`, `glob`) without asking, reads only what it needs, runs your tests to check its work, and summarizes long conversations to stay within the model's context (`/compact` does it on demand). |
 | ↶ **Undo anything** | Every change, Nou's or yours, is recorded. <kbd>u</kbd> undoes Nou's last edit, `/rewind` undoes its whole last turn, and your own later edits are kept. |
 | 🧾 **Session diffs** | `/diff` shows everything that changed this session, file by file (<kbd>[</kbd> <kbd>]</kbd> to step through). `/sessions` lists earlier sessions and `/diff 2` shows one. |
 | 🩺 **Problems, live** | Syntax errors instantly, plus ESLint, TypeScript, Ruff and language servers when your project has them. Shown in the gutter, inline, and in a <kbd>p</kbd> Problems panel. |
@@ -90,7 +91,7 @@ Every change is reviewed like a code review:
 | <kbd>Esc</kbd> | stop Nou · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/clear` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/help`
 
 ## 🧠 Models
 

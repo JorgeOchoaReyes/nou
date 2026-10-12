@@ -9,7 +9,7 @@ import { describe, providers, resolveModel, saveModel, type ModelChoice } from "
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
-import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, type GitStatus } from "../git/index.js";
+import { branch as gitBranch, diffAgainstHead, isRepo, sameStatus, status as gitStatus, statusAsync as gitStatusAsync, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, discoverPlugins, isEnabled, loadPlugin, trustPatch, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
 import { Timeline, type SessionSummary } from "../history/index.js";
@@ -76,6 +76,22 @@ export function App({ initialModel, permContext }: Props) {
   const [follow, setFollow] = useState(settings.followMode);
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [streaming, setStreaming] = useState("");
+  // Streamed text arrives a token at a time; redrawing the whole screen for each one is wasted work.
+  const streamed = useRef({ text: "", timer: null as ReturnType<typeof setTimeout> | null });
+  const showStream = (text: string) => {
+    const s = streamed.current;
+    s.text = text;
+    if (!text) {
+      if (s.timer) clearTimeout(s.timer);
+      s.timer = null;
+      setStreaming("");
+    } else if (!s.timer) {
+      s.timer = setTimeout(() => {
+        s.timer = null;
+        setStreaming(s.text);
+      }, 33);
+    }
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [choice, setChoice] = useState(initialModel);
   const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve(ok: boolean): void } | null>(null);
@@ -144,7 +160,7 @@ export function App({ initialModel, permContext }: Props) {
   if (!hooksRef.current) {
     hooksRef.current = {
       onEntry: (entry) => setEntries((prev) => [...prev, entry]),
-      onStream: setStreaming,
+      onStream: showStream,
       onBusy: setBusy,
       onRead: (filePath) => {
         if (!followRef.current) return;
@@ -223,10 +239,17 @@ export function App({ initialModel, permContext }: Props) {
   }, [settings.gitContext, settings.effort, activePlugins]);
 
   // Pick up changes made outside Nou (other editors, git commands).
+  const polling = useRef(false);
   useEffect(() => {
     if (!repo) return;
     const timer = setInterval(() => {
-      if (!busy) setGit(gitStatus());
+      if (busy || polling.current) return;
+      polling.current = true;
+      void gitStatusAsync().then((next) => {
+        polling.current = false;
+        // Only redraw when something changed.
+        setGit((prev) => (sameStatus(prev, next) ? prev : next));
+      });
     }, 4000);
     return () => clearInterval(timer);
   }, [repo, busy]);

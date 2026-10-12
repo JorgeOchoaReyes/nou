@@ -103,6 +103,7 @@ console.log("Undo history");
   const yesterday = new Timeline();
   writeFileSync("a.txt", "new a\n");
   yesterday.record({ path: "a.txt", before: "old a\n", after: "new a\n", source: "nou", turn: "sessionA:1" });
+  yesterday.flush(); // what quitting does
   const today = new Timeline(); // a restart: reloads history from disk
   writeFileSync("b.txt", "new b\n");
   today.record({ path: "b.txt", before: "old b\n", after: "new b\n", source: "nou", turn: "sessionB:1" });

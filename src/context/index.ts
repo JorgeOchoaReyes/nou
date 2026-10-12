@@ -48,7 +48,7 @@ export async function loadPermanentContext(): Promise<string> {
   try {
     const content = await fs.readFile(contextPath, "utf-8");
     return `\n\nPROJECT SPECIFIC RULES (from NOU.md):\n${content}`;
-  } catch (err: unknown) { 
+  } catch {
     return "";
   }
 }
