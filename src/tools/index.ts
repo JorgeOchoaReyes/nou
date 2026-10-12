@@ -22,13 +22,21 @@ export const tools = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read the contents of a file",
+      description: "Read a file. Long files come back in pages of up to 1000 lines; the end of each page says how to read on.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description: "Path to file",
+          },
+          offset: {
+            type: "number",
+            description: "First line to read (1-based). Defaults to 1.",
+          },
+          limit: {
+            type: "number",
+            description: "How many lines to read. Defaults to 1000.",
           }
         },
         required: ["path"]

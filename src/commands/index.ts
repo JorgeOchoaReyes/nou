@@ -12,6 +12,12 @@ export type FileChange = {
   isNew: boolean;
 };
 
+/** Whether a path is inside the project folder (where Nou may read without asking and write at all). */
+export function isInProject(filePath: string): boolean {
+  const rel = path.relative(process.cwd(), path.resolve(process.cwd(), filePath));
+  return !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
 function resolveInProject(filePath: string): string {
   const fullPath = path.resolve(process.cwd(), filePath);
   const rel = path.relative(process.cwd(), fullPath);
@@ -34,6 +40,40 @@ export async function readFile(filepath: string): Promise<string> {
     return "Error: File not found or could not be read.";
   }
 };
+
+/** Lines read_file returns by default, and the most characters it returns at once. */
+export const READ_LINES = 1000;
+const READ_CHARS = 40_000;
+
+/**
+ * read_file for the model: a window of lines (1-based `offset`), with a note saying how to read on when the
+ * file is longer, so a big file can't flood the model's context.
+ */
+export async function readForModel(filePath: string, offset = 1, limit = READ_LINES): Promise<string> {
+  const text = await fs.readFile(path.resolve(process.cwd(), filePath), "utf-8");
+  const lines = text.split(/\r?\n/);
+  if (lines.length > 1 && lines.at(-1) === "") lines.pop();
+  const start = Math.max(1, Math.floor(offset) || 1);
+  if (start > lines.length) return `(The file has ${lines.length} lines.)`;
+  let end = Math.min(lines.length, start + Math.max(1, Math.floor(limit) || READ_LINES) - 1);
+  if (start === 1 && end === lines.length && text.length <= READ_CHARS) return text;
+  let body = lines.slice(start - 1, end).join("\n");
+  if (body.length > READ_CHARS) {
+    body = body.slice(0, READ_CHARS);
+    end = start + body.split("\n").length - 1;
+    body = `${body}\n[... line ${end} cut off: it is very long]`;
+  }
+  const more = end < lines.length ? ` Read more with offset=${end + 1}.` : "";
+  return `${body}\n\n[Lines ${start}-${end} of ${lines.length}.${more}]`;
+}
+
+/** Keeps tool output a sensible size for the model: the start and, where errors usually are, the end. */
+export function capOutput(text: string, max = 40_000): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max / 3);
+  const tail = max - head;
+  return `${text.slice(0, head)}\n\n[... ${text.length - max} characters cut ...]\n\n${text.slice(-tail)}`;
+}
 
 export function runCommand(command: string): Promise<string> {
   // Async so the UI keeps rendering while the command runs.

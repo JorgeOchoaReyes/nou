@@ -43,6 +43,23 @@ check("keeps leading indentation", cleanContent("    x()\n") === "    x()\n");
 check("unescapes a file sent as one escaped line", cleanContent("a\\nb") === "a\nb\n");
 check("unwraps a fenced file", cleanContent("```ts\nconst a = 1;\n```") === "const a = 1;\n");
 
+console.log("Keeping the model's context small");
+{
+  const { readForModel, capOutput } = await import("../src/commands/index.js");
+  const { pickNumCtx } = await import("../src/providers/ollama.js");
+  writeFileSync("small.txt", "one\r\ntwo\r\n");
+  check("a small file is returned unchanged", (await readForModel("small.txt")) === "one\r\ntwo\r\n");
+  writeFileSync("big.txt", Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
+  const page = await readForModel("big.txt");
+  check("a long file comes back one page at a time", page.includes("line 1000\n") && !page.includes("line 1001") && page.includes("Read more with offset=1001"));
+  const last = await readForModel("big.txt", 2001, 1000);
+  check("offset reads on to the end", last.startsWith("line 2001\n") && last.includes("[Lines 2001-2500 of 2500.]"));
+  const capped = capOutput("a".repeat(30_000) + "THE ERROR", 10_000);
+  check("long output keeps its end, where errors are", capped.length < 10_100 && capped.endsWith("THE ERROR") && capped.includes("characters cut"));
+  check("Ollama gets a bigger context window, capped at the model's", pickNumCtx("temperature 0.6", { "qwen3.context_length": 40960 }) === 32768 && pickNumCtx("", { "x.context_length": 8192 }) === 8192);
+  check("a num_ctx set in the Modelfile is left alone", pickNumCtx("num_ctx                        24576\ntop_k 20", {}) === null);
+}
+
 console.log("Undo history");
 {
   writeFileSync("a.txt", "old a\n");
@@ -96,6 +113,37 @@ console.log("Tool-call ids");
   await agent.send("two");
   const ids = seen.at(-1)!;
   check("repeated ids from a provider are made unique", ids.length === 2 && new Set(ids).size === 2);
+}
+
+console.log("Reading outside the project");
+{
+  writeFileSync(path.join(os.tmpdir(), "nou-outside.txt"), "SECRET\n");
+  const results: string[] = [];
+  const asked: any[] = [];
+  let step = 0;
+  const provider: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "f", unavailable: () => null, listModels: async () => [],
+    async chat({ messages }: any) {
+      const last = messages.at(-1);
+      if (last.role === "tool") results.push(last.content);
+      step++;
+      if (step === 1) return { text: "", toolCalls: [{ id: "r1", name: "read_file", args: { path: path.join(os.tmpdir(), "nou-outside.txt") } }] };
+      if (step === 2) return { text: "", toolCalls: [{ id: "r2", name: "read_file", args: { path: "small.txt" } }] };
+      return { text: "<think>long musing</think>done", toolCalls: [] };
+    },
+  };
+  const agent = new Agent({ provider, model: "f" }, "sys", {
+    onEntry() {}, onStream() {}, onBusy() {}, onRead() {}, onChange() {},
+    approve: async (request) => {
+      asked.push(request);
+      return false;
+    },
+  });
+  await agent.send("read it");
+  check("reading outside the project asks first", asked.length === 1 && !results[0]!.includes("SECRET") && results[0]!.includes("denied"));
+  check("reading inside the project doesn't ask", asked.length === 1 && results[1] === "one\r\ntwo\r\n");
+  const history = (agent as any).messages as any[];
+  check("<think> blocks aren't sent back to the model", history.at(-1).content === "done");
 }
 
 console.log("Problems blamed on an edit");
