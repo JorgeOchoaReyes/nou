@@ -14,6 +14,7 @@ import {
 } from "../commands/index.js";
 import { describe, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
 import { newCallId } from "../providers/ids.js";
+import type { Engine, EngineOptions } from "../engines/types.js";
 
 const MAX_STEPS = 25;
 
@@ -51,6 +52,9 @@ export interface AgentHooks {
   checkChange?(change: FileChange): Promise<string | null>;
 }
 
+/** Unique per conversation, since turn numbers restart at 1 every session. */
+export const newSessionId = () => `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+
 export function buildSystemPrompt(permContext: string, extras: string[] = []): string {
   return `You are Nou, a coding assistant running in the user's terminal, working in ${process.cwd()}.
 You can read, edit and create files and run commands with the tools you have.
@@ -73,7 +77,9 @@ function invalidArgs(call: ToolCall, tools: ToolDef[]): string | null {
   return missing.length ? `Missing or non-string arguments: ${missing.join(", ")}` : null;
 }
 
-export class Agent {
+/** Nou's own engine: its tools, prompt and loop, with any model. */
+export class Agent implements Engine {
+  readonly id = "nou" as const;
   private messages: ChatMessage[] = [];
   private controller: AbortController | null = null;
   private extraTools: ExtraTool[] = [];
@@ -82,7 +88,7 @@ export class Agent {
   /** Increments per user message; tags changes so a whole turn can be rewound. */
   turn = 0;
   /** Distinguishes this run from earlier ones, since turn numbers restart at 1 every session. */
-  readonly session = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+  readonly session = newSessionId();
 
   get turnId(): string {
     return `${this.session}:${this.turn}`;
@@ -90,7 +96,7 @@ export class Agent {
 
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
 
-  configure(options: { system?: string; extraTools?: ExtraTool[]; effort?: string }) {
+  configure(options: EngineOptions) {
     if (options.system !== undefined) this.system = options.system;
     if (options.extraTools) this.extraTools = options.extraTools;
     if (options.effort) this.effort = options.effort;

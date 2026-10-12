@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
-import { Agent, buildSystemPrompt, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
+import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
+import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
 import { describe, providers, resolveModel, saveModel, type ModelChoice } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
@@ -40,6 +41,7 @@ const HELP = `Commands:
   /model <provider[:model]>  switch, e.g. /model anthropic  /model ollama:qwen3:8b
   /models [provider]   list models a provider offers
   /pull <model>        download an Ollama model
+  /engine [name]       which agent answers: nou, claude-code, codex or pi
   /clear               start a fresh conversation
   /undo                undo Nou's last change (also: u)
   /rewind              undo everything from Nou's last turn
@@ -134,9 +136,12 @@ export function App({ initialModel, permContext }: Props) {
     void diagnosticsRef.current!.checkFile(filePath);
   }, []);
 
-  const agentRef = useRef<Agent | null>(null);
-  if (!agentRef.current) {
-    agentRef.current = new Agent(initialModel, buildSystemPrompt(permContext), {
+  const agentRef = useRef<Engine | null>(null);
+  const hooksRef = useRef<AgentHooks | null>(null);
+  /** What the engine was last configured with, to configure a new one the same way. */
+  const engineConfig = useRef<EngineOptions>({});
+  if (!hooksRef.current) {
+    hooksRef.current = {
       onEntry: (entry) => setEntries((prev) => [...prev, entry]),
       onStream: setStreaming,
       onBusy: setBusy,
@@ -174,7 +179,11 @@ export function App({ initialModel, permContext }: Props) {
         return new Promise<boolean>((resolve) => setApproval({ request, resolve }));
       },
       checkChange: (change) => problemsIntroduced(diagnosticsRef.current!, change),
-    });
+    };
+  }
+  if (!agentRef.current) {
+    const saved = loadSettings().engine;
+    agentRef.current = createEngine(isEngineId(saved) ? saved : "nou", initialModel, buildSystemPrompt(permContext), hooksRef.current);
   }
 
   useEffect(() => diagnostics.subscribe(() => setDiagVersion((v) => v + 1)), []);
@@ -208,7 +217,8 @@ export function App({ initialModel, permContext }: Props) {
   // Keep the agent's system prompt and tools in sync with settings and plugins.
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
-    agentRef.current!.configure({ system: buildSystemPrompt(permContext, extras), extraTools, effort: settings.effort });
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, permContext].filter(Boolean), extraTools, effort: settings.effort };
+    agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins]);
 
   // Pick up changes made outside Nou (other editors, git commands).
@@ -238,8 +248,37 @@ export function App({ initialModel, permContext }: Props) {
     setChoice(next);
     saveModel(next);
     setSettings(loadSettings());
-    setEntries((prev) => [...prev, { kind: "info", text: `Now using ${describe(next)}. The conversation carries over.` }]);
+    const engine = agentRef.current!;
+    const carries = engine.id === "nou" || engine.id === "claude-code";
+    setEntries((prev) => [...prev, { kind: "info", text: `Now using ${engine.id === "nou" ? describe(next) : `${engineInfo(engine.id).label} with ${engineInfo(engine.id).model(next)}`}. ${carries ? "The conversation carries over." : "This starts a new conversation."}` }]);
     return true;
+  };
+
+  /** Switches the agent engine, installing it first if needed (Esc stops the install). Starts a new conversation. */
+  const switchEngine = async (id: EngineId) => {
+    if (busy) return info("Wait for the current reply to finish (or press Esc) before switching engines.", "error");
+    const target = engineInfo(id);
+    if (agentRef.current!.id === id) return info(`Already using ${target.label}.`);
+    if (!isInstalled(target)) {
+      const controller = new AbortController();
+      pullAbort.current = controller;
+      info(`Installing ${target.label} (${target.package}) into ~/.nou/engines. Esc to stop.`);
+      setBusy(`Installing ${target.label}...`);
+      try {
+        await installEngine(target, (line) => setBusy(`Installing ${target.label}: ${line.slice(0, 80)}`), controller.signal);
+      } catch (error: any) {
+        return info(controller.signal.aborted ? `Stopped installing ${target.label}.` : `Couldn't install ${target.label}: ${error.message}`, "error");
+      } finally {
+        pullAbort.current = null;
+        setBusy(null);
+      }
+    }
+    agentRef.current!.dispose?.();
+    const engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+    engine.configure(engineConfig.current);
+    agentRef.current = engine;
+    updateSettings({ engine: id });
+    info(`Now using the ${target.label} engine (model: ${target.model(choice)}). This starts a new conversation.${target.approvals === "after" ? " It edits without asking first; review its changes in the diff view and press u to undo." : ""}`);
   };
 
   /** Downloads an Ollama model, showing progress in the status line. Esc stops it. */
@@ -634,6 +673,13 @@ ${snippet}
       }
       return chooseModel(resolveModel(arg));
     }
+    case "engine": {
+      if (arg && isEngineId(arg)) return switchEngine(arg);
+      if (arg) return info(`Unknown engine ${arg}. Choose one of: ${ENGINES.map((e) => e.id).join(", ")}`, "error");
+      const current = agentRef.current!.id;
+      const lines = ENGINES.map((e) => `  ${e.id === current ? "●" : "○"} ${e.id.padEnd(12)} ${e.description}${isInstalled(e) ? "" : " (installs on first use)"}`);
+      return info(`Engines (/engine <name> to switch, or /settings → Engine):\n${lines.join("\n")}`);
+    }
     case "pull": {
       if (!arg) return info("Usage: /pull <model>, e.g. /pull qwen3:8b. Browse models at https://ollama.com/library", "error");
       const model = arg.replace(/^ollama:/, "");
@@ -715,6 +761,7 @@ ${snippet}
         choice={choice}
         plugins={allPlugins}
         onModel={(next) => void chooseModel(next)}
+        onEngine={(id) => void switchEngine(id)}
         onChange={updateSettings}
         onTogglePlugin={(id, enabled) => void togglePlugin(id, enabled)}
         onRescanPlugins={() => {
@@ -757,7 +804,7 @@ ${snippet}
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Header width={columns} branch={branch} changes={git.size} model={describe(choice)} local={choice.provider.local} busy={busy} update={update} />
+      <Header width={columns} branch={branch} changes={git.size} model={agentRef.current!.id === "nou" ? describe(choice) : `${engineInfo(agentRef.current!.id).label} · ${engineInfo(agentRef.current!.id).model(choice)}`} local={choice.provider.local} busy={busy} update={update} />
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}

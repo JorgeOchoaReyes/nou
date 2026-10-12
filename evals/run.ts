@@ -13,14 +13,16 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { describe, resolveModel } from "../src/providers/index.js";
 import { lsp } from "../src/lsp/index.js";
+import { ENGINES, engineInfo, isEngineId, isInstalled, type EngineId } from "../src/engines/index.js";
 import { runTask, type RunResult } from "./runner.js";
 import { TASKS } from "./tasks.js";
 
-const USAGE = `Usage: npm run eval -- [--model provider:model]... [--task name]... [--repeat n] [--timeout minutes] [--keep]
-Models default to NOU_MODEL, or ollama. Tasks: ${TASKS.map((t) => t.name).join(", ")}`;
+const USAGE = `Usage: npm run eval -- [--model provider:model]... [--engine name]... [--task name]... [--repeat n] [--timeout minutes] [--keep]
+Models default to NOU_MODEL, or ollama. Engines: ${ENGINES.map((e) => e.id).join(", ")} (default nou).
+Tasks: ${TASKS.map((t) => t.name).join(", ")}`;
 
 function parseArgs(argv: string[]) {
-  const options = { models: [] as string[], tasks: [] as string[], repeat: 1, timeoutMinutes: 10, keep: false };
+  const options = { models: [] as string[], engines: [] as EngineId[], tasks: [] as string[], repeat: 1, timeoutMinutes: 10, keep: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     const value = () => {
@@ -29,7 +31,11 @@ function parseArgs(argv: string[]) {
       return next;
     };
     if (arg === "--model" || arg === "-m") options.models.push(value());
-    else if (arg === "--task" || arg === "-t") options.tasks.push(value());
+    else if (arg === "--engine" || arg === "-e") {
+      const id = value();
+      if (!isEngineId(id)) throw new Error(`Unknown engine ${id}\n${USAGE}`);
+      options.engines.push(id);
+    } else if (arg === "--task" || arg === "-t") options.tasks.push(value());
     else if (arg === "--repeat" || arg === "-n") options.repeat = Math.max(1, Number(value()) || 1);
     else if (arg === "--timeout") options.timeoutMinutes = Math.max(1, Number(value()) || 10);
     else if (arg === "--keep") options.keep = true;
@@ -39,6 +45,7 @@ function parseArgs(argv: string[]) {
     } else throw new Error(`Unknown option ${arg}\n${USAGE}`);
   }
   if (!options.models.length) options.models.push(process.env.NOU_MODEL || "ollama");
+  if (!options.engines.length) options.engines.push("nou");
   return options;
 }
 
@@ -51,17 +58,22 @@ if (unknown.length) {
 }
 
 const results: RunResult[] = [];
-for (const spec of options.models) {
+for (const engine of options.engines) for (const spec of options.models) {
   const choice = resolveModel(spec);
-  const problem = choice.provider.unavailable();
+  // Claude Code and Codex can use their own logins, so they don't need Nou's provider set up.
+  const problem = engine === "nou" || engine === "pi" ? choice.provider.unavailable() : null;
   if (problem) {
     console.error(`Skipping ${describe(choice)}: ${problem}`);
     continue;
   }
-  console.log(`\n${describe(choice)}`);
+  if (!isInstalled(engineInfo(engine))) {
+    console.error(`Skipping the ${engine} engine: not installed. Pick it once in Nou (/engine ${engine}) to install it.`);
+    continue;
+  }
+  console.log(`\n${engine === "nou" ? describe(choice) : `${engine} engine · ${engineInfo(engine).model(choice)}`}`);
   for (const task of tasks) {
     for (let run = 1; run <= options.repeat; run++) {
-      const result = await runTask(choice, task, { timeoutMs: options.timeoutMinutes * 60_000, keep: options.keep });
+      const result = await runTask(choice, task, { timeoutMs: options.timeoutMinutes * 60_000, keep: options.keep, engine });
       results.push(result);
       const tools = Object.entries(result.toolCalls).map(([name, n]) => `${name}×${n}`).join(" ") || "no tools";
       const label = `${task.name}${options.repeat > 1 ? ` #${run}` : ""}`;

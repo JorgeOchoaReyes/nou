@@ -15,12 +15,14 @@ process.chdir(dir);
 process.env.NOU_NO_UPDATE_CHECK = "1";
 // Keep test runs out of the real ~/.nou (history, settings).
 process.env.HOME = process.env.USERPROFILE = mkdtempSync(path.join(os.tmpdir(), "nou-home-"));
+process.env.NOU_ENGINE_DIR = mkdtempSync(path.join(os.tmpdir(), "nou-engines-"));
 
 // Imported after chdir: some modules read the working directory when loaded.
 const { render } = await import("ink-testing-library");
 const { createElement } = await import("react");
 const { App } = await import("../src/ui/App.js");
 const { resolveModel } = await import("../src/providers/index.js");
+const { writeFakeEngines } = await import("./fake-engines.js");
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -174,6 +176,34 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(wheel("down", 40, 10), 200);
   await press(wheel("down", 40, 10), 200);
   check("wheel over the code scrolls it", !frame().includes("const line1 = 1;") && frame().includes("const line7 = 7;"));
+});
+
+console.log("Engines");
+writeFakeEngines(process.env.NOU_ENGINE_DIR!);
+writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/engine");
+  await press(KEY.enter, 300);
+  check("/engine lists the engines", frame().includes("○ claude-code") && frame().includes("○ codex") && frame().includes("○ pi"));
+  await type("/engine codex");
+  await press(KEY.enter, 600);
+  check("/engine switches engine and says it edits without asking", frame().includes("Now using the Codex engine") && frame().includes("Codex · Codex's default model"));
+  await type("change the greeting");
+  await press(KEY.enter, 1500);
+  check("the Codex engine answers in the chat", frame().includes("Changed the greeting."));
+  check("its edit is on disk and listed as Nou's", readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Howdy"));
+  await press(KEY.esc, 150);
+  await type("/rewind");
+  await press(KEY.enter, 600);
+  check("/rewind undoes everything an external engine did in its turn", readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Hello") && !existsSync(path.join(dir, "notes.md")));
+  await type("/settings");
+  await press(KEY.enter, 300);
+  await press(KEY.tab, 300);
+  check("Settings has an Engine tab showing the one in use", frame().includes("Claude Code") && /● Codex\s+in use/.test(frame()));
+  await press(KEY.esc, 200);
+  await type("/engine nou");
+  await press(KEY.enter, 400);
+  check("switching back to Nou's engine", frame().includes("Now using the Nou engine"));
 });
 
 process.chdir(os.tmpdir());

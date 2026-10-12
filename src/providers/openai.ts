@@ -62,6 +62,7 @@ export function openAICompatibleProvider(preset: Preset): Provider {
     label: preset.label,
     local: preset.local,
     defaultModel: preset.defaultModel,
+    endpoint: () => ({ baseURL: baseURL(), apiKey: apiKey() || "not-needed", api: "openai-completions" as const }),
 
     unavailable() {
       if (!baseURL()) return `set ${preset.urlEnv}`;

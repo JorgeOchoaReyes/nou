@@ -60,6 +60,7 @@ export function ollamaProvider(): Provider {
     local: true,
     defaultModel: "qwen3:8b",
     unavailable: () => null,
+    endpoint: () => ({ baseURL: `${host.replace(/\/$/, "")}/v1`, apiKey: "ollama", api: "openai-completions" as const }),
 
     async chat({ model, system, messages, tools, onText, signal }: ChatRequest): Promise<ChatResult> {
       const num_ctx = await numCtx(model);
