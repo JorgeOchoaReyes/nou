@@ -16,8 +16,10 @@ export function htmlToText(html) {
       .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)[^>]*>/gi, "\n")
       .replace(/<[^>]*>/g, "");
   } while (text !== previous);
+  // Whatever "<" is left starts a tag that never closed (in page text it's written &lt;); drop it.
   // Entities last, in one pass, so "&amp;lt;" becomes "&lt;" rather than "<".
   return text
+    .replace(/</g, "")
     .replace(/&(nbsp|lt|gt|quot|#39|amp);/g, (_, name) => ENTITIES[name])
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s*\n+/g, "\n\n")
