@@ -51,4 +51,6 @@ export interface Provider {
   unavailable(): string | null;
   chat(request: ChatRequest): Promise<ChatResult>;
   listModels(): Promise<string[]>;
+  /** Downloads a model (local providers that can, i.e. Ollama). `percent` is null while there's no size yet. */
+  pull?(model: string, onProgress: (status: string, percent: number | null) => void, signal?: AbortSignal): Promise<void>;
 }

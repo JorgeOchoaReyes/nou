@@ -2,6 +2,12 @@ import { Ollama, type Message } from "ollama";
 import type { ChatMessage, ChatRequest, ChatResult, Provider, ToolCall } from "./types.js";
 import { newCallId } from "./ids.js";
 
+/** Ollama names without a tag mean ":latest", so "llama3" and "llama3:latest" are the same model. */
+export const sameModel = (a: string, b: string) => {
+  const full = (m: string) => (m.includes(":") ? m : `${m}:latest`);
+  return full(a) === full(b);
+};
+
 /** Context window to ask for when a model doesn't set its own: enough for the system prompt, files and history. */
 const DEFAULT_NUM_CTX = 32_768;
 
@@ -88,6 +94,19 @@ export function ollamaProvider(): Provider {
     async listModels() {
       const { models } = await client.list();
       return models.map((m) => m.name);
+    },
+
+    async pull(model, onProgress, signal) {
+      const stream = await client.pull({ model, stream: true });
+      const onAbort = () => stream.abort();
+      signal?.addEventListener("abort", onAbort);
+      try {
+        for await (const part of stream) {
+          onProgress(part.status, part.total ? Math.floor((part.completed / part.total) * 100) : null);
+        }
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+      }
     },
   };
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { toolDefs } from "../tools/index.js";
 import {
   applyChange,
@@ -81,7 +82,7 @@ export class Agent {
   /** Increments per user message; tags changes so a whole turn can be rewound. */
   turn = 0;
   /** Distinguishes this run from earlier ones, since turn numbers restart at 1 every session. */
-  readonly session = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  readonly session = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
 
   get turnId(): string {
     return `${this.session}:${this.turn}`;
