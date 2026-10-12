@@ -1,4 +1,5 @@
 import { existsSync } from "fs";
+import { noteOrigin } from "./config/origins.js";
 
 // This module must be imported before anything else (index.ts imports it first).
 
@@ -11,4 +12,8 @@ if (major! < 22 || (major === 22 && minor! < 12)) {
 
 // Load the project's .env (API keys, base URLs). Providers read their settings when they load,
 // so loading .env later would be too late for them.
-if (existsSync(".env")) process.loadEnvFile(".env");
+if (existsSync(".env")) {
+  const before = new Set(Object.keys(process.env));
+  process.loadEnvFile(".env");
+  noteOrigin(Object.keys(process.env).filter((name) => !before.has(name)), ".env");
+}

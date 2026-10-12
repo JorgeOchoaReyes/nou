@@ -6,6 +6,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { describe, providers, resolveModel, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
+import { noteOrigin } from "../config/origins.js";
 
 /** An API key (and maybe a model) found in another coding tool's config. */
 export type Borrowed = { tool: "Claude Code" | "Codex"; provider: "anthropic" | "openai"; model?: string };
@@ -70,6 +71,7 @@ export function borrowToolConfig(): Borrowed[] {
     const config = source.read();
     if (!config) continue;
     for (const [name, value] of Object.entries(config.env)) process.env[name] ??= value;
+    noteOrigin(Object.keys(config.env), `${source.tool}'s settings`);
     found.push({ tool: source.tool, provider: source.provider, ...(config.model ? { model: config.model } : {}) });
   }
   return found;

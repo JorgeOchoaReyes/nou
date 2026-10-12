@@ -3,6 +3,7 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/index.js";
 import { saveCredentials } from "../config/credentials.js";
+import { originOf, setOutsideNou } from "../config/origins.js";
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
 import { currentVersion } from "../update/index.js";
 import { describe, providers, type ModelChoice, type Provider } from "../providers/index.js";
@@ -125,6 +126,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
       if (key.upArrow) setModelRow((r) => Math.max(0, r - 1));
       else if (key.downArrow) setModelRow((r) => Math.min(count - 1, r + 1));
       else if (key.leftArrow) setColumn("providers");
+      else if (input === "k") startConnect();
       else if (key.return) {
         if (modelRow === 0) {
           setCustom("");
@@ -169,6 +171,8 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   const body = () => {
     if (tab === "Model") {
       const leftWidth = Math.min(46, Math.floor(width * 0.45));
+      // Room for the label next to the marker, "local"/"cloud" and the lock (plus the border).
+      const labelWidth = Math.max(10, leftWidth - 14);
       return (
         <Box flexDirection="row" height={boxHeight}>
           <Box flexDirection="column" width={leftWidth} borderStyle="round" borderColor={column === "providers" ? C.accent : C.dim}>
@@ -180,7 +184,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
               return (
                 <Text key={p.id} wrap="truncate-end" {...(selected && column === "providers" ? { backgroundColor: C.panel } : {})}>
                   <Text color={current ? C.green : C.dim}>{current ? " ● " : "   "}</Text>
-                  <Text color={problem ? C.dim : C.text} bold={selected}>{p.label.padEnd(26).slice(0, 26)}</Text>
+                  <Text color={problem ? C.dim : C.text} bold={selected}>{p.label.padEnd(labelWidth).slice(0, labelWidth)}</Text>
                   <Text color={p.local ? C.green : C.accent2}>{p.local ? " local" : " cloud"}</Text>
                   {problem ? <Text color={C.dim}> 🔒</Text> : null}
                 </Text>
@@ -206,8 +210,11 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                         <TextInput value={field} onChange={setField} onSubmit={submitField} {...(f.secret ? { mask: "•" } : {})} {...(f.placeholder ? { placeholder: f.placeholder } : {})} />
                       </Text>
                       <Text color={C.dim} wrap="truncate-end">
-                        {"  "}{f.env}{process.env[f.env] ? (f.secret ? " is set; Enter keeps it" : "") : f.optional ? "; Enter skips" : ""}
+                        {"  "}{f.env}{process.env[f.env] ? (f.secret ? ` is set (from ${originOf(f.env)}); Enter keeps it` : "") : f.optional ? "; Enter skips" : ""}
                       </Text>
+                      {setOutsideNou(f.env) && (
+                        <Text color={C.yellow} wrap="wrap">  A new one works now, but {originOf(f.env)} sets {f.env} too and wins when Nou restarts: change or remove it there.</Text>
+                      )}
                     </Box>
                   );
                 })}
@@ -241,7 +248,15 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                   <Text {...(column === "models" && modelRow === 0 ? { backgroundColor: C.panel } : {})} color={C.accent2}>✎ Type a model name…</Text>
                 )}
                 {listed === "loading" && <Text color={C.accent2}>{SPINNER[frame % SPINNER.length]} loading models…</Text>}
-                {listed && typeof listed === "object" && !Array.isArray(listed) && <Text color={C.red}>Couldn't list models: {listed.error}</Text>}
+                {listed && typeof listed === "object" && !Array.isArray(listed) && (
+                  <>
+                    <Text color={C.red}>Couldn't list models: {listed.error}</Text>
+                    {rejectedKey(listed.error) && provider.connect?.some((f) => f.secret) && (() => {
+                      const key = provider.connect.find((f) => f.secret)!.env;
+                      return <Text color={C.yellow} wrap="wrap">The {key} {originOf(key) ? `from ${originOf(key)} ` : ""}was rejected. Press k to enter a different key.</Text>;
+                    })()}
+                  </>
+                )}
                 {(() => {
                   const visibleCount = Math.max(1, boxHeight - 6);
                   const offset = Math.max(0, Math.min(modelRow - 1 - Math.floor(visibleCount / 2), modelItems.length - visibleCount));
@@ -348,7 +363,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   };
 
   const hints = tab === "Model"
-    ? connecting ? "Enter next · Esc cancel" : column === "models" ? "↑↓ choose · Enter use model · ← providers" : `↑↓ provider · Enter/→ ${provider.unavailable() ? "connect" : "pick a model"}${provider.connect ? " · k change key" : ""}`
+    ? connecting ? "Enter next · Esc cancel" : column === "models" ? `↑↓ choose · Enter use model · ← providers${provider.connect ? " · k change key" : ""}` : `↑↓ provider · Enter/→ ${provider.unavailable() ? "connect" : "pick a model"}${provider.connect ? " · k change key" : ""}`
     : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
 
   return (
@@ -372,3 +387,6 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
 function initialValue(f: { env: string; secret?: boolean }): string {
   return f.secret ? "" : process.env[f.env] ?? "";
 }
+
+/** Whether a provider error means the API key is wrong (rather than, say, the server being down). */
+const rejectedKey = (error: string) => /\b(401|403)\b|api key|unauthori[sz]ed|authentication/i.test(error);

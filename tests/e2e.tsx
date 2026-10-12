@@ -226,6 +226,34 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
 });
 delete process.env.FIREWORKS_API_KEY;
 
+console.log("Fixing a rejected key");
+{
+  // A gateway that only takes "good-key", like OpenAI answering 401 for a stale one.
+  const { createServer } = await import("http");
+  const server = createServer((req, res) => {
+    const ok = req.headers.authorization === "Bearer good-key";
+    res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? { object: "list", data: [{ id: "gateway-model", object: "model" }] } : { error: { message: "Incorrect API key provided" } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.LITELLM_BASE_URL = `http://127.0.0.1:${(server.address() as any).port}/v1`;
+  process.env.LITELLM_API_KEY = "stale-key";
+  await session(resolveModel("litellm:gateway-model"), async ({ press, type, frame }) => {
+    await type("/settings");
+    await press(KEY.enter, 800);
+    check("a rejected key says where it came from and how to fix it", frame().includes("401") && /LITELLM_API_KEY from your\s+environment was rejected/.test(frame()) && frame().includes("Press k"));
+    await press("k", 300);
+    await press(KEY.enter, 200); // keep the URL
+    check("changing it warns that the environment wins on restart", frame().includes("is set (from your environment)") && /wins when Nou\s+restarts/.test(frame()));
+    await type("good-key");
+    await press(KEY.enter, 800);
+    check("the new key works right away", process.env.LITELLM_API_KEY === "good-key" && frame().includes("gateway-model") && !frame().includes("rejected"));
+  });
+  server.close();
+  delete process.env.LITELLM_BASE_URL;
+  delete process.env.LITELLM_API_KEY;
+}
+
 process.chdir(os.tmpdir());
 rmSync(dir, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");

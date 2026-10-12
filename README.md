@@ -95,7 +95,7 @@ Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` 
 
 ## 🧠 Models
 
-Pick one in <kbd>s</kbd> settings, with `/model anthropic` or `/model ollama:qwen3:8b`, or set `NOU_MODEL=provider:model`. Switching to an Ollama model you don't have downloads it (or use `/pull <model>`). API keys come from your environment or a `.env` file in your project; see [.env.example](.env.example). Or connect a provider inside Nou: pick it in <kbd>s</kbd> settings and press <kbd>Enter</kbd>, or run `/connect fireworks`, then paste your key. It's saved to `~/.nou/credentials.json` (only you can read it) and works right away, no restart.
+Pick one in <kbd>s</kbd> settings, with `/model anthropic` or `/model ollama:qwen3:8b`, or set `NOU_MODEL=provider:model`. Switching to an Ollama model you don't have downloads it (or use `/pull <model>`). API keys come from your environment or a `.env` file in your project; see [.env.example](.env.example). Or connect a provider inside Nou: pick it in <kbd>s</kbd> settings and press <kbd>Enter</kbd>, or run `/connect fireworks`, then paste your key. It's saved to `~/.nou/credentials.json` (only you can read it) and works right away, no restart. If a key is rejected, settings says where it came from (your shell, `.env`, or Claude Code's or Codex's settings); press <kbd>k</kbd> to enter another.
 
 If you haven't set a key, Nou uses the API key from Claude Code (`~/.claude/settings.json`) or Codex (`~/.codex/auth.json`). Subscription sign-ins (claude.ai, ChatGPT) can't be reused. Turn this off in settings with "Use Claude Code / Codex keys".
 

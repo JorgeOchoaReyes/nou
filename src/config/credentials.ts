@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { NOU_HOME } from "./index.js";
+import { noteOrigin } from "./origins.js";
 
 /**
  * API keys and base URLs you enter inside Nou (settings → Model, or /connect), saved as env var name -> value.
@@ -19,7 +20,11 @@ function readSaved(): Record<string, string> {
 
 /** Fills in saved keys and URLs for anything not already set. Call before choosing a model. */
 export function loadCredentials() {
-  for (const [name, value] of Object.entries(readSaved())) process.env[name] ??= value;
+  for (const [name, value] of Object.entries(readSaved())) {
+    if (process.env[name]) continue;
+    process.env[name] = value;
+    noteOrigin([name], "Nou (~/.nou/credentials.json)");
+  }
 }
 
 /** Saves keys and URLs (readable only by you) and applies them to this session. Empty values are skipped. */
@@ -30,6 +35,7 @@ export function saveCredentials(values: Record<string, string>) {
     if (!trimmed) continue;
     next[name] = trimmed;
     process.env[name] = trimmed;
+    noteOrigin([name], "Nou (~/.nou/credentials.json)");
   }
   if (!existsSync(NOU_HOME)) mkdirSync(NOU_HOME, { recursive: true });
   writeFileSync(CREDENTIALS_PATH, JSON.stringify(next, null, 2), { mode: 0o600 });
