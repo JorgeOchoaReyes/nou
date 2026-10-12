@@ -78,7 +78,10 @@ for (const engine of options.engines) for (const spec of options.models) {
       const tools = Object.entries(result.toolCalls).map(([name, n]) => `${name}×${n}`).join(" ") || "no tools";
       const label = `${task.name}${options.repeat > 1 ? ` #${run}` : ""}`;
       console.log(`  ${result.pass ? "✓" : "✗"} ${label.padEnd(26)} ${String(result.steps).padStart(2)} steps ${`${result.seconds}s`.padStart(7)}  ${tools}`);
-      if (!result.pass) console.log(`      ${result.reason?.split("\n").join("\n      ")}`);
+      if (!result.pass) {
+        console.log(`      ${result.reason?.split("\n").join("\n      ")}`);
+        if (result.lastReply) console.log(`      last reply: ${result.lastReply.replace(/\s+/g, " ").slice(0, 300)}`);
+      }
       if (result.dir) console.log(`      kept: ${result.dir}`);
     }
   }
