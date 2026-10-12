@@ -21,7 +21,7 @@ const check = (label: string, ok: boolean) => {
 
 const { cleanContent } = await import("../src/commands/index.js");
 const { Timeline } = await import("../src/history/index.js");
-const { discoverPlugins, isEnabled, trustPatch } = await import("../src/plugins/index.js");
+const { addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch } = await import("../src/plugins/index.js");
 const { Agent } = await import("../src/agent/index.js");
 const { DiagnosticsManager, touchedLines } = await import("../src/diagnostics/index.js");
 const { DEFAULT_SETTINGS } = await import("../src/config/index.js");
@@ -157,6 +157,45 @@ console.log("Plugin trust");
   writeFileSync(path.join(plugins, "tool.mjs"), "export default { name: 'tool', evil: true };\n");
   const [changed] = discoverPlugins();
   check("a trusted plugin whose code changed is disabled", !isEnabled(changed!, settings));
+}
+
+console.log("Starter plugins");
+{
+  const starters = starterPlugins();
+  check("starter plugins are found", ["fetch-url", "project-rules", "run-tests", "todos"].every((id) => starters.some((s) => s.id === id)));
+  const loaded = await Promise.all(starters.map(loadPlugin));
+  check("every starter loads", loaded.every((s) => s.plugin && !s.error));
+  check("starters are off until added", starters.every((s) => !isEnabled(s, DEFAULT_SETTINGS)));
+  const added = addStarter(starters.find((s) => s.id === "todos")!);
+  check("adding copies it into ~/.nou/plugins", added.scope === "user" && added.file.startsWith(path.join(os.homedir(), ".nou", "plugins")));
+  const settings = { ...DEFAULT_SETTINGS, ...trustPatch(added, true, DEFAULT_SETTINGS) };
+  check("an added starter is on", isEnabled(added, settings));
+  writeFileSync(added.file, readFileSync(added.file, "utf-8") + "// mine\n");
+  addStarter(starters.find((s) => s.id === "todos")!);
+  check("adding again keeps your edits", readFileSync(added.file, "utf-8").endsWith("// mine\n"));
+
+  const todos = (await loadPlugin(added)).plugin!;
+  writeFileSync(path.join(work, "notes.ts"), "const a = 1;\n// TODO: tidy this up\n");
+  const out = await todos.commands![0]!.run("", { cwd: work });
+  check("/todos finds a TODO with file:line", typeof out === "string" && out.includes("notes.ts:2  TODO tidy this up"));
+  const { htmlToText } = await import(pathToFileURL(path.join(root, "plugins", "fetch-url.mjs")).href);
+  check("fetch_url turns HTML into text", htmlToText("<p>a &amp; b</p><script>x()</script><div>c</div>") === "a & b\nc");
+
+  const file = scaffoldPlugin("deploy");
+  // Relative to cwd: on macOS the temp folder (/var/...) is really /private/var/..., which cwd reports.
+  check("/plugins new writes a project plugin", path.relative(process.cwd(), file) === path.join(".nou", "plugins", "deploy.mjs"));
+  const scaffolded = await loadPlugin(discoverPlugins().find((p) => p.id === "deploy")!);
+  check("the new plugin loads", scaffolded.plugin?.name === "deploy" && scaffolded.plugin.tools?.length === 1);
+  check("a new plugin is off until you switch it on", !isEnabled(scaffolded, DEFAULT_SETTINGS));
+  let rejected = 0;
+  for (const name of ["deploy", "../evil", ""]) {
+    try {
+      scaffoldPlugin(name);
+    } catch {
+      rejected++;
+    }
+  }
+  check("bad or existing names are refused", rejected === 3);
 }
 
 console.log("Tool-call ids");

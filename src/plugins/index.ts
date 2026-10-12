@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import path from "path";
-import { pathToFileURL } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { NOU_HOME, type Settings } from "../config/index.js";
 import type { ToolDef } from "../providers/types.js";
 import type { DiagnosticsProvider } from "../diagnostics/types.js";
@@ -49,7 +49,8 @@ export type PluginEntry = {
   root?: string;
   /** Hash of everything under `root`, so edits to a trusted plugin need approving again. */
   hash?: string;
-  scope: "project" | "user" | "built-in";
+  /** "starter": ships with Nou but isn't added; adding copies it into your plugins folder. */
+  scope: "project" | "user" | "built-in" | "starter";
   plugin?: NouPlugin;
   error?: string;
 };
@@ -139,32 +140,119 @@ export const PLUGIN_DIRS = [
 
 const EXTENSIONS = [".js", ".mjs", ".ts", ".mts"];
 
+/** The entry for a plugin file or folder, or undefined if it isn't one. */
+function entryFor(full: string, scope: PluginEntry["scope"]): PluginEntry | undefined {
+  const name = path.basename(full);
+  let file: string | undefined;
+  if (statSync(full).isDirectory()) {
+    file = EXTENSIONS.map((ext) => path.join(full, `index${ext}`)).find(existsSync);
+  } else if (EXTENSIONS.includes(path.extname(name))) {
+    file = full;
+  }
+  if (!file) return undefined;
+  let hash: string | undefined;
+  try {
+    hash = hashPlugin(full);
+  } catch {
+    // unreadable: stays untrusted
+  }
+  return { id: path.basename(name, path.extname(name)), file, root: full, scope, ...(hash ? { hash } : {}) };
+}
+
 /** Finds plugin files without running them. */
 export function discoverPlugins(): PluginEntry[] {
   const found: PluginEntry[] = [];
   for (const { scope, dir } of PLUGIN_DIRS) {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir)) {
-      const full = path.join(dir, name);
-      let file: string | undefined;
-      if (statSync(full).isDirectory()) {
-        file = EXTENSIONS.map((ext) => path.join(full, `index${ext}`)).find(existsSync);
-      } else if (EXTENSIONS.includes(path.extname(name))) {
-        file = full;
-      }
-      const id = path.basename(name, path.extname(name));
-      if (file && !found.some((p) => p.id === id)) {
-        let hash: string | undefined;
-        try {
-          hash = hashPlugin(full);
-        } catch {
-          // unreadable: stays untrusted
-        }
-        found.push({ id, file, root: full, scope, ...(hash ? { hash } : {}) });
-      }
+      const entry = entryFor(path.join(dir, name), scope);
+      if (entry && !found.some((p) => p.id === entry.id)) found.push(entry);
     }
   }
   return found;
+}
+
+/** The plugins/ folder of the Nou package (next to package.json, from source or the installed build). */
+function starterDir(): string | undefined {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    if (existsSync(path.join(dir, "package.json")) && existsSync(path.join(dir, "plugins"))) return path.join(dir, "plugins");
+    dir = path.dirname(dir);
+  }
+  return undefined;
+}
+
+/**
+ * Optional plugins that ship with Nou to get you started. They're Nou's own code, so they can be loaded to
+ * show their name and description, but they only run once you add one (see addStarter).
+ */
+export function starterPlugins(): PluginEntry[] {
+  const dir = starterDir();
+  if (!dir) return [];
+  return readdirSync(dir)
+    .filter((name) => EXTENSIONS.includes(path.extname(name)))
+    .sort()
+    .map((name) => ({ id: path.basename(name, path.extname(name)), file: path.join(dir, name), scope: "starter" as const }));
+}
+
+/**
+ * Adds a starter plugin: copies it into ~/.nou/plugins/ (keeping any copy already there), where it works like
+ * a plugin you wrote. Returns the new entry; switch it on with trustPatch.
+ */
+export function addStarter(starter: PluginEntry): PluginEntry {
+  const dir = PLUGIN_DIRS.find((d) => d.scope === "user")!.dir;
+  mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, path.basename(starter.file));
+  if (!existsSync(target)) copyFileSync(starter.file, target);
+  return entryFor(target, "user")!;
+}
+
+const TEMPLATE = (name: string) => `// Nou plugin. Edit it, then switch it on in /settings → Plugins (edits need switching on again).
+// More: the starter plugins in ~/.nou/plugins/ once added, and the Plugins section of Nou's README.
+
+export default {
+  name: ${JSON.stringify(name)},
+  version: "0.1.0",
+  description: "What this plugin does.",
+
+  // Extra instructions for the model while the plugin is on.
+  // systemPrompt: "Use ${name.replace(/\W/g, "_")}_hello when ...",
+
+  tools: [
+    {
+      readOnly: true, // read-only tools run without asking; leave this out for anything that changes things
+      definition: {
+        name: ${JSON.stringify(`${name.replace(/\W/g, "_")}_hello`)},
+        description: "Say hello (replace with what your tool does)",
+        parameters: { type: "object", properties: { who: { type: "string", description: "Who to greet" } } },
+      },
+      run(args, ctx) {
+        return \`Hello \${args.who ?? "world"} from \${ctx.cwd}\`;
+      },
+    },
+  ],
+
+  commands: [
+    {
+      name: ${JSON.stringify(name)},
+      description: "Try it: /${name} [args]",
+      run(args, ctx) {
+        return \`/${name} ran in \${ctx.cwd} with "\${args}"\`;
+      },
+    },
+  ],
+};
+`;
+
+/** Creates .nou/plugins/<name>.mjs in this project from a commented template. Returns its path. */
+export function scaffoldPlugin(name: string): string {
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) throw new Error("use letters, numbers and dashes, e.g. /plugins new deploy");
+  const dir = PLUGIN_DIRS.find((d) => d.scope === "project")!.dir;
+  const file = path.join(dir, `${name}.mjs`);
+  if (existsSync(file)) throw new Error(`${path.relative(process.cwd(), file)} already exists`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, TEMPLATE(name));
+  return file;
 }
 
 export async function loadPlugin(entry: PluginEntry): Promise<PluginEntry> {
