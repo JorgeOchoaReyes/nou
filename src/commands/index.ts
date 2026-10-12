@@ -144,7 +144,7 @@ export async function proposeWrite(filePath: string, content: string): Promise<F
 }
 
 /** Works out what edit_file would do, without touching the disk. */
-export async function proposeEdit(filePath: string, oldString: string, newString: string): Promise<FileChange> {
+export async function proposeEdit(filePath: string, oldString: string, newString: string, replaceAll = false): Promise<FileChange> {
   const fullPath = resolveInProject(filePath);
   const before = await readOrEmpty(fullPath);
   if (before === null) throw new Error(`${filePath} does not exist. Use write_file to create it.`);
@@ -155,9 +155,12 @@ export async function proposeEdit(filePath: string, oldString: string, newString
   const target = oldString.replace(/\r\n/g, "\n");
   const count = target ? normalized.split(target).length - 1 : 0;
   if (count === 0) throw new Error("old_string was not found in the file. Read the file and copy the text exactly.");
-  if (count > 1) throw new Error(`old_string appears ${count} times. Include more surrounding lines so it is unique.`);
+  if (count > 1 && !replaceAll) {
+    throw new Error(`old_string appears ${count} times. Include more surrounding lines so it is unique, or set replace_all to change every one.`);
+  }
 
-  const after = normalized.replace(target, () => newString.replace(/\r\n/g, "\n")).replace(/\n/g, eol);
+  const replacement = newString.replace(/\r\n/g, "\n");
+  const after = (replaceAll ? normalized.split(target).join(replacement) : normalized.replace(target, () => replacement)).replace(/\n/g, eol);
   return { path: toRelative(filePath), before, after, isNew: false };
 }
 

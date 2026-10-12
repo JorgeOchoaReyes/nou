@@ -28,14 +28,17 @@ export function ollamaProvider(): Provider {
   const contextSizes = new Map<string, Promise<number | null>>();
 
   /** NOU_NUM_CTX wins; otherwise worked out once per model from what Ollama reports about it. */
-  const numCtx = (model: string): Promise<number | null> => {
+  const numCtx = (model: string, via: Ollama): Promise<number | null> => {
     if (process.env.NOU_NUM_CTX) return Promise.resolve(Number(process.env.NOU_NUM_CTX) || null);
     let size = contextSizes.get(model);
     if (!size) {
       // model_info is typed as a Map but arrives as a plain object.
-      size = client.show({ model })
+      size = via.show({ model })
         .then((info) => pickNumCtx(info.parameters, info.model_info as unknown as Record<string, unknown>))
-        .catch(() => null);
+        .catch(() => {
+          contextSizes.delete(model); // cancelled or failed: ask again next time
+          return null;
+        });
       contextSizes.set(model, size);
     }
     return size;
@@ -63,8 +66,13 @@ export function ollamaProvider(): Provider {
     endpoint: () => ({ baseURL: `${host.replace(/\/$/, "")}/v1`, apiKey: "ollama", api: "openai-completions" as const }),
 
     async chat({ model, system, messages, tools, onText, signal }: ChatRequest): Promise<ChatResult> {
-      const num_ctx = await numCtx(model);
-      const stream = await client.chat({
+      // The library can only abort once the reply starts streaming, but Ollama first reads the whole prompt
+      // (minutes for a long one on a slow machine). Passing our signal to the requests themselves lets Esc stop that too.
+      const requester = signal
+        ? new Ollama({ host, fetch: (input, init) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal }) })
+        : client;
+      const num_ctx = await numCtx(model, requester);
+      const stream = await requester.chat({
         model,
         messages: toOllama(system, messages),
         ...(num_ctx ? { options: { num_ctx } } : {}),
