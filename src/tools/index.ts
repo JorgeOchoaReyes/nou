@@ -74,11 +74,15 @@ export const tools = [
           },
           old_string: {
             type: "string",
-            description: "The exact text to replace. Must appear exactly once in the file."
+            description: "The exact text to replace. Must appear exactly once in the file, unless replace_all is true."
           },
           new_string: {
             type: "string",
             description: "The text to put in its place"
+          },
+          replace_all: {
+            type: "boolean",
+            description: "Replace every occurrence of old_string (e.g. to rename something throughout the file). Defaults to false."
           }
         },
         required: ["path", "old_string", "new_string"]

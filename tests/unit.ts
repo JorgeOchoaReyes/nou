@@ -60,6 +60,40 @@ console.log("Keeping the model's context small");
   check("a num_ctx set in the Modelfile is left alone", pickNumCtx("num_ctx                        24576\ntop_k 20", {}) === null);
 }
 
+console.log("edit_file");
+{
+  const { proposeEdit } = await import("../src/commands/index.js");
+  writeFileSync("rename.js", "import { getUser } from \"./u.js\";\r\nconst u = getUser(1);\r\n");
+  const refused = await proposeEdit("rename.js", "getUser", "fetchUser").then(() => "", (e: Error) => e.message);
+  check("a repeated old_string is refused, pointing at replace_all", refused.includes("appears 2 times") && refused.includes("replace_all"));
+  const all = await proposeEdit("rename.js", "getUser", "fetchUser", true);
+  check("replace_all changes every match and keeps CRLF", all.after === "import { fetchUser } from \"./u.js\";\r\nconst u = fetchUser(1);\r\n");
+}
+
+console.log("Cancelling Ollama while it reads the prompt");
+{
+  const { createServer } = await import("http");
+  // Like Ollama busy with a long prompt: takes the request and doesn't answer.
+  const server = createServer(() => {});
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const saved = process.env.OLLAMA_HOST;
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${(server.address() as any).port}`;
+  const { ollamaProvider } = await import("../src/providers/ollama.js");
+  const provider = ollamaProvider();
+  if (saved === undefined) delete process.env.OLLAMA_HOST;
+  else process.env.OLLAMA_HOST = saved;
+  const controller = new AbortController();
+  const started = Date.now();
+  setTimeout(() => controller.abort(), 200);
+  const outcome = await Promise.race([
+    provider.chat({ model: "m", system: "s", messages: [{ role: "user", content: "hi" }], tools: [], onText() {}, signal: controller.signal }).then(() => "answered", () => "stopped"),
+    new Promise((resolve) => setTimeout(() => resolve("still waiting"), 3000)),
+  ]);
+  check("Esc stops a request Ollama hasn't started answering", outcome === "stopped" && Date.now() - started < 2000);
+  server.closeAllConnections();
+  server.close();
+}
+
 console.log("Undo history");
 {
   writeFileSync("a.txt", "old a\n");
