@@ -4,17 +4,18 @@ import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { Agent, buildSystemPrompt, type ApprovalRequest, type ChangeStatus, type ChatEntry, type ExtraTool } from "../agent/index.js";
 import { describe, providers, resolveModel, saveModel, type ModelChoice } from "../providers/index.js";
+import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, summary as gitSummary, type GitStatus } from "../git/index.js";
 import { gitTools } from "../git/tools.js";
 import { BUILTIN_PLUGINS, discoverPlugins, isEnabled, loadPlugin, trustPatch, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
-import { Timeline } from "../history/index.js";
+import { Timeline, type SessionSummary } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
-import { changedLines } from "./text.js";
+import { changedLines, lineCounts } from "./text.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
@@ -27,6 +28,7 @@ import { QuickOpen, listAllFiles } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
 type Focus = "tree" | "code" | "chat";
+type DiffMode = "off" | "git" | "nou" | "session";
 const FOCUS_ORDER: Focus[] = ["tree", "code", "chat"];
 const NO_LINES = new Set<number>();
 
@@ -37,14 +39,17 @@ const HELP = `Commands:
   /model               show providers and the current model
   /model <provider[:model]>  switch, e.g. /model anthropic  /model ollama:qwen3:8b
   /models [provider]   list models a provider offers
+  /pull <model>        download an Ollama model
   /clear               start a fresh conversation
   /undo                undo Nou's last change (also: u)
   /rewind              undo everything from Nou's last turn
   /history             recent changes
+  /diff [file]         everything changed this session ([ ] step through files)
+  /sessions            earlier sessions; /diff <n> shows one of them
   /version             which version of Nou this is
 Keys:
   Ctrl+P  find a file      Tab  switch pane      Esc  stop / back
-  e  edit open file        v    diff (git / Nou)  f   follow mode
+  e  edit open file        v    diff (git / Nou / session)  f   follow mode
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
 In the editor: Ctrl+S save · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G go to definition`;
@@ -78,7 +83,10 @@ export function App({ initialModel, permContext }: Props) {
   const [treeVersion, setTreeVersion] = useState(0);
   // The last change Nou made per file, so we can flag edited lines and re-open the diff.
   const [changes, setChanges] = useState<Map<string, { change: FileChange; status: ChangeStatus; lines: Set<number> }>>(new Map());
-  const [diffMode, setDiffMode] = useState<"off" | "git" | "nou">("off");
+  const [diffMode, setDiffMode] = useState<DiffMode>("off");
+  // Which session the "session" diff shows (null: this one), and a counter that bumps when history changes.
+  const [sessionView, setSessionView] = useState<{ id: string; label: string } | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [editing, setEditing] = useState(false);
   const [git, setGit] = useState<GitStatus>(() => gitStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
@@ -98,11 +106,12 @@ export function App({ initialModel, permContext }: Props) {
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
+  const pullAbort = useRef<AbortController | null>(null);
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
   diagnosticsRef.current ??= new DiagnosticsManager();
   const diagnostics = diagnosticsRef.current;
   const timelineRef = useRef<Timeline | null>(null);
-  timelineRef.current ??= new Timeline();
+  timelineRef.current ??= new Timeline(() => setHistoryVersion((v) => v + 1));
   const timeline = timelineRef.current;
 
   const followRef = useRef(follow);
@@ -269,6 +278,37 @@ export function App({ initialModel, permContext }: Props) {
     return true;
   };
 
+  /** Downloads an Ollama model, showing progress in the status line. Esc stops it. */
+  const pullModel = async (model: string): Promise<boolean> => {
+    const ollama = providers.find((p) => p.id === "ollama")!;
+    const controller = new AbortController();
+    pullAbort.current = controller;
+    setBusy(`Downloading ${model}...`);
+    try {
+      await ollama.pull!(model, (status, percent) => setBusy(`Downloading ${model}: ${percent === null ? status : `${percent}%`}`), controller.signal);
+      info(`Downloaded ${model}.`);
+      return true;
+    } catch (error: any) {
+      info(controller.signal.aborted ? `Stopped downloading ${model}.` : `Couldn't download ${model}: ${error.message}`, "error");
+      return false;
+    } finally {
+      pullAbort.current = null;
+      setBusy(null);
+    }
+  };
+
+  /** Switches model, downloading it first if it's an Ollama model that isn't installed yet. */
+  const chooseModel = async (next: ModelChoice) => {
+    if (next.provider.pull) {
+      const installed = await next.provider.listModels().catch(() => null);
+      if (installed && !installed.some((m) => sameModel(m, next.model))) {
+        info(`${next.model} isn't downloaded yet; downloading it now (Esc to stop).`);
+        if (!(await pullModel(next.model))) return;
+      }
+    }
+    switchModel(next);
+  };
+
   const togglePlugin = async (id: string, enabled: boolean) => {
     const entry = allPlugins.find((p) => p.id === id);
     if (!entry) return;
@@ -291,7 +331,12 @@ export function App({ initialModel, permContext }: Props) {
     () => (diffMode === "git" && openFile ? diffAgainstHead(openFile, content) : null),
     [diffMode, openFile, content],
   );
-  const diff = pendingChange ?? (diffMode === "git" ? gitChange : diffMode === "nou" && record ? record.change : null);
+  const sessionId = sessionView?.id ?? agentRef.current!.session;
+  const sessionFiles = useMemo(() => timeline.sessionChanges(sessionId), [sessionId, historyVersion]);
+  const sessionChange = openFile ? sessionFiles.find((c) => c.path === openFile) ?? null : null;
+  const diff = pendingChange ?? (diffMode === "git" ? gitChange
+    : diffMode === "nou" && record ? record.change
+      : diffMode === "session" ? sessionChange : null);
   const showEditor = editing && !!openFile && !pendingChange;
 
   // Check Nou's proposed edit before you approve it: does it add problems?
@@ -354,6 +399,7 @@ export function App({ initialModel, permContext }: Props) {
   useInput((input, key) => {
     if (!(key.ctrl && input === "c")) return;
     if (busy || approval) {
+      pullAbort.current?.abort();
       agentRef.current?.cancel();
       approval?.resolve(false);
       setApproval(null);
@@ -408,6 +454,61 @@ export function App({ initialModel, permContext }: Props) {
     }).join("\n")}\nUndo with /undo (last) or /rewind (whole last turn).`);
   };
 
+  /** Opens a file showing its net change over the session being viewed. */
+  const openSessionDiff = (file: string) => {
+    if (!settleDraft(file)) return;
+    open(file);
+    setReveal(file);
+    setDiffMode("session");
+    setFocus("code");
+  };
+
+  /** [ and ]: previous / next file in the session diff. */
+  const stepSessionFile = (step: number) => {
+    if (!sessionFiles.length) return;
+    const at = sessionFiles.findIndex((c) => c.path === openFile);
+    const next = at < 0 ? 0 : (at + step + sessionFiles.length) % sessionFiles.length;
+    openSessionDiff(sessionFiles[next]!.path);
+  };
+
+  const sessionLabel = (s: SessionSummary) => new Date(s.start).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  const showSessions = () => {
+    const list = timeline.sessions().slice(0, 15);
+    if (!list.length) return info("No sessions with changes yet.");
+    info(`Sessions with changes (newest first):\n${list.map((s, i) => {
+      const current = s.id === agentRef.current!.session ? "  (this session)" : "";
+      return `  ${String(i + 1).padStart(2)}. ${sessionLabel(s)}  ${s.files.length} file${s.files.length === 1 ? "" : "s"}${current}`;
+    }).join("\n")}\nShow one with /diff <number>.`);
+  };
+
+  /** /diff: this session; /diff <n>: the nth session from /sessions; /diff <file>: one file of the session being viewed. */
+  const showSessionDiff = (arg: string) => {
+    const current = agentRef.current!.session;
+    let id = current;
+    let label = "this session";
+    let file: string | null = null;
+    if (/^\d+$/.test(arg)) {
+      const picked = timeline.sessions()[Number(arg) - 1];
+      if (!picked) return info(`There's no session ${arg}. See /sessions.`, "error");
+      id = picked.id;
+      if (id !== current) label = `session ${sessionLabel(picked)}`;
+    } else if (arg) {
+      file = arg.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (sessionView) ({ id, label } = sessionView);
+    }
+    const files = timeline.sessionChanges(id);
+    setSessionView(id === current ? null : { id, label });
+    if (!files.length) return info(`No changes in ${label}.`);
+    if (file && !files.some((c) => c.path === file)) return info(`${file} didn't change in ${label}.`, "error");
+    const lines = files.map((c) => {
+      const { added, removed } = lineCounts(c.before, c.after);
+      return `  ${c.isNew ? "A" : "M"} ${c.path}  +${added} -${removed}`;
+    });
+    info(`Changes in ${label} (yours and Nou's):\n${lines.join("\n")}\nShowing ${file ?? files[0]!.path}. [ ] previous/next file · v cycle diffs · Esc close.`);
+    openSessionDiff(file ?? files[0]!.path);
+  };
+
   /**
    * Before editing another file: an unsaved draft of a different file is saved (auto-save on) or kept and
    * the switch refused (auto-save off). Never silently dropped. Returns whether it's OK to continue.
@@ -448,9 +549,10 @@ export function App({ initialModel, permContext }: Props) {
 
   const cycleDiff = () => {
     if (!openFile) return;
-    const order: ("off" | "git" | "nou")[] = ["off"];
+    const order: DiffMode[] = ["off"];
     if (git.has(openFile)) order.push("git");
     if (record?.status === "applied") order.push("nou");
+    if (sessionChange) order.push("session");
     if (order.length === 1) {
       setEntries((prev) => [...prev, { kind: "info", text: `${openFile} has no changes vs git HEAD.` }]);
       return;
@@ -480,8 +582,14 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (key.escape) {
-      if (busy) agentRef.current?.cancel();
-      else if (diffMode !== "off") setDiffMode("off");
+      if (busy) {
+        pullAbort.current?.abort();
+        agentRef.current?.cancel();
+      }
+      else if (diffMode !== "off") {
+        setDiffMode("off");
+        setSessionView(null);
+      }
       else setFocus("chat");
       return;
     }
@@ -493,6 +601,7 @@ export function App({ initialModel, permContext }: Props) {
       setFocus("code");
     } else if (input === "u") undoLast();
     else if (input === "v") cycleDiff();
+    else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "e") startEditing();
     else if (input === "s" || input === ",") setView("settings");
     else if (input === "r") {
@@ -539,6 +648,10 @@ ${snippet}
       return rewind();
     case "history":
       return showHistory();
+    case "diff":
+      return showSessionDiff(arg);
+    case "sessions":
+      return showSessions();
     case "problems":
       setCodePanel("problems");
       setFocus("code");
@@ -555,7 +668,12 @@ ${snippet}
         info(`Current: ${describe(choice)}\n${list.join("\n")}\nSwitch with /model <provider[:model]> or open /settings`);
         return;
       }
-      switchModel(resolveModel(arg));
+      return chooseModel(resolveModel(arg));
+    }
+    case "pull": {
+      if (!arg) return info("Usage: /pull <model>, e.g. /pull qwen3:8b. Browse models at https://ollama.com/library", "error");
+      const model = arg.replace(/^ollama:/, "");
+      if (await pullModel(model)) info(`Use it with /model ollama:${model}`);
       return;
     }
     case "models": {
@@ -632,7 +750,7 @@ ${snippet}
         settings={settings}
         choice={choice}
         plugins={allPlugins}
-        onModel={(next) => switchModel(next)}
+        onModel={(next) => void chooseModel(next)}
         onChange={updateSettings}
         onTogglePlugin={(id, enabled) => void togglePlugin(id, enabled)}
         onRescanPlugins={() => {
@@ -671,7 +789,7 @@ ${snippet}
         ? busy ? "Esc stop · Shift+↑↓ scroll chat · Tab switch pane" : "Enter send · Shift+↑↓ / PgUp scroll · / commands · Ctrl+P find file · Tab switch pane"
         : focus === "tree"
           ? "↑↓ move · Enter open · c changes · e edit · p problems · u undo · Ctrl+P find · s settings"
-          : diff ? "n/N next/prev change · v cycle diff · Esc close diff" : "↑↓ scroll · e edit · v diff · p problems · u undo · s settings";
+          : diff ? `n/N next/prev change${diffMode === "session" ? " · [ ] prev/next file" : ""} · v cycle diff · Esc close diff` : "↑↓ scroll · e edit · v diff · p problems · u undo · s settings";
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -750,7 +868,7 @@ ${snippet}
             filePath={openFile}
             content={content}
             diff={diff}
-            diffLabel={diffMode === "git" ? "vs HEAD" : "Nou's edit"}
+            diffLabel={diffMode === "git" ? "vs HEAD" : diffMode === "session" ? sessionView?.label ?? "this session" : "Nou's edit"}
             pending={!!pendingChange}
             marked={record?.lines ?? NO_LINES}
             problems={fileProblems}

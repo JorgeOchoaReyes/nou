@@ -29,6 +29,7 @@ const PREFS: Pref[] = [
   { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
   { key: "mouse", label: "Mouse", help: "Wheel scrolls the pane under the pointer; click to focus or open files. Hold Shift to select text." },
   { key: "followMode", label: "Follow mode on start", help: "The code view jumps to files Nou reads and edits." },
+  { key: "reuseToolConfig", label: "Use Claude Code / Codex keys", help: "Use the API keys from Claude Code's or Codex's settings when you haven't set one. Applies on restart." },
   { key: "gitContext", label: "Git context", help: "Give the model your branch, changes and commits, plus git tools." },
   { key: "autoApproveEdits", label: "Auto-approve edits", help: "Apply file edits without asking (diffs are still shown).", warn: true },
   { key: "autoApproveCommands", label: "Auto-approve commands", help: "Run shell commands without asking. Only turn on if you trust the model.", warn: true },

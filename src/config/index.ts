@@ -28,6 +28,8 @@ export type Settings = {
   autoSave: AutoSave;
   /** Mouse wheel scrolls the pane under the pointer; clicks focus panes and open files. */
   mouse: boolean;
+  /** Use API keys from Claude Code's and Codex's config for providers you haven't set up. */
+  reuseToolConfig: boolean;
   /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
   /**
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gitContext: true,
   autoSave: "delay",
   mouse: true,
+  reuseToolConfig: true,
   plugins: {},
   trustedPlugins: {},
 };

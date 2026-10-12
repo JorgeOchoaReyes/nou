@@ -51,10 +51,11 @@ function toOpenAI(system: string, messages: ChatMessage[]): OpenAI.ChatCompletio
 }
 
 export function openAICompatibleProvider(preset: Preset): Provider {
-  const baseURL = (preset.urlEnv && process.env[preset.urlEnv]) || preset.baseURL;
-  const apiKey = (preset.keyEnv && process.env[preset.keyEnv]) || (preset.local ? "not-needed" : "");
+  // Read when used, not when loaded: keys found in other tools' config (see setup/) are added at startup.
+  const baseURL = () => (preset.urlEnv && process.env[preset.urlEnv]) || preset.baseURL;
+  const apiKey = () => (preset.keyEnv && process.env[preset.keyEnv]) || (preset.local ? "not-needed" : "");
   let client: OpenAI | null = null;
-  const getClient = () => (client ??= new OpenAI({ baseURL, apiKey }));
+  const getClient = () => (client ??= new OpenAI({ baseURL: baseURL(), apiKey: apiKey() }));
 
   return {
     id: preset.id,
@@ -63,8 +64,8 @@ export function openAICompatibleProvider(preset: Preset): Provider {
     defaultModel: preset.defaultModel,
 
     unavailable() {
-      if (!baseURL) return `set ${preset.urlEnv}`;
-      if (!apiKey) return `set ${preset.keyEnv}`;
+      if (!baseURL()) return `set ${preset.urlEnv}`;
+      if (!apiKey()) return `set ${preset.keyEnv}`;
       return null;
     },
 

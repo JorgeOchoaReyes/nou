@@ -7,7 +7,9 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { artWork } from "./src/util/index.js";
 import { ensureProjectContext, loadPermanentContext } from "./src/context/index.js";
-import { describe, initialModel, resolveModel } from "./src/providers/index.js";
+import { describe, initialModel, resolveModel, saveModel } from "./src/providers/index.js";
+import { loadSettings } from "./src/config/index.js";
+import { borrowToolConfig, ensureLocalModel, pickStartingModel } from "./src/setup/index.js";
 import { checkForUpdate, currentVersion, installUpdate, relaunch } from "./src/update/index.js";
 import { lsp } from "./src/lsp/index.js";
 import { App } from "./src/ui/App.js";
@@ -66,12 +68,27 @@ async function main() {
     }
   }
 
+  const settings = loadSettings();
+  const borrowed = settings.reuseToolConfig ? borrowToolConfig() : [];
+  for (const b of borrowed) p.log.info(`Using the ${b.provider === "anthropic" ? "Anthropic" : "OpenAI"} API key from your ${b.tool} settings.`);
+
   let choice = initialModel();
+  // First run: start with a model that's already here, if there is one.
+  if (!process.env.NOU_MODEL && !settings.model) {
+    const picked = await pickStartingModel(borrowed);
+    if (picked) {
+      choice = picked;
+      saveModel(picked);
+    }
+  }
   const problem = choice.provider.unavailable();
   if (problem) {
     p.log.warn(`${choice.provider.label} isn't set up (${problem}), falling back to local Ollama.`);
     choice = resolveModel("ollama");
   }
+  const ready = await ensureLocalModel(choice);
+  if (ready !== choice) saveModel(ready); // picked a model that's already installed instead
+  choice = ready;
   p.log.info(`Model: ${chalk.yellow(describe(choice))}  (change it any time with /model)`);
 
   await ensureProjectContext(choice);
