@@ -5,39 +5,44 @@ const TIMEOUT_MS = 15_000;
 const ENTITIES = { nbsp: " ", lt: "<", gt: ">", quot: "\"", "#39": "'", amp: "&" };
 
 /** Elements whose contents aren't page text. */
-const SKIPPED = ["script", "style", "noscript", "svg"];
+const SKIPPED = new Set(["script", "style", "noscript", "svg"]);
+/** Tags that end a line of text. */
+const BREAKS = new Set(["br", "/p", "/div", "/li", "/tr", "/h1", "/h2", "/h3", "/h4", "/h5", "/h6"]);
 
-/** Cuts out <script>...</script> and the other SKIPPED elements, contents included. */
-function dropSkipped(html) {
+/**
+ * Keeps the text between tags. Every "<" starts a tag (page text writes a literal one as &lt;), which
+ * runs to the next ">"; skipped elements lose their contents too. Nothing tag-like can survive.
+ */
+function stripTags(html) {
   const lower = html.toLowerCase();
   let out = "";
   let i = 0;
   while (i < html.length) {
     const open = lower.indexOf("<", i);
     if (open < 0) return out + html.slice(i);
-    const name = SKIPPED.find((tag) => lower.startsWith(tag, open + 1) && !/[a-z0-9-]/.test(lower[open + 1 + tag.length] ?? ""));
-    if (!name) {
-      out += html.slice(i, open + 1);
-      i = open + 1;
-      continue;
-    }
     out += html.slice(i, open);
-    const close = lower.indexOf(`</${name}`, open);
-    if (close < 0) return out; // never closed: the rest is its contents
-    const end = lower.indexOf(">", close);
-    i = end < 0 ? html.length : end + 1;
+    const end = lower.indexOf(">", open);
+    if (end < 0) return out; // a tag that never closes: the rest is inside it
+    // "p" for <p class=x>, "/p" for </p>, "br" for <br/>.
+    const inner = lower.slice(open + 1, end);
+    const closing = inner.startsWith("/");
+    const name = `${closing ? "/" : ""}${inner.slice(closing ? 1 : 0).split(/[\s/]/)[0]}`;
+    if (BREAKS.has(name)) out += "\n";
+    i = end + 1;
+    if (SKIPPED.has(name)) {
+      const close = lower.indexOf(`</${name}`, i);
+      if (close < 0) return out; // never closed: the rest is its contents
+      const closeEnd = lower.indexOf(">", close);
+      i = closeEnd < 0 ? html.length : closeEnd + 1;
+    }
   }
   return out;
 }
 
 /** Rough HTML to text: drops scripts, styles and tags, keeps the words. */
 export function htmlToText(html) {
-  // Any "<" left after removing tags began one that never closed (page text writes it as &lt;): drop
-  // it too, so no tag survives. Entities last, in one pass, so "&amp;lt;" becomes "&lt;", not "<".
-  return dropSkipped(html)
-    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)[^>]*>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/</g, "")
+  // Entities after the tags, in one pass, so "&amp;lt;" becomes "&lt;", not "<".
+  return stripTags(html)
     .replace(/&(nbsp|lt|gt|quot|#39|amp);/g, (_, name) => ENTITIES[name])
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s*\n+/g, "\n\n")
