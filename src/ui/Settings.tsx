@@ -258,9 +258,9 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
             <Box key={p.id} flexDirection="column">
               <Text {...(selected ? { backgroundColor: C.panel } : {})}>
                 <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
-                {toggle(enabled)}
+                {p.scope === "starter" ? <Text color={C.accent2} bold>+ ADD</Text> : toggle(enabled)}
                 <Text color={C.text} bold> {p.plugin?.name ?? p.id}</Text>
-                <Text color={C.dim}> {p.plugin?.version ? `v${p.plugin.version} · ` : ""}{p.scope}{parts.length ? ` · ${parts.join(", ")}` : ""}</Text>
+                <Text color={C.dim}> {p.plugin?.version ? `v${p.plugin.version} · ` : ""}{p.scope === "starter" ? "starter, optional" : p.scope}{parts.length ? ` · ${parts.join(", ")}` : ""}</Text>
               </Text>
               {state === "changed"
                 ? <Text color={C.yellow} wrap="truncate-end">    ⚠ Changed since you enabled it. Review the code, then press Enter to enable again.</Text>
@@ -271,8 +271,8 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
           );
         })}
         <Text> </Text>
-        <Text color={C.dim} wrap="truncate-end">Add your own: drop a .js/.mjs file into {PLUGIN_DIRS.map((d) => d.dir).join(" or ")}, then press r.</Text>
-        <Text color={C.dim} wrap="truncate-end">Example: examples/plugins/word-count.mjs in the Nou repo.</Text>
+        <Text color={C.dim} wrap="truncate-end">Starters: Enter adds one to {PLUGIN_DIRS.find((d) => d.scope === "user")!.dir}, where you can edit it.</Text>
+        <Text color={C.dim} wrap="truncate-end">Write your own: /plugins new &lt;name&gt;, or drop a .js/.mjs file into {PLUGIN_DIRS.map((d) => d.dir).join(" or ")}, then press r.</Text>
       </Box>
     );
   };
