@@ -9,6 +9,7 @@ import { artWork } from "./src/util/index.js";
 import { ensureProjectContext, loadPermanentContext } from "./src/context/index.js";
 import { describe, initialModel, resolveModel, saveModel } from "./src/providers/index.js";
 import { loadSettings } from "./src/config/index.js";
+import { loadCredentials } from "./src/config/credentials.js";
 import { borrowToolConfig, ensureLocalModel, pickStartingModel } from "./src/setup/index.js";
 import { checkForUpdate, currentVersion, installUpdate, relaunch } from "./src/update/index.js";
 import { lsp } from "./src/lsp/index.js";
@@ -22,7 +23,7 @@ Usage:
   nou --version    print the version
   nou --help       show this help
 
-Settings live in ~/.nou/config.json (or press s inside Nou). Set NOU_NO_UPDATE_CHECK=1 to skip update checks.`;
+Settings live in ~/.nou/config.json (or press s inside Nou); keys you enter there, or with /connect, in ~/.nou/credentials.json. Set NOU_NO_UPDATE_CHECK=1 to skip update checks.`;
 
 async function main() {
   const args = process.argv.slice(2);
@@ -69,6 +70,7 @@ async function main() {
   }
 
   const settings = loadSettings();
+  loadCredentials(); // keys entered inside Nou, for whatever the environment and .env leave unset
   const borrowed = settings.reuseToolConfig ? borrowToolConfig() : [];
   for (const b of borrowed) p.log.info(`Using the ${b.provider === "anthropic" ? "Anthropic" : "OpenAI"} API key from your ${b.tool} settings.`);
 

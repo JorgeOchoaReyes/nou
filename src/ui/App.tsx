@@ -5,7 +5,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
-import { describe, providers, resolveModel, saveModel, type ModelChoice } from "../providers/index.js";
+import { describe, providers, resolveModel, saveModel, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
@@ -40,6 +40,7 @@ const HELP = `Commands:
   /model               show providers and the current model
   /model <provider[:model]>  switch, e.g. /model anthropic  /model ollama:qwen3:8b
   /models [provider]   list models a provider offers
+  /connect <provider>  enter an API key (and URL), e.g. /connect fireworks  /connect litellm
   /pull <model>        download an Ollama model
   /engine [name]       which agent answers: nou, claude-code, codex or pi
   /plugins             your plugins and the starter ones you can add
@@ -74,6 +75,7 @@ export function App({ initialModel, permContext }: Props) {
 
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
   const [view, setView] = useState<"main" | "settings">("main");
+  const [connectTo, setConnectTo] = useState<Provider | undefined>();
   const [quickOpen, setQuickOpen] = useState(false);
   const [focus, setFocus] = useState<Focus>("chat");
   const [follow, setFollow] = useState(settings.followMode);
@@ -739,8 +741,18 @@ ${snippet}
       setFocus("code");
       return;
     case "settings":
+      setConnectTo(undefined);
       setView("settings");
       return;
+    case "connect": {
+      const provider = providers.find((p) => p.id === arg.toLowerCase());
+      const choices = providers.filter((p) => p.connect).map((p) => p.id).join(", ");
+      if (!provider) return info(arg ? `Unknown provider "${arg}". Choose one of: ${choices}` : `Usage: /connect <provider>, one of: ${choices}`, "error");
+      if (!provider.connect) return info(`${provider.label} needs nothing to connect.`);
+      setConnectTo(provider);
+      setView("settings");
+      return;
+    }
     case "model": {
       if (!arg) {
         const list = providers.map((p) => {
@@ -855,12 +867,16 @@ ${snippet}
         settings={settings}
         choice={choice}
         plugins={allPlugins}
+        {...(connectTo ? { connectTo } : {})}
         onModel={(next) => void chooseModel(next)}
         onEngine={(id) => void switchEngine(id)}
         onChange={updateSettings}
         onTogglePlugin={(id, enabled) => void togglePlugin(id, enabled)}
         onRescanPlugins={rescanPlugins}
-        onClose={() => setView("main")}
+        onClose={() => {
+          setConnectTo(undefined);
+          setView("main");
+        }}
       />
     );
   }

@@ -47,14 +47,23 @@ function hasCredentials(): boolean {
 }
 
 export function anthropicProvider(): Provider {
-  let client: Anthropic | null = null;
-  const getClient = () => (client ??= new Anthropic());
+  // Rebuilt when the key or URL changes (they can be entered while Nou runs).
+  let client: { auth: string; api: Anthropic } | null = null;
+  const getClient = () => {
+    const auth = `${process.env.ANTHROPIC_API_KEY}|${process.env.ANTHROPIC_AUTH_TOKEN}|${process.env.ANTHROPIC_BASE_URL}`;
+    if (client?.auth !== auth) client = { auth, api: new Anthropic() };
+    return client.api;
+  };
 
   return {
     id: "anthropic",
     label: "Anthropic (Claude)",
     local: false,
     defaultModel: "claude-opus-5-5",
+    connect: [
+      { env: "ANTHROPIC_API_KEY", label: "API key", secret: true, placeholder: "console.anthropic.com/settings/keys" },
+      { env: "ANTHROPIC_BASE_URL", label: "Base URL", optional: true, placeholder: "https://api.anthropic.com" },
+    ],
     unavailable: () => (hasCredentials() ? null : "set ANTHROPIC_API_KEY (or run `ant auth login`)"),
     endpoint: () => ({
       baseURL: process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",

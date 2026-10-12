@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/index.js";
+import { saveCredentials } from "../config/credentials.js";
+import { originOf, setOutsideNou } from "../config/origins.js";
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
 import { currentVersion } from "../update/index.js";
-import { describe, providers, type ModelChoice } from "../providers/index.js";
+import { describe, providers, type ModelChoice, type Provider } from "../providers/index.js";
 import { ENGINES, isInstalled, type EngineId } from "../engines/index.js";
 import { C, SPINNER } from "./theme.js";
 
@@ -14,6 +16,8 @@ type Props = {
   settings: SettingsType;
   choice: ModelChoice;
   plugins: PluginEntry[];
+  /** Open on this provider's connect form (the /connect command). */
+  connectTo?: Provider;
   onModel(choice: ModelChoice): void;
   onEngine(id: EngineId): void;
   onChange(patch: Partial<SettingsType>): void;
@@ -37,14 +41,19 @@ const PREFS: Pref[] = [
   { key: "autoApproveCommands", label: "Auto-approve commands", help: "Run shell commands without asking. Only turn on if you trust the model.", warn: true },
 ];
 
-export function Settings({ width, height, settings, choice, plugins, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
+/** Where you are in a provider's connect form: which field, and what's been entered so far. */
+type Connecting = { step: number; values: Record<string, string> };
+
+export function Settings({ width, height, settings, choice, plugins, connectTo, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("Model");
-  const [row, setRow] = useState(0);
+  const [row, setRow] = useState(() => Math.max(0, providers.indexOf(connectTo ?? choice.provider)));
   const [column, setColumn] = useState<"providers" | "models">("providers");
   const [modelRow, setModelRow] = useState(0);
   const [typing, setTyping] = useState(false);
   const [custom, setCustom] = useState("");
   const [models, setModels] = useState<Record<string, string[] | { error: string } | "loading">>({});
+  const [connecting, setConnecting] = useState<Connecting | null>(connectTo?.connect ? { step: 0, values: {} } : null);
+  const [field, setField] = useState(() => (connectTo?.connect ? initialValue(connectTo.connect[0]!) : ""));
   const { frame } = useAnimation({ interval: 80 });
 
   const provider = providers[row] ?? providers[0]!;
@@ -52,17 +61,49 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
 
   // Load the model list for the highlighted provider.
   useEffect(() => {
-    if (tab !== "Model" || provider.unavailable() || models[provider.id]) return;
+    if (tab !== "Model" || connecting || provider.unavailable() || models[provider.id]) return;
     setModels((m) => ({ ...m, [provider.id]: "loading" }));
     provider.listModels()
       .then((list) => setModels((m) => ({ ...m, [provider.id]: list })))
       .catch((error) => setModels((m) => ({ ...m, [provider.id]: { error: String(error.message ?? error) } })));
-  }, [tab, provider.id]);
+  }, [tab, provider.id, connecting]);
+
+  const startConnect = () => {
+    if (!provider.connect) return;
+    setConnecting({ step: 0, values: {} });
+    setField(initialValue(provider.connect[0]!));
+  };
+
+  /** Takes the current field's answer; after the last one, saves everything and shows the provider's models. */
+  const submitField = (value: string) => {
+    const fields = provider.connect!;
+    const current = fields[connecting!.step]!;
+    // Required, and nothing set yet: ask again.
+    if (!value.trim() && !current.optional && !process.env[current.env]) return;
+    const values = { ...connecting!.values, [current.env]: value };
+    const next = connecting!.step + 1;
+    if (next < fields.length) {
+      setConnecting({ step: next, values });
+      setField(initialValue(fields[next]!));
+      return;
+    }
+    saveCredentials(values);
+    setConnecting(null);
+    setModels((m) => Object.fromEntries(Object.entries(m).filter(([id]) => id !== provider.id)));
+    if (!provider.unavailable()) {
+      setColumn("models");
+      setModelRow(0);
+    }
+  };
 
   const modelItems = Array.isArray(listed) ? listed : [];
   const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Engine" ? ENGINES.length : t === "Preferences" ? PREFS.length : plugins.length);
 
   useInput((input, key) => {
+    if (connecting) {
+      if (key.escape) setConnecting(null);
+      return;
+    }
     if (typing) {
       if (key.escape) setTyping(false);
       return;
@@ -85,6 +126,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
       if (key.upArrow) setModelRow((r) => Math.max(0, r - 1));
       else if (key.downArrow) setModelRow((r) => Math.min(count - 1, r + 1));
       else if (key.leftArrow) setColumn("providers");
+      else if (input === "k") startConnect();
       else if (key.return) {
         if (modelRow === 0) {
           setCustom("");
@@ -100,7 +142,9 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
       if (!provider.unavailable()) {
         setColumn("models");
         setModelRow(0);
-      }
+      } else startConnect();
+    } else if (tab === "Model" && input === "k") {
+      startConnect();
     } else if (tab === "Engine" && (key.return || input === " ")) {
       onEngine(ENGINES[row]!.id);
     } else if (tab === "Preferences" && (key.return || input === " " || key.leftArrow || key.rightArrow)) {
@@ -127,6 +171,8 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
   const body = () => {
     if (tab === "Model") {
       const leftWidth = Math.min(46, Math.floor(width * 0.45));
+      // Room for the label next to the marker, "local"/"cloud" and the lock (plus the border).
+      const labelWidth = Math.max(10, leftWidth - 14);
       return (
         <Box flexDirection="row" height={boxHeight}>
           <Box flexDirection="column" width={leftWidth} borderStyle="round" borderColor={column === "providers" ? C.accent : C.dim}>
@@ -138,7 +184,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
               return (
                 <Text key={p.id} wrap="truncate-end" {...(selected && column === "providers" ? { backgroundColor: C.panel } : {})}>
                   <Text color={current ? C.green : C.dim}>{current ? " ● " : "   "}</Text>
-                  <Text color={problem ? C.dim : C.text} bold={selected}>{p.label.padEnd(26).slice(0, 26)}</Text>
+                  <Text color={problem ? C.dim : C.text} bold={selected}>{p.label.padEnd(labelWidth).slice(0, labelWidth)}</Text>
                   <Text color={p.local ? C.green : C.accent2}>{p.local ? " local" : " cloud"}</Text>
                   {problem ? <Text color={C.dim}> 🔒</Text> : null}
                 </Text>
@@ -147,10 +193,41 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
           </Box>
           <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={column === "models" ? C.accent : C.dim} paddingX={1}>
             <Text color={C.dim} bold>MODELS · {provider.label}</Text>
-            {provider.unavailable() ? (
+            {connecting && provider.connect ? (
+              <>
+                <Text color={C.accent2} bold>Connect {provider.label}</Text>
+                {provider.connect.map((f, i) => {
+                  const entered = connecting.values[f.env];
+                  const shown = (v: string) => (f.secret ? "•".repeat(Math.min(v.length, 12)) : v);
+                  if (i < connecting.step) {
+                    return <Text key={f.env} color={C.dim} wrap="truncate-end">✓ {f.label}: {entered ? shown(entered) : "unchanged"}</Text>;
+                  }
+                  if (i > connecting.step) return <Text key={f.env} color={C.dim}>  {f.label}{f.optional ? " (optional)" : ""}</Text>;
+                  return (
+                    <Box key={f.env} flexDirection="column">
+                      <Text>
+                        <Text color={C.accent2}>✎ {f.label}{f.optional ? " (optional)" : ""}: </Text>
+                        <TextInput value={field} onChange={setField} onSubmit={submitField} {...(f.secret ? { mask: "•" } : {})} {...(f.placeholder ? { placeholder: f.placeholder } : {})} />
+                      </Text>
+                      <Text color={C.dim} wrap="truncate-end">
+                        {"  "}{f.env}{process.env[f.env] ? (f.secret ? ` is set (from ${originOf(f.env)}); Enter keeps it` : "") : f.optional ? "; Enter skips" : ""}
+                      </Text>
+                      {setOutsideNou(f.env) && (
+                        <Text color={C.yellow} wrap="wrap">  A new one works now, but {originOf(f.env)} sets {f.env} too and wins when Nou restarts: change or remove it there.</Text>
+                      )}
+                    </Box>
+                  );
+                })}
+                <Text> </Text>
+                <Text color={C.dim} wrap="truncate-end">Saved to ~/.nou/credentials.json (only you can read it). Your environment and .env still win.</Text>
+              </>
+            ) : provider.unavailable() ? (
               <>
                 <Text color={C.yellow}>Not set up: {provider.unavailable()}</Text>
-                <Text color={C.dim}>Add it to a .env file in your project (see .env.example) or your environment, then restart Nou.</Text>
+                {provider.connect
+                  ? <Text color={C.accent2}>Press Enter to connect it: paste your key here, no restart needed.</Text>
+                  : null}
+                <Text color={C.dim}>Or add it to a .env file in your project (see .env.example) or your environment.</Text>
               </>
             ) : (
               <>
@@ -171,7 +248,15 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
                   <Text {...(column === "models" && modelRow === 0 ? { backgroundColor: C.panel } : {})} color={C.accent2}>✎ Type a model name…</Text>
                 )}
                 {listed === "loading" && <Text color={C.accent2}>{SPINNER[frame % SPINNER.length]} loading models…</Text>}
-                {listed && typeof listed === "object" && !Array.isArray(listed) && <Text color={C.red}>Couldn't list models: {listed.error}</Text>}
+                {listed && typeof listed === "object" && !Array.isArray(listed) && (
+                  <>
+                    <Text color={C.red}>Couldn't list models: {listed.error}</Text>
+                    {rejectedKey(listed.error) && provider.connect?.some((f) => f.secret) && (() => {
+                      const key = provider.connect.find((f) => f.secret)!.env;
+                      return <Text color={C.yellow} wrap="wrap">The {key} {originOf(key) ? `from ${originOf(key)} ` : ""}was rejected. Press k to enter a different key.</Text>;
+                    })()}
+                  </>
+                )}
                 {(() => {
                   const visibleCount = Math.max(1, boxHeight - 6);
                   const offset = Math.max(0, Math.min(modelRow - 1 - Math.floor(visibleCount / 2), modelItems.length - visibleCount));
@@ -278,7 +363,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
   };
 
   const hints = tab === "Model"
-    ? column === "models" ? "↑↓ choose · Enter use model · ← providers" : "↑↓ provider · Enter/→ pick a model"
+    ? connecting ? "Enter next · Esc cancel" : column === "models" ? `↑↓ choose · Enter use model · ← providers${provider.connect ? " · k change key" : ""}` : `↑↓ provider · Enter/→ ${provider.unavailable() ? "connect" : "pick a model"}${provider.connect ? " · k change key" : ""}`
     : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
 
   return (
@@ -297,3 +382,11 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
     </Box>
   );
 }
+
+/** What a connect field starts with: the current URL to edit (keys stay hidden, so they start empty). */
+function initialValue(f: { env: string; secret?: boolean }): string {
+  return f.secret ? "" : process.env[f.env] ?? "";
+}
+
+/** Whether a provider error means the API key is wrong (rather than, say, the server being down). */
+const rejectedKey = (error: string) => /\b(401|403)\b|api key|unauthori[sz]ed|authentication/i.test(error);

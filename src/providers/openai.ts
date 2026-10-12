@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ChatMessage, ChatRequest, ChatResult, Provider, ToolCall } from "./types.js";
+import type { ChatMessage, ChatRequest, ChatResult, ConnectField, Provider, ToolCall } from "./types.js";
 import { newCallId } from "./ids.js";
 
 type Preset = {
@@ -12,6 +12,8 @@ type Preset = {
   urlEnv?: string;
   defaultModel: string;
   local: boolean;
+  /** Where to get a key, shown when connecting. */
+  keyHint?: string;
 };
 
 /** Everything that speaks the OpenAI chat completions API. */
@@ -21,6 +23,9 @@ export const OPENAI_COMPATIBLE: Preset[] = [
   { id: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", keyEnv: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-opus-5-5", local: false },
   { id: "groq", label: "Groq", baseURL: "https://api.groq.com/openai/v1", keyEnv: "GROQ_API_KEY", defaultModel: "llama-3.3-70b-versatile", local: false },
   { id: "deepseek", label: "DeepSeek", baseURL: "https://api.deepseek.com/v1", keyEnv: "DEEPSEEK_API_KEY", defaultModel: "deepseek-chat", local: false },
+  { id: "fireworks", label: "Fireworks AI", baseURL: "https://api.fireworks.ai/inference/v1", keyEnv: "FIREWORKS_API_KEY", defaultModel: "accounts/fireworks/models/kimi-k2-instruct", local: false, keyHint: "fireworks.ai/account/api-keys" },
+  // A LiteLLM proxy, or any hosted OpenAI-compatible gateway: cloud-sized context, unlike "custom".
+  { id: "litellm", label: "LiteLLM / gateway", baseURL: "", urlEnv: "LITELLM_BASE_URL", keyEnv: "LITELLM_API_KEY", defaultModel: "gpt-5", local: false, keyHint: "your proxy's virtual key or master key" },
   { id: "lmstudio", label: "LM Studio", baseURL: "http://localhost:1234/v1", urlEnv: "LMSTUDIO_BASE_URL", defaultModel: "local-model", local: true },
   { id: "llamacpp", label: "llama.cpp server", baseURL: "http://localhost:8080/v1", urlEnv: "LLAMACPP_BASE_URL", defaultModel: "local-model", local: true },
   { id: "custom", label: "Custom OpenAI-compatible", baseURL: "", urlEnv: "NOU_BASE_URL", keyEnv: "NOU_API_KEY", defaultModel: "default", local: true },
@@ -54,14 +59,25 @@ export function openAICompatibleProvider(preset: Preset): Provider {
   // Read when used, not when loaded: keys found in other tools' config (see setup/) are added at startup.
   const baseURL = () => (preset.urlEnv && process.env[preset.urlEnv]) || preset.baseURL;
   const apiKey = () => (preset.keyEnv && process.env[preset.keyEnv]) || (preset.local ? "not-needed" : "");
-  let client: OpenAI | null = null;
-  const getClient = () => (client ??= new OpenAI({ baseURL: baseURL(), apiKey: apiKey() }));
+  // Rebuilt when the URL or key changes (they can be entered while Nou runs).
+  let client: { url: string; key: string; api: OpenAI } | null = null;
+  const getClient = () => {
+    const url = baseURL();
+    const key = apiKey();
+    if (client?.url !== url || client.key !== key) client = { url, key, api: new OpenAI({ baseURL: url, apiKey: key }) };
+    return client.api;
+  };
+  const connect: ConnectField[] = [
+    ...(preset.urlEnv ? [{ env: preset.urlEnv, label: "Base URL", optional: !!preset.baseURL, placeholder: preset.baseURL || "https://your-proxy.example.com/v1" }] : []),
+    ...(preset.keyEnv ? [{ env: preset.keyEnv, label: "API key", secret: true, optional: preset.local, ...(preset.keyHint ? { placeholder: preset.keyHint } : {}) }] : []),
+  ];
 
   return {
     id: preset.id,
     label: preset.label,
     local: preset.local,
     defaultModel: preset.defaultModel,
+    ...(connect.length ? { connect } : {}),
     endpoint: () => ({ baseURL: baseURL(), apiKey: apiKey() || "not-needed", api: "openai-completions" as const }),
 
     unavailable() {
