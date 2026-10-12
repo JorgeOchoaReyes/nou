@@ -108,9 +108,9 @@ If you haven't set a key, Nou uses the API key from Claude Code (`~/.claude/sett
 | 🖥️ LM Studio | 🟢 local | start its local server |
 | ⚙️ llama.cpp server | 🟢 local | start `llama-server` |
 | 🔧 Any OpenAI-compatible server | 🟢 local | `NOU_BASE_URL`, optional `NOU_API_KEY` |
-| 🚅 LiteLLM proxy or any hosted gateway | ☁️ cloud | `/connect litellm`, or `LITELLM_BASE_URL` + `LITELLM_API_KEY` |
+| 🚅 LiteLLM proxy or any hosted gateway | ☁️ cloud | `/connect litellm`, or `LITELLM_BASE_URL` + `LITELLM_API_KEY` (LiteLLM's `LITELLM_PROXY_API_BASE` + `LITELLM_PROXY_API_KEY` work too) |
 | 🟣 Anthropic (Claude) | ☁️ cloud | `ANTHROPIC_API_KEY` |
-| ⚪ OpenAI | ☁️ cloud | `OPENAI_API_KEY` |
+| ⚪ OpenAI | ☁️ cloud | `OPENAI_API_KEY`, optional `OPENAI_BASE_URL` |
 | 🔷 Google Gemini | ☁️ cloud | `GEMINI_API_KEY` |
 | 🔀 OpenRouter | ☁️ cloud | `OPENROUTER_API_KEY` |
 | ⚡ Groq | ☁️ cloud | `GROQ_API_KEY` |

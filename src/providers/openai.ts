@@ -10,6 +10,8 @@ type Preset = {
   keyEnv?: string;
   /** Env var that overrides the base URL. */
   urlEnv?: string;
+  /** Other names the same URL and key often go by, read when the main ones aren't set. */
+  aliases?: { url?: string[]; key?: string[] };
   defaultModel: string;
   local: boolean;
   /** Where to get a key, shown when connecting. */
@@ -18,14 +20,16 @@ type Preset = {
 
 /** Everything that speaks the OpenAI chat completions API. */
 export const OPENAI_COMPATIBLE: Preset[] = [
-  { id: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", keyEnv: "OPENAI_API_KEY", defaultModel: "gpt-5", local: false },
+  { id: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", urlEnv: "OPENAI_BASE_URL", keyEnv: "OPENAI_API_KEY", defaultModel: "gpt-5", local: false },
   { id: "gemini", label: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-2.5-pro", local: false },
   { id: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", keyEnv: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-opus-5-5", local: false },
   { id: "groq", label: "Groq", baseURL: "https://api.groq.com/openai/v1", keyEnv: "GROQ_API_KEY", defaultModel: "llama-3.3-70b-versatile", local: false },
   { id: "deepseek", label: "DeepSeek", baseURL: "https://api.deepseek.com/v1", keyEnv: "DEEPSEEK_API_KEY", defaultModel: "deepseek-chat", local: false },
   { id: "fireworks", label: "Fireworks AI", baseURL: "https://api.fireworks.ai/inference/v1", keyEnv: "FIREWORKS_API_KEY", defaultModel: "accounts/fireworks/models/kimi-k2-instruct", local: false, keyHint: "fireworks.ai/account/api-keys" },
   // A LiteLLM proxy, or any hosted OpenAI-compatible gateway: cloud-sized context, unlike "custom".
-  { id: "litellm", label: "LiteLLM / gateway", baseURL: "", urlEnv: "LITELLM_BASE_URL", keyEnv: "LITELLM_API_KEY", defaultModel: "gpt-5", local: false, keyHint: "your proxy's virtual key or master key" },
+  { id: "litellm", label: "LiteLLM / gateway", baseURL: "", urlEnv: "LITELLM_BASE_URL", keyEnv: "LITELLM_API_KEY", defaultModel: "gpt-5", local: false, keyHint: "your proxy's virtual key or master key",
+    // The names LiteLLM's own SDK uses for a proxy (its litellm_proxy provider).
+    aliases: { url: ["LITELLM_PROXY_API_BASE"], key: ["LITELLM_PROXY_API_KEY"] } },
   { id: "lmstudio", label: "LM Studio", baseURL: "http://localhost:1234/v1", urlEnv: "LMSTUDIO_BASE_URL", defaultModel: "local-model", local: true },
   { id: "llamacpp", label: "llama.cpp server", baseURL: "http://localhost:8080/v1", urlEnv: "LLAMACPP_BASE_URL", defaultModel: "local-model", local: true },
   { id: "custom", label: "Custom OpenAI-compatible", baseURL: "", urlEnv: "NOU_BASE_URL", keyEnv: "NOU_API_KEY", defaultModel: "default", local: true },
@@ -57,8 +61,9 @@ function toOpenAI(system: string, messages: ChatMessage[]): OpenAI.ChatCompletio
 
 export function openAICompatibleProvider(preset: Preset): Provider {
   // Read when used, not when loaded: keys found in other tools' config (see setup/) are added at startup.
-  const baseURL = () => (preset.urlEnv && process.env[preset.urlEnv]) || preset.baseURL;
-  const apiKey = () => (preset.keyEnv && process.env[preset.keyEnv]) || (preset.local ? "not-needed" : "");
+  const first = (names: (string | undefined)[]) => names.map((n) => n && process.env[n]).find(Boolean);
+  const baseURL = () => first([preset.urlEnv, ...(preset.aliases?.url ?? [])]) || preset.baseURL;
+  const apiKey = () => first([preset.keyEnv, ...(preset.aliases?.key ?? [])]) || (preset.local ? "not-needed" : "");
   // Rebuilt when the URL or key changes (they can be entered while Nou runs).
   let client: { url: string; key: string; api: OpenAI } | null = null;
   const getClient = () => {

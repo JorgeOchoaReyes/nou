@@ -320,6 +320,26 @@ console.log("Providers and saved keys");
   check("on startup, saved keys fill in only what the environment leaves unset", process.env.LITELLM_API_KEY === "sk-env" && process.env.LITELLM_BASE_URL === "http://proxy.test:4000/v1");
   delete process.env.LITELLM_BASE_URL;
   delete process.env.LITELLM_API_KEY;
+
+  process.env.LITELLM_PROXY_API_BASE = "http://proxy.alias:4000";
+  process.env.LITELLM_PROXY_API_KEY = "sk-alias";
+  check("LiteLLM SDK's own proxy settings are picked up", byId("litellm").unavailable() === null && byId("litellm").endpoint!().apiKey === "sk-alias" && byId("litellm").endpoint!().baseURL === "http://proxy.alias:4000");
+  delete process.env.LITELLM_PROXY_API_BASE;
+  delete process.env.LITELLM_PROXY_API_KEY;
+  process.env.OPENAI_BASE_URL = "http://openai.proxy/v1";
+  check("OPENAI_BASE_URL points the OpenAI provider elsewhere", byId("openai").endpoint!().baseURL === "http://openai.proxy/v1");
+  delete process.env.OPENAI_BASE_URL;
+
+  const { keyHint } = await import("../src/providers/index.js");
+  const { noteOrigin } = await import("../src/config/origins.js");
+  const saved = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-proj-stale";
+  noteOrigin(["OPENAI_API_KEY"], ".env");
+  const hint = keyHint(byId("openai"), "401 Incorrect API key provided: sk-proj-****");
+  check("a rejected key in chat says where it came from and how to fix it", !!hint && hint.includes("OPENAI_API_KEY from .env was rejected") && hint.includes("/connect openai"));
+  check("other errors get no key hint", keyHint(byId("openai"), "500 server error") === null && keyHint(byId("ollama"), "401") === null);
+  if (saved === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = saved;
 }
 
 console.log("Evals");
