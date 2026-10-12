@@ -141,5 +141,61 @@ console.log(".env loading");
   check("Ollama host from .env is used", out.ollama.includes("example.invalid"));
 }
 
+console.log("Evals");
+{
+  const { TASKS } = await import("../evals/tasks.js");
+  const { runTask } = await import("../evals/runner.js");
+  // A correct result for each task, so we know the checks pass good work (and fail the untouched project).
+  const solutions: Record<string, { edit?(files: Record<string, string>): void; answer?: string }> = {
+    "fix-failing-test": { edit: (f) => void (f["src/stats.js"] = f["src/stats.js"]!.replace("values.length - 1", "values.length")) },
+    "implement-from-spec": {
+      edit: (f) => void (f["src/slug.js"] = `export function slugify(text) {
+  return text.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+`),
+    },
+    "rename-across-files": { edit: (f) => Object.keys(f).forEach((k) => (f[k] = f[k]!.replaceAll("getUser", "fetchUser"))) },
+    "edit-large-file": { edit: (f) => void (f["config/defaults.js"] = f["config/defaults.js"]!.replace("MAX_RETRIES = 3;", "MAX_RETRIES = 5;")) },
+    "find-the-setting": { edit: (f) => void (f["src/net/http/client.js"] = f["src/net/http/client.js"]!.replace("= 250;", "= 1000;")) },
+    "answer-without-editing": { answer: "It returns 5400000 (90 minutes in ms)." },
+  };
+  check("every task has a reference solution", TASKS.every((t) => solutions[t.name]));
+  for (const task of TASKS) {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "nou-evalcheck-"));
+    const write = (files: Record<string, string>) => {
+      for (const [file, content] of Object.entries(files)) {
+        mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+        writeFileSync(path.join(dir, file), content);
+      }
+    };
+    write(task.files);
+    const untouched = task.check({ dir, answer: "", original: task.files });
+    const solved = { ...task.files };
+    solutions[task.name]?.edit?.(solved);
+    write(solved);
+    const good = task.check({ dir, answer: solutions[task.name]?.answer ?? "", original: task.files });
+    check(`${task.name}: fails untouched, passes when solved${good ? ` (${good})` : ""}`, untouched !== null && good === null);
+  }
+
+  // The runner end to end, with a scripted model that fixes the bug.
+  let turn = 0;
+  const solver: any = {
+    id: "script", label: "Script", local: true, defaultModel: "s", unavailable: () => null, listModels: async () => [],
+    async chat() {
+      turn++;
+      if (turn === 1) return { text: "", toolCalls: [{ id: "a", name: "read_file", args: { path: "src/stats.js" } }] };
+      if (turn === 2) return { text: "", toolCalls: [{ id: "b", name: "edit_file", args: { path: "src/stats.js", old_string: "values.length - 1", new_string: "values.length" } }] };
+      return { text: "Fixed the off-by-one in average().", toolCalls: [] };
+    },
+  };
+  const task = TASKS.find((t) => t.name === "fix-failing-test")!;
+  const before = process.cwd();
+  const result = await runTask({ provider: solver, model: "s" }, task);
+  check("the eval runner scores a solved task", result.pass && result.steps === 3 && result.toolCalls.edit_file === 1 && process.cwd() === before);
+  const idle: any = { ...solver, chat: async () => ({ text: "No idea.", toolCalls: [] }) };
+  const failed = await runTask({ provider: idle, model: "s" }, task);
+  check("the eval runner fails an unsolved task, with the reason", !failed.pass && !!failed.reason?.includes("tests still fail"));
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);
