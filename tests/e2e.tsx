@@ -206,6 +206,26 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("switching back to Nou's engine", frame().includes("Now using the Nou engine"));
 });
 
+console.log("Connecting a provider");
+delete process.env.FIREWORKS_API_KEY;
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/connect fireworks");
+  await press(KEY.enter, 300);
+  check("/connect opens the provider's connect form", frame().includes("Connect Fireworks AI") && frame().includes("API key"));
+  await type("fw-secret");
+  check("the key is masked while typing", !frame().includes("fw-secret") && frame().includes("•••"));
+  await press(KEY.enter, 400);
+  check("the key is saved and applies without a restart", process.env.FIREWORKS_API_KEY === "fw-secret"
+    && JSON.parse(readFileSync(path.join(process.env.HOME!, ".nou", "credentials.json"), "utf-8")).FIREWORKS_API_KEY === "fw-secret");
+  check("then it moves on to picking a model", frame().includes("MODELS · Fireworks AI") && !frame().includes("Not set up"));
+  await press(KEY.esc, 150);
+  await press(KEY.esc, 150);
+  await type("/connect nope");
+  await press(KEY.enter, 300);
+  check("/connect names the providers it knows", frame().includes("Unknown provider \"nope\"") && frame().includes("litellm"));
+});
+delete process.env.FIREWORKS_API_KEY;
+
 process.chdir(os.tmpdir());
 rmSync(dir, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");

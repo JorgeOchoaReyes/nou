@@ -2,7 +2,7 @@
  * Unit tests for logic that's easy to get subtly wrong. Run: npm test
  */
 import { execFileSync } from "child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
@@ -295,6 +295,31 @@ console.log(".env loading");
   const out = JSON.parse(execFileSync(process.execPath, ["--import", tsx, "probe.mjs"], { cwd: dir, encoding: "utf-8" }).trim().split("\n").at(-1)!);
   check("OpenAI key from .env is seen by the provider", out.openai === null);
   check("Ollama host from .env is used", out.ollama.includes("example.invalid"));
+}
+
+console.log("Providers and saved keys");
+{
+  const { providers } = await import("../src/providers/index.js");
+  const { loadCredentials, saveCredentials } = await import("../src/config/credentials.js");
+  const { NOU_HOME } = await import("../src/config/index.js");
+  const byId = (id: string) => providers.find((p) => p.id === id)!;
+  const budget = (id: string) => new Agent({ provider: byId(id), model: "m" }, "sys", {} as any).contextBudget();
+  check("LiteLLM and Fireworks are cloud providers with the cloud context budget", !byId("litellm").local && !byId("fireworks").local && budget("litellm") === 500_000 && budget("fireworks") === 500_000);
+  check("the custom server stays local", byId("custom").local && budget("custom") === 90_000);
+  delete process.env.LITELLM_BASE_URL;
+  delete process.env.LITELLM_API_KEY;
+  check("LiteLLM asks for its URL, then its key", byId("litellm").unavailable() === "set LITELLM_BASE_URL" && byId("litellm").connect?.map((f) => f.env).join() === "LITELLM_BASE_URL,LITELLM_API_KEY");
+  saveCredentials({ LITELLM_BASE_URL: " http://proxy.test:4000/v1 ", LITELLM_API_KEY: "sk-saved" });
+  check("saved keys apply right away", byId("litellm").unavailable() === null && byId("litellm").endpoint!().baseURL === "http://proxy.test:4000/v1");
+  const file = path.join(NOU_HOME, "credentials.json");
+  check("saved keys are kept in ~/.nou/credentials.json", JSON.parse(readFileSync(file, "utf-8")).LITELLM_API_KEY === "sk-saved");
+  if (process.platform !== "win32") check("only you can read them", (statSync(file).mode & 0o777) === 0o600);
+  process.env.LITELLM_API_KEY = "sk-env";
+  delete process.env.LITELLM_BASE_URL;
+  loadCredentials();
+  check("on startup, saved keys fill in only what the environment leaves unset", process.env.LITELLM_API_KEY === "sk-env" && process.env.LITELLM_BASE_URL === "http://proxy.test:4000/v1");
+  delete process.env.LITELLM_BASE_URL;
+  delete process.env.LITELLM_API_KEY;
 }
 
 console.log("Evals");

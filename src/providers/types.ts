@@ -42,11 +42,16 @@ export type ChatResult = {
   stop?: "max_tokens" | "refusal";
 };
 
+/** Something to ask for when connecting a provider from inside Nou: the env var it's saved as. */
+export type ConnectField = { env: string; label: string; secret?: boolean; optional?: boolean; placeholder?: string };
+
 export interface Provider {
   id: string;
   label: string;
   local: boolean;
   defaultModel: string;
+  /** What to ask for to set it up from inside Nou (settings → Model, or /connect). Omitted when there's nothing to enter. */
+  connect?: ConnectField[];
   /** Why this provider can't be used right now (e.g. missing API key), or null if it's ready. */
   unavailable(): string | null;
   chat(request: ChatRequest): Promise<ChatResult>;

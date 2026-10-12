@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Claude-cloud-bb9af7?style=flat-square&logo=anthropic&logoColor=white&labelColor=1a1b26" alt="Claude">
   <img src="https://img.shields.io/badge/OpenAI-cloud-bb9af7?style=flat-square&labelColor=1a1b26" alt="OpenAI">
   <img src="https://img.shields.io/badge/Gemini-cloud-bb9af7?style=flat-square&logo=googlegemini&logoColor=white&labelColor=1a1b26" alt="Gemini">
-  <img src="https://img.shields.io/badge/OpenRouter%20·%20Groq%20·%20DeepSeek-cloud-bb9af7?style=flat-square&labelColor=1a1b26" alt="More providers">
+  <img src="https://img.shields.io/badge/OpenRouter%20·%20Groq%20·%20DeepSeek%20·%20Fireworks%20·%20LiteLLM-cloud-bb9af7?style=flat-square&labelColor=1a1b26" alt="More providers">
 </p>
 
 <p align="center">
@@ -95,7 +95,7 @@ Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` 
 
 ## 🧠 Models
 
-Pick one in <kbd>s</kbd> settings, with `/model anthropic` or `/model ollama:qwen3:8b`, or set `NOU_MODEL=provider:model`. Switching to an Ollama model you don't have downloads it (or use `/pull <model>`). API keys come from your environment or a `.env` file in your project; see [.env.example](.env.example).
+Pick one in <kbd>s</kbd> settings, with `/model anthropic` or `/model ollama:qwen3:8b`, or set `NOU_MODEL=provider:model`. Switching to an Ollama model you don't have downloads it (or use `/pull <model>`). API keys come from your environment or a `.env` file in your project; see [.env.example](.env.example). Or connect a provider inside Nou: pick it in <kbd>s</kbd> settings and press <kbd>Enter</kbd>, or run `/connect fireworks`, then paste your key. It's saved to `~/.nou/credentials.json` (only you can read it) and works right away, no restart.
 
 If you haven't set a key, Nou uses the API key from Claude Code (`~/.claude/settings.json`) or Codex (`~/.codex/auth.json`). Subscription sign-ins (claude.ai, ChatGPT) can't be reused. Turn this off in settings with "Use Claude Code / Codex keys".
 
@@ -108,12 +108,18 @@ If you haven't set a key, Nou uses the API key from Claude Code (`~/.claude/sett
 | 🖥️ LM Studio | 🟢 local | start its local server |
 | ⚙️ llama.cpp server | 🟢 local | start `llama-server` |
 | 🔧 Any OpenAI-compatible server | 🟢 local | `NOU_BASE_URL`, optional `NOU_API_KEY` |
+| 🚅 LiteLLM proxy or any hosted gateway | ☁️ cloud | `/connect litellm`, or `LITELLM_BASE_URL` + `LITELLM_API_KEY` |
 | 🟣 Anthropic (Claude) | ☁️ cloud | `ANTHROPIC_API_KEY` |
 | ⚪ OpenAI | ☁️ cloud | `OPENAI_API_KEY` |
 | 🔷 Google Gemini | ☁️ cloud | `GEMINI_API_KEY` |
 | 🔀 OpenRouter | ☁️ cloud | `OPENROUTER_API_KEY` |
 | ⚡ Groq | ☁️ cloud | `GROQ_API_KEY` |
 | 🐋 DeepSeek | ☁️ cloud | `DEEPSEEK_API_KEY` |
+| 🎆 Fireworks AI | ☁️ cloud | `/connect fireworks`, or `FIREWORKS_API_KEY` |
+
+Every cloud provider can also be connected from inside Nou with `/connect <provider>`.
+
+**Local or cloud?** Nou keeps less conversation for local models (about 90k characters) before summarizing, since they usually run with a small context window. The `custom` provider is meant for servers on your machine (vLLM, Jan, LocalAI...). For a LiteLLM proxy, or any other OpenAI-compatible gateway in front of cloud models, use `litellm`: it gets the full cloud budget. Override either with `NOU_CONTEXT_CHARS`.
 
 </details>
 
