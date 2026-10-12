@@ -9,7 +9,7 @@ import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, type GitStatus } from "../git/index.js";
-import { BUILTIN_PLUGINS, discoverPlugins, isEnabled, loadPlugin, trustPatch, type PluginEntry } from "../plugins/index.js";
+import { BUILTIN_PLUGINS, addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch, trustState, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
 import { Timeline, type SessionSummary } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
@@ -40,6 +40,9 @@ const HELP = `Commands:
   /model <provider[:model]>  switch, e.g. /model anthropic  /model ollama:qwen3:8b
   /models [provider]   list models a provider offers
   /pull <model>        download an Ollama model
+  /plugins             your plugins and the starter ones you can add
+  /plugins add <name>  add a starter plugin (copied to ~/.nou/plugins to edit)
+  /plugins new <name>  start your own plugin in .nou/plugins/
   /clear               start a fresh conversation
   /undo                undo Nou's last change (also: u)
   /rewind              undo everything from Nou's last turn
@@ -90,6 +93,7 @@ export function App({ initialModel, permContext }: Props) {
   const [editing, setEditing] = useState(false);
   const [git, setGit] = useState<GitStatus>(() => gitStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
+  const [starters, setStarters] = useState<PluginEntry[]>([]);
   const [viewport, setViewport] = useState<{ top: number; bottom: number } | null>(null);
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   // Unsaved editor text survives switching to a diff and back.
@@ -189,10 +193,15 @@ export function App({ initialModel, permContext }: Props) {
       const found = discoverPlugins();
       const saved = loadSettings();
       setPlugins(await Promise.all(found.map((p) => (isEnabled(p, saved) ? loadPlugin(p) : p))));
+      setStarters(await Promise.all(starterPlugins().map(loadPlugin)));
     })();
   }, []);
 
-  const allPlugins = useMemo(() => [...BUILTIN_PLUGINS, ...plugins], [plugins]);
+  // Starter plugins are listed until you add them (or have your own plugin with the same name).
+  const allPlugins = useMemo(
+    () => [...BUILTIN_PLUGINS, ...plugins, ...starters.filter((s) => !plugins.some((p) => p.id === s.id))],
+    [plugins, starters],
+  );
   const activePlugins = useMemo(() => allPlugins.filter((p) => isEnabled(p, settings) && p.plugin), [allPlugins, settings.plugins, settings.trustedPlugins]);
 
   // Checkers come from enabled plugins (built-in ones included).
@@ -273,9 +282,27 @@ export function App({ initialModel, permContext }: Props) {
     switchModel(next);
   };
 
+  /** Copies a starter plugin into ~/.nou/plugins/, switches it on and loads it. */
+  const addStarterPlugin = async (starter: PluginEntry): Promise<PluginEntry> => {
+    const added = addStarter(starter);
+    updateSettings(trustPatch(added, true, settings));
+    const loaded = await loadPlugin(added);
+    setPlugins((prev) => [...prev.filter((p) => p.id !== added.id), loaded]);
+    return loaded;
+  };
+
+  const rescanPlugins = () => {
+    const found = discoverPlugins();
+    setPlugins((prev) => found.map((f) => prev.find((p) => p.id === f.id && p.plugin) ?? f));
+  };
+
   const togglePlugin = async (id: string, enabled: boolean) => {
     const entry = allPlugins.find((p) => p.id === id);
     if (!entry) return;
+    if (entry.scope === "starter") {
+      if (enabled) await addStarterPlugin(entry);
+      return;
+    }
     updateSettings(trustPatch(entry, enabled, settings));
     if (!enabled) return;
     if (!entry.plugin) {
@@ -602,6 +629,34 @@ ${snippet}
     ? `${openFile}${showEditor && editorState ? `:${editorState.line}${editorState.dirty ? " ✎ unsaved" : ""}` : viewport ? `:${viewport.top}-${viewport.bottom}` : ""}`
     : null;
 
+  const pluginsCommand = async ([action, name]: string[]) => {
+    if (action === "add") {
+      const starter = starters.find((s) => s.id === name);
+      if (!starter) return info(`No starter plugin "${name ?? ""}". Starters: ${starters.map((s) => s.id).join(", ")}`, "error");
+      if (plugins.some((p) => p.id === starter.id)) return info(`You already have a plugin called ${starter.id}; see /settings → Plugins.`, "error");
+      const added = await addStarterPlugin(starter);
+      return added.error
+        ? info(`Added ${added.file}, but it failed to load: ${added.error}`, "error")
+        : info(`Added and switched on ${added.plugin!.name} (${added.file}). Edit that file to make it your own.`);
+    }
+    if (action === "new") {
+      try {
+        const file = scaffoldPlugin(name ?? "");
+        rescanPlugins();
+        return info(`Created ${path.relative(process.cwd(), file)}. Edit it, then switch it on in /settings → Plugins.`);
+      } catch (error: any) {
+        return info(`/plugins new: ${error.message}`, "error");
+      }
+    }
+    if (action) return info("Usage: /plugins, /plugins add <name>, /plugins new <name>", "error");
+    const mark = { on: "●", off: "○", changed: "⚠" };
+    const lines = allPlugins.map((p) =>
+      p.scope === "starter"
+        ? `  + ${p.id.padEnd(16)} ${p.plugin?.description ?? ""}`
+        : `  ${mark[trustState(p, settings)]} ${p.id.padEnd(16)} ${p.scope}${p.error ? ` · ✖ ${p.error}` : ""}`);
+    return info(`Plugins (● on, ○ off, + starter you can add with /plugins add <name>):\n${lines.join("\n")}\nWrite your own: /plugins new <name>`);
+  };
+
   const runCommand = async (input: string) => {
     const [command, ...rest] = input.slice(1).split(/\s+/);
     const arg = rest.join(" ").trim();
@@ -658,6 +713,8 @@ ${snippet}
       agentRef.current!.clear();
       setEntries([]);
       return;
+    case "plugins":
+      return pluginsCommand(rest);
     case "version":
       return info(`nou v${currentVersion()}${update ? ` · v${update} is available, run \`nou update\`` : " · up to date"}`);
     case "help":
@@ -717,10 +774,7 @@ ${snippet}
         onModel={(next) => void chooseModel(next)}
         onChange={updateSettings}
         onTogglePlugin={(id, enabled) => void togglePlugin(id, enabled)}
-        onRescanPlugins={() => {
-          const found = discoverPlugins();
-          setPlugins((prev) => found.map((f) => prev.find((p) => p.id === f.id && p.plugin) ?? f));
-        }}
+        onRescanPlugins={rescanPlugins}
         onClose={() => setView("main")}
       />
     );
