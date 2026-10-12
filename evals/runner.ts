@@ -15,6 +15,8 @@ export type RunResult = {
   pass: boolean;
   /** Why it failed (check output or the agent's error). */
   reason: string | null;
+  /** The model's last reply, to see why a run went wrong. */
+  lastReply: string;
   /** Model requests in the turn. */
   steps: number;
   toolCalls: Record<string, number>;
@@ -103,6 +105,7 @@ export async function runTask(choice: ModelChoice, task: Task, options: { timeou
     // A run that did nothing usually failed to reach the model: say so instead of a confusing check failure.
     if (reason && steps <= 1 && !Object.keys(toolCalls).length && agentError) reason = agentError;
     return {
+      lastReply: said.at(-1) ?? "",
       model: engine === "nou" ? describe(choice) : `${engine} · ${engineInfo(engine).model(choice)}`, task: task.name, pass: reason === null, reason, steps, toolCalls, errors, maxRequestChars,
       seconds: Math.round((Date.now() - started) / 100) / 10,
       ...(options.keep ? { dir } : {}),

@@ -41,6 +41,8 @@ export class Timeline {
   private items: Checkpoint[] = [];
   private nextId = 1;
   private file: string;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private exitHook: (() => void) | null = null;
 
   constructor(private onUpdate: () => void = () => {}) {
     const key = createHash("sha1").update(process.cwd()).digest("hex").slice(0, 16);
@@ -150,13 +152,30 @@ export class Timeline {
     return { ok: true, path: checkpoint.path, merged };
   }
 
+  /**
+   * History can hold hundreds of whole files, so it's written shortly after changes stop (an agent turn
+   * makes many in a row) instead of rewriting the file on every edit. flush() writes it now.
+   */
   private save() {
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => this.flush(), 500);
+      this.saveTimer.unref?.();
+      if (!this.exitHook) {
+        this.exitHook = () => this.flush();
+        process.on("exit", this.exitHook);
+      }
+    }
+    this.onUpdate();
+  }
+
+  flush() {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
     try {
       if (!existsSync(path.dirname(this.file))) mkdirSync(path.dirname(this.file), { recursive: true });
       writeFileSync(this.file, JSON.stringify({ cwd: process.cwd(), items: this.items }));
     } catch {
       // history is best effort
     }
-    this.onUpdate();
   }
 }

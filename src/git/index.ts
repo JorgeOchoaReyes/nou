@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import path from "path";
 import type { FileChange } from "../commands/index.js";
 
@@ -34,10 +34,24 @@ function toRoot(p: string): string {
   return path.relative(repoRoot()!, path.resolve(process.cwd(), p)).replace(/\\/g, "/");
 }
 
+const STATUS_ARGS = ["status", "--porcelain=v1", "-z", "-uall"];
+
 export function status(): GitStatus {
+  return isRepo() ? parseStatus(tryGit(STATUS_ARGS)) : new Map();
+}
+
+/** status() without blocking: for background refreshes, where a large repo can take a while. */
+export function statusAsync(): Promise<GitStatus> {
+  if (!isRepo()) return Promise.resolve(new Map());
+  return new Promise((resolve) => {
+    execFile("git", STATUS_ARGS, { cwd: process.cwd(), encoding: "utf-8", maxBuffer: 20 * 1024 * 1024 }, (error, out) => resolve(parseStatus(error ? null : out)));
+  });
+}
+
+export const sameStatus = (a: GitStatus, b: GitStatus) => a.size === b.size && [...a].every(([file, code]) => b.get(file) === code);
+
+function parseStatus(out: string | null): GitStatus {
   const result: GitStatus = new Map();
-  if (!isRepo()) return result;
-  const out = tryGit(["status", "--porcelain=v1", "-z", "-uall"]);
   if (!out) return result;
   const parts = out.split("\0");
   for (let i = 0; i < parts.length; i++) {

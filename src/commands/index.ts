@@ -90,8 +90,9 @@ ${stdout}` : ""}`);
   });
 }
 
-export function fileTree(dir = ".", maxDepth = 3): string {
+export function fileTree(dir = ".", maxDepth = 3, maxLines = Infinity): string {
   const lines: string[] = [];
+  let hidden = 0;
   const walk = (current: string, depth: number, prefix: string) => {
     if (depth > maxDepth) return;
     let entries;
@@ -103,11 +104,16 @@ export function fileTree(dir = ".", maxDepth = 3): string {
       return;
     }
     for (const entry of entries) {
+      if (lines.length >= maxLines) {
+        hidden++;
+        continue;
+      }
       lines.push(`${prefix}${entry.name}${entry.isDirectory() ? "/" : ""}`);
       if (entry.isDirectory()) walk(path.join(current, entry.name), depth + 1, prefix + "  ");
     }
   };
   walk(path.resolve(process.cwd(), dir), 1, "");
+  if (hidden) lines.push("[... more entries not shown; use glob, grep or list_files on a folder]");
   return lines.join("\n") || "(empty)";
 }
 

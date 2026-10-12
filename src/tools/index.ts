@@ -46,6 +46,64 @@ export const tools = [
   {
     type: "function",
     function: {
+      name: "grep",
+      description: "Search the contents of the project's files with a regular expression (or plain text). Returns file:line: matching line. Use it to find where something is defined or used before reading files.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: {
+            type: "string",
+            description: "Regular expression (JavaScript syntax) or plain text to look for",
+          },
+          path: {
+            type: "string",
+            description: "File or folder to search in. Defaults to the whole project.",
+          },
+          glob: {
+            type: "string",
+            description: "Only search files matching this glob, e.g. \"*.ts\" or \"src/**/*.py\"",
+          },
+          ignore_case: {
+            type: "boolean",
+            description: "Match regardless of case",
+          },
+          context: {
+            type: "number",
+            description: "Lines to show before and after each match (0-5)",
+          },
+          files_only: {
+            type: "boolean",
+            description: "List only the files that match, with match counts",
+          }
+        },
+        required: ["pattern"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "glob",
+      description: "Find files by name pattern, e.g. \"**/*.test.ts\" or \"*config*\". Newest first. Patterns without a slash match file names anywhere.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: {
+            type: "string",
+            description: "Glob pattern: * and ? within a folder, ** across folders, {a,b} for either",
+          },
+          path: {
+            type: "string",
+            description: "Folder to search in. Defaults to the whole project.",
+          }
+        },
+        required: ["pattern"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "list_files",
       description: "List the files and folders of the project (or a sub folder) as a tree",
       parameters: {

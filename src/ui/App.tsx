@@ -9,7 +9,7 @@ import { describe, providers, resolveModel, saveModel, type ModelChoice } from "
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
-import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, type GitStatus } from "../git/index.js";
+import { branch as gitBranch, diffAgainstHead, isRepo, sameStatus, status as gitStatus, statusAsync as gitStatusAsync, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch, trustState, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
 import { Timeline, type SessionSummary } from "../history/index.js";
@@ -46,6 +46,7 @@ const HELP = `Commands:
   /plugins add <name>  add a starter plugin (copied to ~/.nou/plugins to edit)
   /plugins new <name>  start your own plugin in .nou/plugins/
   /clear               start a fresh conversation
+  /compact             summarize the conversation so far, to free up context
   /undo                undo Nou's last change (also: u)
   /rewind              undo everything from Nou's last turn
   /history             recent changes
@@ -78,6 +79,22 @@ export function App({ initialModel, permContext }: Props) {
   const [follow, setFollow] = useState(settings.followMode);
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [streaming, setStreaming] = useState("");
+  // Streamed text arrives a token at a time; redrawing the whole screen for each one is wasted work.
+  const streamed = useRef({ text: "", timer: null as ReturnType<typeof setTimeout> | null });
+  const showStream = (text: string) => {
+    const s = streamed.current;
+    s.text = text;
+    if (!text) {
+      if (s.timer) clearTimeout(s.timer);
+      s.timer = null;
+      setStreaming("");
+    } else if (!s.timer) {
+      s.timer = setTimeout(() => {
+        s.timer = null;
+        setStreaming(s.text);
+      }, 33);
+    }
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [choice, setChoice] = useState(initialModel);
   const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve(ok: boolean): void } | null>(null);
@@ -147,7 +164,7 @@ export function App({ initialModel, permContext }: Props) {
   if (!hooksRef.current) {
     hooksRef.current = {
       onEntry: (entry) => setEntries((prev) => [...prev, entry]),
-      onStream: setStreaming,
+      onStream: showStream,
       onBusy: setBusy,
       onRead: (filePath) => {
         if (!followRef.current) return;
@@ -231,10 +248,17 @@ export function App({ initialModel, permContext }: Props) {
   }, [settings.gitContext, settings.effort, activePlugins]);
 
   // Pick up changes made outside Nou (other editors, git commands).
+  const polling = useRef(false);
   useEffect(() => {
     if (!repo) return;
     const timer = setInterval(() => {
-      if (!busy) setGit(gitStatus());
+      if (busy || polling.current) return;
+      polling.current = true;
+      void gitStatusAsync().then((next) => {
+        polling.current = false;
+        // Only redraw when something changed.
+        setGit((prev) => (sameStatus(prev, next) ? prev : next));
+      });
     }, 4000);
     return () => clearInterval(timer);
   }, [repo, busy]);
@@ -750,6 +774,20 @@ ${snippet}
         info(models.length ? `${provider.id} models:\n${models.slice(0, 60).map((m) => `  ${provider.id}:${m}`).join("\n")}` : `${provider.id} has no models.`);
       } catch (error: any) {
         info(`Couldn't list ${provider.id} models: ${error.message}`, "error");
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+    case "compact": {
+      const engine = agentRef.current!;
+      if (!engine.compact) return info(`${engineInfo(engine.id).label} manages its own context.`);
+      if (busy) return info("Wait for the current reply to finish first.", "error");
+      setBusy("Summarizing the conversation...");
+      try {
+        if (!(await engine.compact(true))) info("Nothing to compact yet.");
+      } catch (error: any) {
+        info(`Couldn't compact: ${error.message}`, "error");
       } finally {
         setBusy(null);
       }

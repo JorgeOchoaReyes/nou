@@ -15,8 +15,13 @@ import {
 import { describe, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
 import { newCallId } from "../providers/ids.js";
 import type { Engine, EngineOptions } from "../engines/types.js";
+import { globFiles, grep } from "../search/index.js";
 
-const MAX_STEPS = 25;
+/** Model requests per user message before stopping; real tasks (explore, edit, test, fix) take a few dozen. */
+const MAX_STEPS = 60;
+/** Messages kept word for word when older ones are summarized. */
+const KEEP_RECENT = 8;
+const TRIMMED_OUTPUT = "\n[... trimmed to save context; run the tool again if you need it]";
 
 export type ChatEntry = {
   kind: "user" | "assistant" | "tool" | "error" | "info";
@@ -55,15 +60,25 @@ export interface AgentHooks {
 /** Unique per conversation, since turn numbers restart at 1 every session. */
 export const newSessionId = () => `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
 
+/** How many lines of the project tree go in the system prompt; the model can glob or list_files for more. */
+const PROMPT_TREE_LINES = 150;
+
 export function buildSystemPrompt(permContext: string, extras: string[] = []): string {
-  return `You are Nou, a coding assistant running in the user's terminal, working in ${process.cwd()}.
-You can read, edit and create files and run commands with the tools you have.
-- Read a file before editing it. Prefer edit_file for small changes and write_file for new files.
-- Every edit and command is shown to the user, who approves or rejects it.
-- Keep replies short and to the point.
+  const shell = process.platform === "win32" ? "Windows (commands run in cmd.exe)" : `${process.platform} (commands run in sh)`;
+  return `You are Nou, a coding agent in the user's terminal. You work in ${process.cwd()} on ${shell}.
+
+How to work:
+1. Look before you change anything. Use grep to find where things are defined and used, glob to find files by name, and read_file for the parts you need. Never guess what a file contains.
+2. Make the smallest change that does what was asked, in the style of the surrounding code. Use edit_file for changes, copying old_string exactly from what you read (replace_all renames every occurrence in a file). Use write_file only for new files or complete rewrites.
+3. Check your work. If the project has tests, a build or a type check, run them with run_command and fix what you broke. If it has none, try new code on the examples the user gave (a one-line script is enough). Problems the editor finds after an edit are reported back to you: fix them.
+4. Keep going until the task is done. The user approves each edit and command as it happens, so don't stop to ask permission between steps; ask only when the request is unclear or you need a decision.
+5. End with a short summary of what you changed and why. When the user only asks a question, answer it without editing anything.
+
+- If the user rejects an edit or command, don't retry it: ask what they would like instead.
+- Keep replies short. Refer to code as path:line.
 
 Project files:
-${fileTree(".", 3)}
+${fileTree(".", 3, PROMPT_TREE_LINES)}
 ${extras.map((e) => `\n${e}`).join("")}
 ${permContext}`;
 }
@@ -125,6 +140,103 @@ export class Agent implements Engine {
     this.controller?.abort();
   }
 
+  /** Roughly what each request sends, in characters (about 4 per token): prompt, tool schemas and history. */
+  requestSize(): number {
+    return this.system.length + JSON.stringify(this.tools).length + JSON.stringify(this.messages).length;
+  }
+
+  /**
+   * How much context to stay under, in characters. Local models get a 32k-token window from Nou (see
+   * providers/ollama.ts), so ~90k characters leaves room for the reply; cloud models have far more.
+   */
+  contextBudget(): number {
+    const set = Number(process.env.NOU_CONTEXT_CHARS);
+    if (set > 0) return set;
+    return this.choice.provider.local ? 90_000 : 500_000;
+  }
+
+  /**
+   * Makes the conversation fit the model's context: first trims old tool output (the bulk of it, and
+   * rarely needed again), then, if that isn't enough, has the model summarize older messages. `force`
+   * (the /compact command) summarizes even when it fits. Returns whether anything changed.
+   */
+  async compact(force = false, signal?: AbortSignal): Promise<boolean> {
+    const budget = this.contextBudget();
+    const startSize = this.requestSize();
+    // The latest step's results are what the model is working from; it has already used the older ones.
+    const lastStep = this.messages.findLastIndex((m) => m.role === "assistant");
+    let trimmed = 0;
+    for (let i = 0; i < lastStep; i++) {
+      const m = this.messages[i]!;
+      if (m.role === "tool" && m.content.length > TRIMMED_OUTPUT.length + 400) {
+        this.messages[i] = { ...m, content: `${m.content.slice(0, 300)}${TRIMMED_OUTPUT}` };
+        trimmed++;
+      }
+    }
+    if (!force && this.requestSize() <= budget * 0.8) {
+      this.hooks.onEntry({ kind: "info", text: `Trimmed ${trimmed} old tool outputs to fit the model's context.` });
+      return true;
+    }
+
+    const split = this.summarySplit();
+    if (split <= 0) return trimmed > 0;
+    this.hooks.onBusy("Summarizing the conversation to fit the model's context...");
+    let summary: string;
+    try {
+      summary = await this.summarize(this.messages.slice(0, split), signal);
+    } catch (error: any) {
+      if (signal?.aborted) throw error;
+      summary = `(The earlier conversation was dropped to fit the context; summarizing it failed: ${error.message})`;
+    }
+    const intro = `[Summary of the conversation so far]\n${summary}`;
+    const rest = this.messages.slice(split);
+    const first = rest[0];
+    this.messages = first?.role === "user"
+      ? [{ ...first, content: `${intro}\n\n${first.content}` }, ...rest.slice(1)]
+      : [{ role: "user", content: intro }, ...rest];
+    this.hooks.onEntry({
+      kind: "info",
+      text: `Summarized ${split} earlier messages to fit the model's context (${Math.round(startSize / 1000)}k → ${Math.round(this.requestSize() / 1000)}k characters).`,
+    });
+    return true;
+  }
+
+  /**
+   * Where to cut the history for a summary: as late as possible while keeping the last few messages, and
+   * only before a user or assistant message, so no tool call is separated from its result.
+   */
+  private summarySplit(): number {
+    for (let i = this.messages.length - KEEP_RECENT; i > 0; i--) {
+      if (this.messages[i]?.role !== "tool") return i;
+    }
+    return 0;
+  }
+
+  private async summarize(older: ChatMessage[], signal?: AbortSignal): Promise<string> {
+    const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}...` : text);
+    const transcript = older.map((m) => {
+      if (m.role === "user") return `USER: ${clip(m.content, 4000)}`;
+      if (m.role === "tool") return `TOOL RESULT (${m.name}): ${clip(m.content, 600)}`;
+      const calls = m.toolCalls.map((c) => `${c.name}(${clip(JSON.stringify(c.args), 300)})`).join(", ");
+      return `ASSISTANT: ${clip(m.content, 2000)}${calls ? `\n  called: ${calls}` : ""}`;
+    }).join("\n\n");
+    // Keep the request itself within budget: the latest part of the history matters most.
+    const room = Math.floor(this.contextBudget() * 0.7);
+    const text = transcript.length > room ? `[...]\n${transcript.slice(-room)}` : transcript;
+    const result = await this.choice.provider.chat({
+      model: this.choice.model,
+      system: "You summarize a coding session so it can continue with less context. Be factual and concise.",
+      messages: [{
+        role: "user",
+        content: `Summarize this conversation between a user and a coding agent, for the agent to continue from. Include: the user's requests (quote the latest one exactly), decisions made, files read or changed and what changed, commands run and their outcome, and what is left to do.\n\n${text}`,
+      }],
+      tools: [],
+      onText: () => {},
+      ...(signal ? { signal } : {}),
+    });
+    return result.text.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim() || "(no summary)";
+  }
+
   /** `context` (what the user is looking at) is sent to the model but not shown in the chat. */
   async send(text: string, context?: string) {
     this.turn++;
@@ -135,6 +247,7 @@ export class Agent implements Engine {
     const { signal } = this.controller;
     try {
       for (let step = 0; step < MAX_STEPS; step++) {
+        if (this.requestSize() > this.contextBudget()) await this.compact(false, signal);
         this.hooks.onBusy(`Pondering with ${describe(this.choice)}...`);
         let streamed = "";
         const result = await this.choice.provider.chat({
@@ -245,7 +358,22 @@ export class Agent implements Engine {
       case "list_files":
       case "get_file_tree": {
         this.hooks.onEntry({ kind: "tool", text: `Listed ${args.path ?? "."}` });
-        return fileTree(args.path ?? ".", 4);
+        return fileTree(args.path ?? ".", 4, 500);
+      }
+      case "grep": {
+        this.hooks.onEntry({ kind: "tool", text: `Searched for ${args.pattern}${args.path ? ` in ${args.path}` : ""}${args.glob ? ` (${args.glob})` : ""}` });
+        return grep({
+          pattern: String(args.pattern),
+          ...(typeof args.path === "string" ? { path: args.path } : {}),
+          ...(typeof args.glob === "string" ? { glob: args.glob } : {}),
+          ignoreCase: args.ignore_case === true,
+          context: Number(args.context) || 0,
+          filesOnly: args.files_only === true,
+        });
+      }
+      case "glob": {
+        this.hooks.onEntry({ kind: "tool", text: `Found files ${args.pattern}` });
+        return globFiles(String(args.pattern), typeof args.path === "string" ? args.path : ".");
       }
       case "edit_file":
       case "write_file": {

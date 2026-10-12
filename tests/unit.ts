@@ -103,6 +103,7 @@ console.log("Undo history");
   const yesterday = new Timeline();
   writeFileSync("a.txt", "new a\n");
   yesterday.record({ path: "a.txt", before: "old a\n", after: "new a\n", source: "nou", turn: "sessionA:1" });
+  yesterday.flush(); // what quitting does
   const today = new Timeline(); // a restart: reloads history from disk
   writeFileSync("b.txt", "new b\n");
   today.record({ path: "b.txt", before: "old b\n", after: "new b\n", source: "nou", turn: "sessionB:1" });
@@ -350,6 +351,83 @@ console.log("Evals");
   const idle: any = { ...solver, chat: async () => ({ text: "No idea.", toolCalls: [] }) };
   const failed = await runTask({ provider: idle, model: "s" }, task);
   check("the eval runner fails an unsolved task, with the reason", !failed.pass && !!failed.reason?.includes("tests still fail"));
+}
+
+console.log("Search tools");
+{
+  const { grep, globFiles, globToRegex } = await import("../src/search/index.js");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "nou-search-"));
+  const home = process.cwd();
+  process.chdir(dir);
+  try {
+    mkdirSync("src/util", { recursive: true });
+    mkdirSync("node_modules/lib", { recursive: true });
+    writeFileSync("src/app.ts", "import { add } from './util/math';\nexport const total = add(1, 2);\n");
+    writeFileSync("src/util/math.ts", "export function add(a: number, b: number) {\n  return a + b;\n}\n");
+    writeFileSync("src/util/math.test.ts", "import { add } from './math';\n");
+    writeFileSync("node_modules/lib/add.js", "function add() {}\n");
+    writeFileSync("README.md", "Call ADD to sum.\n");
+    check("grep finds definitions with file:line", grep({ pattern: "function add" }) === "src/util/math.ts:1: export function add(a: number, b: number) {");
+    check("grep skips node_modules", !grep({ pattern: "add" }).includes("node_modules"));
+    check("grep filters by glob", !grep({ pattern: "add", glob: "*.test.ts" }).includes("app.ts") && grep({ pattern: "add", glob: "*.test.ts" }).includes("math.test.ts"));
+    check("grep ignore_case", grep({ pattern: "add to", ignoreCase: true }).includes("README.md:1:"));
+    check("grep files_only counts per file", grep({ pattern: "add", filesOnly: true }).includes("src/app.ts (2)"));
+    check("grep context shows nearby lines", grep({ pattern: "return a", context: 1 }).split("\n").length === 3);
+    check("an invalid regex is searched as text", grep({ pattern: "add(" }).includes("src/app.ts:2:"));
+    check("grep says when nothing matches", grep({ pattern: "nope" }).startsWith("No matches"));
+    check("grep refuses paths outside the project", grep({ pattern: "x", path: ".." }).includes("outside"));
+    writeFileSync("many.txt", Array.from({ length: 300 }, () => "hit").join("\n"));
+    check("grep caps matches and says how many there were", grep({ pattern: "hit" }).includes("[300 matches in 1 files; showing the first 100"));
+    check("glob ** crosses folders", globFiles("src/**/*.ts").split("\n").length === 3);
+    check("glob without a slash matches names anywhere", globFiles("*.test.ts") === "src/util/math.test.ts");
+    check("glob {a,b}", globToRegex("*.{md,txt}").test("README.md") && globToRegex("*.{md,txt}").test("a/many.txt") && !globToRegex("*.{md,txt}").test("x.ts"));
+    check("glob says when nothing matches", globFiles("*.py").startsWith("No files"));
+  } finally {
+    process.chdir(home);
+  }
+}
+
+console.log("Compaction");
+{
+  const { Agent } = await import("../src/agent/index.js");
+  const requests: any[] = [];
+  const provider: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "f", unavailable: () => null, listModels: async () => [],
+    async chat(request: any) {
+      requests.push(request);
+      if (!request.tools.length) return { text: "<think>hmm</think>SUMMARY: user wants a report; read big.txt.", toolCalls: [] };
+      const step = requests.filter((r) => r.tools.length).length;
+      if (step <= 4) return { text: "", toolCalls: [{ id: `c${step}`, name: "read_file", args: { path: "big.txt" } }] };
+      return { text: "Done.", toolCalls: [] };
+    },
+  };
+  writeFileSync(path.join(work, "big.txt"), "x".repeat(30_000));
+  const entries: any[] = [];
+  const agent = new Agent({ provider, model: "f" }, "system", {
+    onEntry: (e) => entries.push(e), onStream: () => {}, onBusy: () => {}, onRead: () => {}, onChange: () => {}, approve: async () => true,
+  });
+  process.env.NOU_CONTEXT_CHARS = "60000";
+  try {
+    await agent.send("first question");
+    await agent.send("now make the report");
+    const messages = (agent as any).messages as any[];
+    const toolRequests = requests.filter((r) => r.tools.length);
+    check("big tool outputs from earlier turns are trimmed", JSON.stringify(messages).includes("trimmed to save context"));
+    check("requests stay within the context budget", toolRequests.every((r) => r.system.length + JSON.stringify(r.messages).length < 60_000));
+    await agent.compact(true);
+    const summarized = (agent as any).messages as any[];
+    check("/compact summarizes older messages, dropping <think>", summarized[0].role === "user" && summarized[0].content.startsWith("[Summary of the conversation so far]\nSUMMARY:"));
+    const ids = new Set<string>();
+    let paired = true;
+    for (const m of summarized) {
+      if (m.role === "assistant") m.toolCalls.forEach((c: any) => ids.add(c.id));
+      if (m.role === "tool" && !ids.has(m.callId)) paired = false;
+    }
+    check("every tool result still follows its call after summarizing", paired && summarized.length < messages.length);
+    check("the user is told the conversation was summarized", entries.some((e) => e.kind === "info" && e.text.startsWith("Summarized")));
+  } finally {
+    delete process.env.NOU_CONTEXT_CHARS;
+  }
 }
 
 console.log("Engines");
