@@ -156,6 +156,7 @@ npm run dev          # run from source
 npm run build        # compile to dist/ (and copy the syntax grammars)
 npm test             # end-to-end tests: drives the real UI with simulated keys
 npm run screenshot   # regenerate docs/screenshot.svg
+npm run eval         # how well the agent does real tasks with a real model (see evals/)
 ```
 
 Releasing: bump `version` in `package.json`, merge to `master`, then run **Actions → Publish to npm**. It tests, publishes with provenance, and creates the git tag and GitHub Release. (Or publish a GitHub release tagged `vX.Y.Z`.) The token lives in the `production` environment as `NPM_TOKEN`.

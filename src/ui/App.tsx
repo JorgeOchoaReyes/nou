@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
-import { Agent, buildSystemPrompt, type ApprovalRequest, type ChangeStatus, type ChatEntry, type ExtraTool } from "../agent/index.js";
+import { Agent, buildSystemPrompt, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
+import { harness, problemsIntroduced } from "../agent/harness.js";
 import { describe, providers, resolveModel, saveModel, type ModelChoice } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
-import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, summary as gitSummary, type GitStatus } from "../git/index.js";
-import { gitTools } from "../git/tools.js";
+import { branch as gitBranch, diffAgainstHead, isRepo, status as gitStatus, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, discoverPlugins, isEnabled, loadPlugin, trustPatch, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
 import { Timeline, type SessionSummary } from "../history/index.js";
@@ -173,10 +173,7 @@ export function App({ initialModel, permContext }: Props) {
         }
         return new Promise<boolean>((resolve) => setApproval({ request, resolve }));
       },
-      checkChange: async (change) => {
-        const introduced = await diagnosticsRef.current!.introducedBy(change.path, change.before, change.after);
-        return introduced.length ? introduced.slice(0, 15).map((d) => formatDiagnostic(d)).join("\n") : null;
-      },
+      checkChange: (change) => problemsIntroduced(diagnosticsRef.current!, change),
     });
   }
 
@@ -210,40 +207,7 @@ export function App({ initialModel, permContext }: Props) {
 
   // Keep the agent's system prompt and tools in sync with settings and plugins.
   useEffect(() => {
-    const extras: string[] = [];
-    const extraTools: ExtraTool[] = [];
-    if (settings.gitContext && repo) {
-      const summary = gitSummary();
-      if (summary) extras.push(summary);
-      extraTools.push(...gitTools());
-    }
-    for (const { plugin } of activePlugins) {
-      if (plugin!.systemPrompt) extras.push(`Plugin ${plugin!.name}: ${plugin!.systemPrompt}`);
-      for (const tool of plugin!.tools ?? []) {
-        extraTools.push({
-          definition: tool.definition,
-          readOnly: !!tool.readOnly,
-          source: plugin!.name,
-          run: (args) => tool.run(args, { cwd: process.cwd() }),
-        });
-      }
-    }
-    extraTools.push({
-      source: "problems",
-      readOnly: true,
-      definition: {
-        name: "get_diagnostics",
-        description: "Get errors and warnings from the project's linters, type checker and language servers, for one file or the whole project.",
-        parameters: { type: "object", properties: { path: { type: "string", description: "Optional file. Omit for the whole project." } }, required: [] },
-      },
-      run: async (args) => {
-        const file = typeof args.path === "string" ? args.path : null;
-        if (file) await diagnostics.checkFile(file);
-        else await diagnostics.checkProject();
-        const list = file ? diagnostics.get(file) : diagnostics.all();
-        return list.length ? list.slice(0, 100).map((d) => formatDiagnostic(d, true)).join("\n") : "No problems found.";
-      },
-    });
+    const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     agentRef.current!.configure({ system: buildSystemPrompt(permContext, extras), extraTools, effort: settings.effort });
   }, [settings.gitContext, settings.effort, activePlugins]);
 
