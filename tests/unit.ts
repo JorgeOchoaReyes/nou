@@ -148,7 +148,8 @@ console.log("Starter plugins");
   check("fetch_url turns HTML into text", htmlToText("<p>a &amp; b</p><script>x()</script><div>c</div>") === "a & b\nc");
 
   const file = scaffoldPlugin("deploy");
-  check("/plugins new writes a project plugin", file === path.join(work, ".nou", "plugins", "deploy.mjs"));
+  // Relative to cwd: on macOS the temp folder (/var/...) is really /private/var/..., which cwd reports.
+  check("/plugins new writes a project plugin", path.relative(process.cwd(), file) === path.join(".nou", "plugins", "deploy.mjs"));
   const scaffolded = await loadPlugin(discoverPlugins().find((p) => p.id === "deploy")!);
   check("the new plugin loads", scaffolded.plugin?.name === "deploy" && scaffolded.plugin.tools?.length === 1);
   check("a new plugin is off until you switch it on", !isEnabled(scaffolded, DEFAULT_SETTINGS));

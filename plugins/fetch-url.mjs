@@ -6,10 +6,18 @@ const ENTITIES = { nbsp: " ", lt: "<", gt: ">", quot: "\"", "#39": "'", amp: "&"
 
 /** Rough HTML to text: drops scripts, styles and tags, keeps the words. */
 export function htmlToText(html) {
-  return html
-    .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, "")
-    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
+  // Repeat until nothing changes: removing one tag can join the pieces of another ("<scr<b>ipt>").
+  let text = html;
+  let previous;
+  do {
+    previous = text;
+    text = text
+      .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1\s*>/gi, "")
+      .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)[^>]*>/gi, "\n")
+      .replace(/<[^>]*>/g, "");
+  } while (text !== previous);
+  // Entities last, in one pass, so "&amp;lt;" becomes "&lt;" rather than "<".
+  return text
     .replace(/&(nbsp|lt|gt|quot|#39|amp);/g, (_, name) => ENTITIES[name])
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s*\n+/g, "\n\n")
