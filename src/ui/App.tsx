@@ -43,6 +43,7 @@ const HELP = `Commands:
   /pull <model>        download an Ollama model
   /engine [name]       which agent answers: nou, claude-code, codex or pi
   /clear               start a fresh conversation
+  /compact             summarize the conversation so far, to free up context
   /undo                undo Nou's last change (also: u)
   /rewind              undo everything from Nou's last turn
   /history             recent changes
@@ -695,6 +696,20 @@ ${snippet}
         info(models.length ? `${provider.id} models:\n${models.slice(0, 60).map((m) => `  ${provider.id}:${m}`).join("\n")}` : `${provider.id} has no models.`);
       } catch (error: any) {
         info(`Couldn't list ${provider.id} models: ${error.message}`, "error");
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+    case "compact": {
+      const engine = agentRef.current!;
+      if (!engine.compact) return info(`${engineInfo(engine.id).label} manages its own context.`);
+      if (busy) return info("Wait for the current reply to finish first.", "error");
+      setBusy("Summarizing the conversation...");
+      try {
+        if (!(await engine.compact(true))) info("Nothing to compact yet.");
+      } catch (error: any) {
+        info(`Couldn't compact: ${error.message}`, "error");
       } finally {
         setBusy(null);
       }

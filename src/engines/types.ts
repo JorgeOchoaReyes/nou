@@ -30,6 +30,8 @@ export interface Engine {
   /** Something the model should know before the next message (e.g. the user undid its edit). */
   note(text: string): void;
   cancel(): void;
+  /** Shrinks the conversation to free context (engines that manage their own context leave this out). */
+  compact?(force?: boolean): Promise<boolean>;
   /** `context` (what the user is looking at) is sent to the model but not shown in the chat. */
   send(text: string, context?: string): Promise<void>;
   /** Frees processes and connections when switching to another engine. */
