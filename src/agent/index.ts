@@ -2,10 +2,12 @@ import { randomUUID } from "crypto";
 import { toolDefs } from "../tools/index.js";
 import {
   applyChange,
+  capOutput,
   fileTree,
+  isInProject,
   proposeEdit,
   proposeWrite,
-  readFile,
+  readForModel,
   runCommand,
   toRelative,
   type FileChange,
@@ -154,7 +156,8 @@ export class Agent {
 
         this.messages.push({
           role: "assistant",
-          content: result.text,
+          // Local reasoning models think in <think> blocks; sending those back only uses up context.
+          content: result.raw ? result.text : result.text.replace(/<think>[\s\S]*?<\/think>\s*/g, ""),
           toolCalls: result.toolCalls,
           ...(result.raw ? { raw: result.raw } : {}),
         });
@@ -177,7 +180,7 @@ export class Agent {
           if (signal.aborted) break;
           this.hooks.onBusy(`Running ${call.name}...`);
           const problem = invalidArgs(call, this.tools);
-          const output = problem ?? await this.runTool(call);
+          const output = problem ?? capOutput(await this.runTool(call));
           this.messages.push({
             role: "tool",
             callId: call.id,
@@ -221,9 +224,17 @@ export class Agent {
     try {
       switch (name) {
       case "read_file": {
-        this.hooks.onRead(toRelative(args.path));
+        // Files outside the project (e.g. ~/.ssh) need your OK, like commands do.
+        if (!isInProject(args.path)) {
+          if (!(await this.hooks.approve({ kind: "tool", name, args }))) {
+            this.hooks.onEntry({ kind: "tool", text: `Denied: read ${args.path}` });
+            return "User denied reading this file: it is outside the project folder.";
+          }
+        } else {
+          this.hooks.onRead(toRelative(args.path));
+        }
         this.hooks.onEntry({ kind: "tool", text: `Read ${args.path}` });
-        return await readFile(args.path);
+        return await readForModel(args.path, args.offset, args.limit);
       }
       case "list_files":
       case "get_file_tree": {
