@@ -58,6 +58,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 👀 **Knows what you're looking at** | The open file, visible lines, your cursor and unsaved edits ride along with each message. "Fix this function" just works. |
 | 🌿 **Git aware** | Sees your branch, uncommitted changes and recent commits, and can diff on its own. Press <kbd>v</kbd> to diff any file against `HEAD`. |
 | 🔌 **Any model** | Local (Ollama, LM Studio, llama.cpp) or cloud (Claude, OpenAI, Gemini, OpenRouter, Groq, DeepSeek). Switch mid-conversation. |
+| 🛞 **Pick your agent** | Nou's own, or Claude Code, Codex or pi, switchable like models, with the same diffs, approvals and undo. |
 | 🧩 **Plugins** | Add your own tools and slash commands with a single file. |
 | 🔎 **Quick open** | <kbd>Ctrl</kbd>+<kbd>P</kbd> fuzzy-finds any file. |
 
@@ -114,6 +115,19 @@ If you haven't set a key, Nou uses the API key from Claude Code (`~/.claude/sett
 | 🐋 DeepSeek | ☁️ cloud | `DEEPSEEK_API_KEY` |
 
 </details>
+
+## 🛞 Engines
+
+The engine is the agent that answers in the chat. Nou's own works with every model; you can switch to another one any time, like switching models: <kbd>s</kbd> settings → **Engine**, or `/engine <name>`. Diffs, approvals, undo and the problems panel work with all of them.
+
+| Engine | Models | Asks before edits and commands |
+|:--|:--|:--:|
+| `nou` *(default)* | any | ✅ |
+| `claude-code` (Claude Agent SDK) | Claude; your API key or Claude login | ✅ |
+| `pi` | your Nou model, local or cloud | ✅ |
+| `codex` (Codex SDK) | OpenAI; your API key or ChatGPT login | ❌ edits in its sandbox; review and undo after |
+
+Other engines install on first use into `~/.nou/engines/`, so Nou itself stays small. Switching engines starts a new conversation. Compare them on the same tasks with `npm run eval -- --engine nou --engine claude-code`.
 
 ## 🔄 Updating
 

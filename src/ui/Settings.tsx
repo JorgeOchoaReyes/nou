@@ -5,6 +5,7 @@ import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/ind
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
 import { currentVersion } from "../update/index.js";
 import { describe, providers, type ModelChoice } from "../providers/index.js";
+import { ENGINES, isInstalled, type EngineId } from "../engines/index.js";
 import { C, SPINNER } from "./theme.js";
 
 type Props = {
@@ -14,13 +15,14 @@ type Props = {
   choice: ModelChoice;
   plugins: PluginEntry[];
   onModel(choice: ModelChoice): void;
+  onEngine(id: EngineId): void;
   onChange(patch: Partial<SettingsType>): void;
   onTogglePlugin(id: string, enabled: boolean): void;
   onRescanPlugins(): void;
   onClose(): void;
 };
 
-const TABS = ["Model", "Preferences", "Plugins"] as const;
+const TABS = ["Model", "Engine", "Preferences", "Plugins"] as const;
 type Tab = (typeof TABS)[number];
 
 type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boolean };
@@ -35,7 +37,7 @@ const PREFS: Pref[] = [
   { key: "autoApproveCommands", label: "Auto-approve commands", help: "Run shell commands without asking. Only turn on if you trust the model.", warn: true },
 ];
 
-export function Settings({ width, height, settings, choice, plugins, onModel, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
+export function Settings({ width, height, settings, choice, plugins, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("Model");
   const [row, setRow] = useState(0);
   const [column, setColumn] = useState<"providers" | "models">("providers");
@@ -58,7 +60,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
   }, [tab, provider.id]);
 
   const modelItems = Array.isArray(listed) ? listed : [];
-  const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Preferences" ? PREFS.length : plugins.length);
+  const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Engine" ? ENGINES.length : t === "Preferences" ? PREFS.length : plugins.length);
 
   useInput((input, key) => {
     if (typing) {
@@ -68,7 +70,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
     if (key.tab) {
       const next = TABS[(TABS.indexOf(tab) + (key.shift ? TABS.length - 1 : 1)) % TABS.length]!;
       setTab(next);
-      setRow(next === "Model" ? Math.max(0, providers.indexOf(choice.provider)) : 0);
+      setRow(next === "Model" ? Math.max(0, providers.indexOf(choice.provider)) : next === "Engine" ? Math.max(0, ENGINES.findIndex((e) => e.id === settings.engine)) : 0);
       setColumn("providers");
       return;
     }
@@ -99,6 +101,8 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
         setColumn("models");
         setModelRow(0);
       }
+    } else if (tab === "Engine" && (key.return || input === " ")) {
+      onEngine(ENGINES[row]!.id);
     } else if (tab === "Preferences" && (key.return || input === " " || key.leftArrow || key.rightArrow)) {
       const pref = PREFS[row]!;
       const step = key.leftArrow ? -1 : 1;
@@ -190,6 +194,30 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
       );
     }
 
+    if (tab === "Engine") {
+      return (
+        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
+          {ENGINES.map((engine, i) => {
+            const selected = i === row;
+            const active = engine.id === settings.engine;
+            return (
+              <Box key={engine.id} flexDirection="column" marginBottom={1}>
+                <Text {...(selected ? { backgroundColor: C.panel } : {})}>
+                  <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
+                  <Text color={active ? C.green : C.dim} bold>{active ? "● " : "○ "}</Text>
+                  <Text color={C.text} bold={selected}>{engine.label.padEnd(14)}</Text>
+                  <Text color={C.dim}>{active ? "in use · " : ""}{isInstalled(engine) ? "" : "installs on first use · "}model: {engine.model(choice)}</Text>
+                </Text>
+                <Text color={C.dim} wrap="truncate-end">    {engine.description}</Text>
+                {engine.approvals === "after" && <Text color={C.orange} wrap="truncate-end">    Nou can't ask before its edits; it shows them afterwards so you can undo them.</Text>}
+              </Box>
+            );
+          })}
+          <Text color={C.dim} wrap="truncate-end">The engine is the agent that answers in the chat. Diffs, approvals, undo and problems work with each one.</Text>
+        </Box>
+      );
+    }
+
     if (tab === "Preferences") {
       return (
         <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
@@ -251,7 +279,7 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
 
   const hints = tab === "Model"
     ? column === "models" ? "↑↓ choose · Enter use model · ← providers" : "↑↓ provider · Enter/→ pick a model"
-    : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
+    : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1}>

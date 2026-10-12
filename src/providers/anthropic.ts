@@ -56,6 +56,11 @@ export function anthropicProvider(): Provider {
     local: false,
     defaultModel: "claude-opus-5-5",
     unavailable: () => (hasCredentials() ? null : "set ANTHROPIC_API_KEY (or run `ant auth login`)"),
+    endpoint: () => ({
+      baseURL: process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",
+      apiKey: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || "",
+      api: "anthropic-messages" as const,
+    }),
 
     async chat({ model, system, messages, tools, onText, signal, effort: requested }: ChatRequest): Promise<ChatResult> {
       const fallbacks = FALLBACK_MODELS.test(model);

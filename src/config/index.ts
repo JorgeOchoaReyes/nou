@@ -14,6 +14,8 @@ export type AutoSave = (typeof AUTO_SAVE)[number];
 export type Settings = {
   /** provider:model, e.g. "ollama:qwen3:8b". Empty means the built-in default. */
   model: string;
+  /** Which agent runs the chat: "nou" (built in), "claude-code", "codex" or "pi". */
+  engine: string;
   /** Reasoning effort for models that support it (Claude). */
   effort: Effort;
   /** Start with follow mode on (code view jumps to files the agent touches). */
@@ -41,6 +43,7 @@ export type Settings = {
 
 export const DEFAULT_SETTINGS: Settings = {
   model: "",
+  engine: "nou",
   effort: "high",
   followMode: true,
   autoApproveEdits: false,

@@ -12,6 +12,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const work = mkdtempSync(path.join(os.tmpdir(), "nou-unit-"));
 process.env.HOME = process.env.USERPROFILE = mkdtempSync(path.join(os.tmpdir(), "nou-home-"));
 process.chdir(work);
+// Fake engine packages (see fake-engines.ts); set before the engines module reads it.
+process.env.NOU_ENGINE_DIR = mkdtempSync(path.join(os.tmpdir(), "nou-engines-"));
 
 let failures = 0;
 const check = (label: string, ok: boolean) => {
@@ -348,6 +350,81 @@ console.log("Evals");
   const idle: any = { ...solver, chat: async () => ({ text: "No idea.", toolCalls: [] }) };
   const failed = await runTask({ provider: idle, model: "s" }, task);
   check("the eval runner fails an unsolved task, with the reason", !failed.pass && !!failed.reason?.includes("tests still fail"));
+}
+
+console.log("Engines");
+{
+  const { ENGINES, createEngine, isInstalled } = await import("../src/engines/index.js");
+  const { resolveModel } = await import("../src/providers/index.js");
+  const { writeFakeEngines } = await import("./fake-engines.js");
+  check("external engines aren't installed until picked", ENGINES.filter((e) => e.package).every((e) => !isInstalled(e)));
+  writeFakeEngines(process.env.NOU_ENGINE_DIR!);
+  check("installed engines are found in the engines folder", ENGINES.every((e) => isInstalled(e)));
+  const engines = () => (globalThis as any).__engines;
+
+  /** Runs one message through an engine in a fresh folder, approving everything unless `reject` says otherwise. */
+  const runEngine = async (id: any, spec: string, reject: Partial<Record<string, boolean>> = {}, problems: string | null = null) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), `nou-engine-${id}-`));
+    writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
+    const home = process.cwd();
+    process.chdir(dir);
+    const log = { entries: [] as any[], changes: [] as any[], asked: [] as any[] };
+    const engine = createEngine(id, resolveModel(spec), "system", {
+      onEntry: (e) => log.entries.push(e),
+      onStream: () => {},
+      onBusy: () => {},
+      onRead: () => {},
+      onChange: (change, status, turn) => log.changes.push({ path: change.path, before: change.before, after: change.after, status, turn }),
+      approve: async (request) => {
+        log.asked.push(request);
+        return !reject[request.kind];
+      },
+      checkChange: async () => problems,
+    });
+    engine.configure({ extras: ["Project note: be brief."] });
+    try {
+      await engine.send("Change the greeting");
+      return { ...log, engine, file: readFileSync(path.join(dir, "greet.js"), "utf-8"), dir };
+    } finally {
+      process.chdir(home);
+    }
+  };
+
+  // Claude Code: edits and commands go through Nou's approval, with a diff, before they happen.
+  const claude = await runEngine("claude-code", "anthropic:claude-opus-5-5", {}, "greet.js:1 something broke");
+  const options = engines().claude.calls[0].options;
+  check("Claude Code asks Nou before every edit and command", options.permissionMode === "default" && engines().claude.decision === "allow" && engines().claude.command === "allow");
+  check("Claude Code's edit is previewed as a diff before it's made", claude.asked[0]?.kind === "change" && claude.asked[0].change.after.includes("'Hi '"));
+  check("Claude Code's applied edit is recorded for undo", claude.changes.some((c) => c.status === "applied" && c.before.includes("Hello") && c.after.includes("Hi") && c.turn === `${claude.engine.session}:1`));
+  check("reads are left to Claude Code (no prompt)", Object.keys(engines().claude.read).length === 0 && claude.asked.length === 2);
+  check("problems from an edit are fed back to Claude Code", engines().claude.post.hookSpecificOutput?.additionalContext?.includes("something broke"));
+  check("Nou's project context is added to Claude Code's prompt", options.systemPrompt.append.includes("be brief") && options.model === "claude-opus-5-5");
+  check("Claude Code's reply shows in the chat", claude.entries.some((e) => e.kind === "assistant" && e.text === "Done."));
+  await claude.engine.send("And again");
+  check("the next message resumes the same Claude Code session", engines().claude.calls[1].options.resume === "claude-session-1");
+
+  const rejected = await runEngine("claude-code", "ollama:qwen3:8b", { change: true });
+  check("a rejected edit is denied and never written", engines().claude.decision === "deny" && rejected.file.includes("Hello") && rejected.changes.some((c) => c.status === "rejected"));
+  check("Claude Code uses its own default model when Nou's isn't a Claude model", !("model" in engines().claude.calls.at(-1).options));
+
+  // Codex: no approval hook, so changes are shown and recorded afterwards.
+  const codex = await runEngine("codex", "openai:gpt-5");
+  check("Codex runs in its sandbox without asking", engines().codex.threads[0].sandboxMode === "workspace-write" && engines().codex.threads[0].approvalPolicy === "never" && codex.asked.length === 0);
+  check("Codex's edit is recorded for undo with the file as it was", codex.changes.some((c) => c.path === "greet.js" && c.status === "applied" && c.before.includes("Hello") && c.after.includes("Howdy")));
+  check("files Codex creates are recorded as new", codex.changes.some((c) => c.path === "notes.md" && c.before === "" && c.status === "applied"));
+  check("Nou's project context goes with Codex's first message", engines().codex.inputs[0].includes("be brief") && codex.entries.some((e) => e.text === "Ran: ls"));
+
+  // pi: an extension routes its edits through Nou; local models go through Nou's endpoint for them.
+  const pi = await runEngine("pi", "ollama:qwen3:8b");
+  check("pi uses Nou's Ollama endpoint for a local model", engines().pi.registered[0]?.config.baseUrl.endsWith("/v1") && engines().pi.model.id === "qwen3:8b");
+  check("pi's edit is previewed and recorded", pi.asked[0]?.kind === "change" && pi.asked[0].change.after.includes("'Hey '") && pi.changes.some((c) => c.status === "applied"));
+  check("Nou's project context is added to pi's prompt", engines().pi.system.includes("Project note: be brief.") && engines().pi.system[0] === "base");
+  await runEngine("pi", "anthropic:claude-opus-5-5");
+  check("pi uses its built-in provider when it has the model", engines().pi.model.provider === "anthropic" && engines().pi.registered.length === 1);
+  const piRejected = await runEngine("pi", "ollama:qwen3:8b", { change: true });
+  check("a rejected pi edit is blocked", !!engines().pi.blocked && piRejected.file.includes("Hello"));
+  piRejected.engine.clear();
+  check("clearing ends the pi session", engines().pi.disposed === true);
 }
 
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");

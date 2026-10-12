@@ -51,6 +51,8 @@ export interface Provider {
   unavailable(): string | null;
   chat(request: ChatRequest): Promise<ChatResult>;
   listModels(): Promise<string[]>;
+  /** Its OpenAI-compatible endpoint, for engines that bring their own client (pi). */
+  endpoint?(): { baseURL: string; apiKey: string; api: "openai-completions" | "anthropic-messages" };
   /** Downloads a model (local providers that can, i.e. Ollama). `percent` is null while there's no size yet. */
   pull?(model: string, onProgress: (status: string, percent: number | null) => void, signal?: AbortSignal): Promise<void>;
 }
