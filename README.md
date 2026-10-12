@@ -142,7 +142,16 @@ Set `NOU_NO_UPDATE_CHECK=1` to turn the check off.
 
 ## 🧩 Plugins *(early)*
 
-Drop a `.js` / `.mjs` file into `.nou/plugins/` (this project) or `~/.nou/plugins/` (everywhere), then switch it on in <kbd>s</kbd> settings → **Plugins**. A plugin can give the model new tools, add slash commands, add to the system prompt, and add **checkers** (linters) whose problems show in the editor. The built-in ESLint, TypeScript, Ruff, syntax and language-server checkers are plugins too, so you can switch any of them off.
+**Starter plugins** ship with Nou and are optional: open <kbd>s</kbd> settings → **Plugins** and press Enter on one, or type `/plugins add <name>`. Adding one copies it into `~/.nou/plugins/`, where it's yours to edit.
+
+| Starter | What it adds |
+|:--|:--|
+| `run-tests` | `run_tests` tool and `/test`. Works out npm / pnpm / yarn / bun, cargo, go, pytest or make (asks before each run). |
+| `todos` | `find_todos` tool and `/todos`: TODO / FIXME / HACK comments with file:line. |
+| `fetch-url` | `fetch_url` tool so the model can read docs and web pages (asks before each URL). |
+| `project-rules` | Feeds `AGENTS.md`, `CLAUDE.md`, `.cursorrules` and Copilot instructions to the model; `/rules` lists them. |
+
+**Write your own:** `/plugins new <name>` creates a commented `.nou/plugins/<name>.mjs` to fill in. `/plugins` lists what you have. Or drop a `.js` / `.mjs` file into `.nou/plugins/` (this project) or `~/.nou/plugins/` (everywhere), then switch it on in <kbd>s</kbd> settings → **Plugins**. A plugin can give the model new tools, add slash commands, add to the system prompt, and add **checkers** (linters) whose problems show in the editor. The built-in ESLint, TypeScript, Ruff, syntax and language-server checkers are plugins too, so you can switch any of them off.
 
 ```js
 export default {
