@@ -106,7 +106,7 @@ export async function pickStartingModel(borrowed: Borrowed[]): Promise<ModelChoi
   for (const b of borrowed) add(resolveModel(b.model ? `${b.provider}:${b.model}` : b.provider), `API key from ${b.tool}`);
   const s = p.spinner();
   s.start("Looking for models you already have...");
-  const local = await Promise.all(providers.filter((x) => x.local).map(async (x) => ({ provider: x, models: await localModels(x) })));
+  const local = await Promise.all(providers.filter((x) => x.local && !x.unavailable()).map(async (x) => ({ provider: x, models: await localModels(x) })));
   s.stop("Checked for models");
   for (const { provider, models } of local) {
     for (const model of (models ?? []).slice(0, provider.id === "ollama" ? 5 : 1)) add({ provider, model }, `${provider.label}, installed`);
