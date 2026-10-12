@@ -244,7 +244,7 @@ export class Agent {
       case "edit_file":
       case "write_file": {
         const change = name === "edit_file"
-          ? await proposeEdit(args.path, args.old_string, args.new_string)
+          ? await proposeEdit(args.path, args.old_string, args.new_string, args.replace_all === true)
           : await proposeWrite(args.path, args.content ?? "");
         return await this.reviewChange(change);
       }
