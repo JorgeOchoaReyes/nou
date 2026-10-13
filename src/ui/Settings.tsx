@@ -6,7 +6,7 @@ import { saveCredentials } from "../config/credentials.js";
 import { originOf, setOutsideNou } from "../config/origins.js";
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
 import { currentVersion } from "../update/index.js";
-import { describe, providers, type ModelChoice, type Provider } from "../providers/index.js";
+import { describe, providers, rejectedKey, type ModelChoice, type Provider } from "../providers/index.js";
 import { ENGINES, isInstalled, type EngineId } from "../engines/index.js";
 import { C, SPINNER } from "./theme.js";
 
@@ -387,6 +387,3 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
 function initialValue(f: { env: string; secret?: boolean }): string {
   return f.secret ? "" : process.env[f.env] ?? "";
 }
-
-/** Whether a provider error means the API key is wrong (rather than, say, the server being down). */
-const rejectedKey = (error: string) => /\b(401|403)\b|api key|unauthori[sz]ed|authentication/i.test(error);

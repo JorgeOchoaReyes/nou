@@ -1,4 +1,5 @@
 import { loadSettings, saveSettings } from "../config/index.js";
+import { originOf } from "../config/origins.js";
 import { anthropicProvider } from "./anthropic.js";
 import { ollamaProvider } from "./ollama.js";
 import { OPENAI_COMPATIBLE, openAICompatibleProvider } from "./openai.js";
@@ -32,6 +33,22 @@ export function resolveModel(spec: string): ModelChoice {
 }
 
 export const describe = (choice: ModelChoice) => `${choice.provider.id}:${choice.model}`;
+
+/** Whether a provider error means the API key is wrong (rather than, say, the server being down). */
+export const rejectedKey = (error: string) => /\b(401|403)\b|api key|unauthori[sz]ed|authentication/i.test(error);
+
+/**
+ * For an error that says the key was rejected: which key, where it was set, and how to fix it.
+ * The usual cause is a project's .env holding a key for the app rather than for Nou.
+ */
+export function keyHint(provider: Provider, error: string): string | null {
+  const key = provider.connect?.find((f) => f.secret)?.env;
+  if (!key || !rejectedKey(error)) return null;
+  const origin = originOf(key);
+  const others = providers.filter((p) => p !== provider && !p.local && !p.unavailable()).map((p) => p.id);
+  return `The ${key}${origin ? ` from ${origin}` : ""} was rejected. Enter another with /connect ${provider.id}`
+    + (others.length ? `, or switch with /model ${others.join(" · /model ")}.` : ", or connect another provider (e.g. /connect litellm).");
+}
 
 /** NOU_MODEL wins, then the model saved in settings, then local Ollama. */
 export function initialModel(): ModelChoice {

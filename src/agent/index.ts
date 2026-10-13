@@ -12,7 +12,7 @@ import {
   toRelative,
   type FileChange,
 } from "../commands/index.js";
-import { describe, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
+import { describe, keyHint, type ChatMessage, type ModelChoice, type ToolCall, type ToolDef } from "../providers/index.js";
 import { newCallId } from "../providers/ids.js";
 import type { Engine, EngineOptions } from "../engines/types.js";
 import { globFiles, grep } from "../search/index.js";
@@ -316,7 +316,8 @@ export class Agent implements Engine {
       if (signal.aborted) {
         this.hooks.onEntry({ kind: "info", text: "Cancelled." });
       } else {
-        this.hooks.onEntry({ kind: "error", text: `${describe(this.choice)}: ${error.message}` });
+        const hint = keyHint(this.choice.provider, String(error.message));
+        this.hooks.onEntry({ kind: "error", text: `${describe(this.choice)}: ${error.message}${hint ? `\n${hint}` : ""}` });
       }
       this.dropUnansweredCalls();
     } finally {
