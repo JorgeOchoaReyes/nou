@@ -77,7 +77,7 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
     else if (key.pageDown || input === "d" || input === " ") setTop((t) => Math.min(maxTop, t + rows));
     else if (input === "g") setTop(0);
     else if (input === "G") setTop(maxTop);
-    else if (diff && (input === "n" || input === "N")) {
+    else if (diff && !pending && (input === "n" || input === "N")) {
       // Jump between change hunks.
       const starts = diffRows.flatMap((r, i) => (r.changed && !diffRows[i - 1]?.changed ? [i] : []));
       const target = input === "n" ? starts.find((s) => s - 3 > start) : [...starts].reverse().find((s) => s - 3 < start);

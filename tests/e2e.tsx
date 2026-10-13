@@ -55,7 +55,7 @@ async function session(model: any, steps: (h: { press(keys: string, wait?: numbe
   }
 }
 
-const KEY = { tab: "\t", enter: "\r", esc: "\x1b", down: "\x1b[B", end: "\x1b[F", ctrlC: "\x03", ctrlZ: "\x1a", ctrlY: "\x19" };
+const KEY = { tab: "\t", shiftTab: "\x1b[Z", enter: "\r", esc: "\x1b", down: "\x1b[B", end: "\x1b[F", ctrlC: "\x03", ctrlZ: "\x1a", ctrlY: "\x19" };
 
 console.log("Editor, auto-save, undo/redo, problems");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
@@ -99,6 +99,40 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("first Ctrl+C asks to press again", frame().includes("Press again to quit"));
   check("version is shown in the header", /NOU v\d+\.\d+\.\d+/.test(frame()));
 });
+
+console.log("Approvals and auto mode");
+{
+  let turn = 0;
+  const writer: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      turn++;
+      if (turn % 2 === 1) return { text: "Writing.", toolCalls: [{ id: `w${turn}`, name: "write_file", args: { path: `auto${turn}.txt`, content: "hi\n" } }] };
+      return { text: "Done.", toolCalls: [] };
+    },
+  };
+  await session({ provider: writer, model: "fake" }, async ({ press, type, frame }) => {
+    await type("write a file");
+    await press(KEY.enter, 1500);
+    check("an edit waits for approval in the chat", frame().includes("Nou wants to create auto1.txt"));
+    await press(KEY.tab, 100); // chat → files: the other panes keep working while it waits
+    await press(KEY.down, 100);
+    check("switching panes and moving around don't answer the approval", frame().includes("Nou wants to create auto1.txt") && !existsSync("auto1.txt"));
+    await press("y", 1500);
+    check("y from the file tree accepts it", existsSync("auto1.txt"));
+    await press(KEY.shiftTab, 200);
+    check("Shift+Tab switches to auto-edit mode", frame().includes("auto-edit") && frame().includes("Auto-edit mode"));
+    await press(KEY.tab, 100);
+    await press(KEY.tab, 100);
+    await type("another");
+    await press(KEY.enter, 1500);
+    check("in auto-edit mode edits apply without asking", existsSync("auto3.txt") && !frame().includes("Nou wants to"));
+    await type("/auto ask");
+    await press(KEY.enter, 200);
+    check("/auto ask goes back to asking", frame().includes("Ask mode"));
+  });
+  for (const f of ["auto1.txt", "auto3.txt"]) if (existsSync(f)) rmSync(f);
+}
 
 console.log("Agent edits: problem feedback, undo, rewind");
 let call = 0;
