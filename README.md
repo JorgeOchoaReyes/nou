@@ -76,22 +76,25 @@ Every change is reviewed like a code review:
 
 | Key | Does |
 | --- | --- |
-| 🖱️ Mouse | wheel scrolls the pane under the pointer · click a pane to focus it · click a file to open it (hold <kbd>Shift</kbd> to select text; turn off in settings) |
+| 🖱️ Mouse | wheel scrolls the pane under the pointer · click a pane to focus it · click a file to open it · drag a border between panes to resize them (hold <kbd>Shift</kbd> to select text, or press <kbd>m</kbd> to turn the mouse off) |
 | <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | scroll the chat history |
 | <kbd>Tab</kbd> | switch between files, code and chat |
+| <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file |
 | <kbd>e</kbd> | edit the open file (<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>K</kbd> info · <kbd>Ctrl</kbd>+<kbd>G</kbd> definition · <kbd>Esc</kbd> close) |
 | <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
 | <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD`, Nou's last edit, or this session · <kbd>n</kbd>/<kbd>N</kbd> jump between changes · <kbd>[</kbd>/<kbd>]</kbd> previous/next file in a session diff |
 | <kbd>c</kbd> | in the file tree: show only changed files |
-| <kbd>f</kbd> | follow mode: jump to files as Nou reads and edits them |
+| <kbd>f</kbd> | follow mode (off by default): jump to files as Nou reads and edits them |
+| <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
+| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
-| <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command |
+| <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
 | <kbd>Esc</kbd> | stop Nou · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/help`
 
 ## 🧠 Models
 

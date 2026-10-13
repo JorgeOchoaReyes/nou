@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { readdirSync } from "fs";
 import path from "path";
 import { Box, Text, useInput } from "ink";
@@ -75,9 +75,12 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
     return dirs;
   }, [git]);
 
-  // Expand the folders leading to whatever the agent is touching and move to it.
+  // Expand the folders leading to whatever the agent is touching and move to it, once per reveal:
+  // later changes to the list (expanding folders, git refreshes) must not pull the cursor back.
+  const pendingReveal = useRef<string | null>(null);
   useEffect(() => {
     if (!reveal) return;
+    pendingReveal.current = reveal;
     const parts = reveal.split("/");
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -87,10 +90,12 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
   }, [reveal, version]);
 
   useEffect(() => {
-    if (!reveal) return;
-    const index = nodes.findIndex((n) => n.path === reveal);
-    if (index >= 0) setCursor(index);
-  }, [nodes, reveal]);
+    if (!pendingReveal.current) return;
+    const index = nodes.findIndex((n) => n.path === pendingReveal.current);
+    if (index < 0) return;
+    setCursor(index);
+    pendingReveal.current = null;
+  }, [nodes]);
 
   useEffect(() => {
     setCursor((c) => Math.min(c, Math.max(0, nodes.length - 1)));

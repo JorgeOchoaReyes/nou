@@ -64,7 +64,7 @@ const ansi = renderToString(
       <CodeView width={code} height={height} focused={false} filePath={file} content={before}
         diff={{ path: file, before, after, isNew: false }} diffLabel="" pending={true} marked={new Set()} problems={[]} focusLine={null} syntaxVersion={0} diffNote="✓ no new problems" onViewport={() => {}} />
       <Chat width={chat} height={height} focused={true} entries={entries} streaming="" busy={null}
-        approval={{ kind: "change", change: { path: file, before, after, isNew: false } }} contextChip={`${file}:15-22`} onSubmit={() => {}} />
+        approval={{ kind: "change", change: { path: file, before, after, isNew: false } }} contextChip={`${file}:15-22`} onSubmit={() => {}} onAnswer={() => {}} />
     </Box>
     <Text>
       <Text backgroundColor={C.yellow} color="black" bold> APPROVE </Text>

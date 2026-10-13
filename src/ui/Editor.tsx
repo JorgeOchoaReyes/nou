@@ -281,7 +281,7 @@ export function Editor({ width, height, focused, filePath, initial, baseline, st
         </Box>
       )}
       <Text wrap="truncate-end" color={statusColor}>
-        {` ${status}`}<Text color={C.dim}>{confirmExit ? "" : `   Ctrl+S save${autoSave === "off" ? "" : " (auto)"} · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G definition · Esc close`}</Text>
+        {` ${status}`}
       </Text>
     </Pane>
   );

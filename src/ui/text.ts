@@ -110,3 +110,145 @@ export function lineCounts(before: string, after: string): { added: number; remo
   }
   return { added, removed };
 }
+
+export type Span = { text: string; bold?: boolean; italic?: boolean; code?: boolean; dim?: boolean };
+export type MdLine = { spans: Span[]; kind: "text" | "heading" | "code" | "quote" | "rule" };
+
+const INLINE = /(`+)([^`]+?)\1|\*\*(.+?)\*\*|__(.+?)__|(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])|(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)/g;
+
+/** Splits a line of markdown into styled spans: `code`, **bold**, *italic*, [links](url). */
+export function inlineSpans(text: string, base: Span = { text: "" }): Span[] {
+  const out: Span[] = [];
+  let pos = 0;
+  for (const m of text.matchAll(INLINE)) {
+    if (m.index > pos) out.push({ ...base, text: text.slice(pos, m.index) });
+    if (m[2] !== undefined) out.push({ ...base, text: m[2], code: true });
+    else if (m[3] !== undefined || m[4] !== undefined) out.push(...inlineSpans(m[3] ?? m[4]!, { ...base, bold: true }));
+    else if (m[5] !== undefined || m[6] !== undefined) out.push(...inlineSpans(m[5] ?? m[6]!, { ...base, italic: true }));
+    else {
+      out.push(...inlineSpans(m[7]!, base));
+      if (m[8] !== m[7]) out.push({ ...base, text: ` (${m[8]})`, dim: true });
+    }
+    pos = m.index + m[0].length;
+  }
+  if (pos < text.length) out.push({ ...base, text: text.slice(pos) });
+  return out.filter((s) => s.text);
+}
+
+const sameStyle = (a: Span, b: Span) => !!a.bold === !!b.bold && !!a.italic === !!b.italic && !!a.code === !!b.code && !!a.dim === !!b.dim;
+
+/** Word-wraps styled spans; continuation lines start with `indent` spaces. */
+function wrapSpans(spans: Span[], width: number, indent = 0): Span[][] {
+  const max = Math.max(1, width);
+  const lines: Span[][] = [[]];
+  let len = 0;
+  const push = (span: Span) => {
+    const line = lines[lines.length - 1]!;
+    const last = line[line.length - 1];
+    if (last && sameStyle(last, span)) last.text += span.text;
+    else line.push({ ...span });
+    len += span.text.length;
+  };
+  const newLine = () => {
+    const line = lines[lines.length - 1]!;
+    const last = line[line.length - 1];
+    if (last) last.text = last.text.trimEnd();
+    lines.push(indent ? [{ text: " ".repeat(indent) }] : []);
+    len = indent;
+  };
+  for (const span of spans) {
+    for (const word of span.text.split(/(\s+)/)) {
+      if (!word) continue;
+      if (len + word.length <= max) {
+        push({ ...span, text: word });
+        continue;
+      }
+      if (/^\s+$/.test(word)) {
+        newLine();
+        continue;
+      }
+      if (len > indent) newLine();
+      let rest = word;
+      while (len + rest.length > max) {
+        const room = Math.max(1, max - len);
+        push({ ...span, text: rest.slice(0, room) });
+        rest = rest.slice(room);
+        newLine();
+      }
+      push({ ...span, text: rest });
+    }
+  }
+  return lines;
+}
+
+const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+
+/** Renders markdown for the terminal: headings, lists, quotes, code blocks, tables and inline styles, wrapped to `width`. */
+export function renderMarkdown(text: string, width: number): MdLine[] {
+  const out: MdLine[] = [];
+  const src = splitLines(text);
+  let fence: string | null = null;
+  for (let i = 0; i < src.length; i++) {
+    const raw = src[i]!;
+    const opener = raw.match(/^\s*(`{3,}|~{3,})\s*(\S*)/);
+    if (fence !== null) {
+      if (opener && raw.trim().startsWith(fence)) {
+        fence = null;
+        continue;
+      }
+      for (const line of wrap(raw, width)) out.push({ kind: "code", spans: [{ text: line, code: true }] });
+      continue;
+    }
+    if (opener) {
+      fence = opener[1]!;
+      if (opener[2]) out.push({ kind: "code", spans: [{ text: opener[2], dim: true }] });
+      continue;
+    }
+    // Tables: a header row, a |---| row, then body rows.
+    if (/^\s*\|/.test(raw) && /^\s*\|?\s*:?-{2,}/.test(src[i + 1] ?? "")) {
+      const rows = [cells(raw)];
+      let j = i + 2;
+      for (; j < src.length && /^\s*\|/.test(src[j]!); j++) rows.push(cells(src[j]!));
+      i = j - 1;
+      const plain = rows.map((r) => r.map((c) => inlineSpans(c).map((s) => s.text).join("")));
+      const columns = Math.max(...plain.map((r) => r.length));
+      const widths = Array.from({ length: columns }, (_, c) => Math.max(...plain.map((r) => (r[c] ?? "").length)));
+      const fits = widths.reduce((a, b) => a + b, 0) + 3 * (columns - 1) <= width;
+      rows.forEach((row, r) => {
+        const spans: Span[] = [];
+        row.forEach((cell, c) => {
+          if (c > 0) spans.push({ text: " │ ", dim: true });
+          spans.push(...inlineSpans(cell, r === 0 ? { text: "", bold: true } : { text: "" }));
+          if (fits && c < columns - 1) spans.push({ text: " ".repeat(widths[c]! - plain[r]![c]!.length) });
+        });
+        for (const line of wrapSpans(spans, width, 2)) out.push({ kind: "text", spans: line });
+        if (r === 0) out.push({ kind: "rule", spans: [{ text: fits ? widths.map((w) => "─".repeat(w)).join("─┼─") : "─".repeat(Math.min(width, 40)), dim: true }] });
+      });
+      continue;
+    }
+    const heading = raw.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (heading) {
+      for (const line of wrapSpans(inlineSpans(heading[2]!, { text: "", bold: true }), width)) out.push({ kind: "heading", spans: line });
+      continue;
+    }
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(raw)) {
+      out.push({ kind: "rule", spans: [{ text: "─".repeat(Math.min(width, 40)), dim: true }] });
+      continue;
+    }
+    const quote = raw.match(/^\s*>\s?(.*)/);
+    if (quote) {
+      for (const line of wrapSpans(inlineSpans(quote[1]!, { text: "", italic: true }), width - 2)) out.push({ kind: "quote", spans: [{ text: "│ ", dim: true }, ...line] });
+      continue;
+    }
+    const item = raw.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?(.*)/);
+    if (item) {
+      const depth = Math.floor(item[1]!.length / 2) * 2;
+      const task = item[3] ? (/x/i.test(item[3]) ? "☑ " : "☐ ") : "";
+      const bullet = `${" ".repeat(depth)}${/\d/.test(item[2]!) ? item[2] : "•"} ${task}`;
+      for (const line of wrapSpans([{ text: bullet }, ...inlineSpans(item[4]!)], width, bullet.length)) out.push({ kind: "text", spans: line });
+      continue;
+    }
+    for (const line of wrapSpans(inlineSpans(raw), width)) out.push({ kind: "text", spans: line });
+  }
+  return out;
+}

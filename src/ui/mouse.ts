@@ -4,7 +4,9 @@ import { useStdin } from "ink";
 /** Positions are 0-based terminal cells. `dir` is -1 for wheel up, 1 for wheel down. */
 export type MouseEvent =
   | { kind: "wheel"; dir: -1 | 1; x: number; y: number }
-  | { kind: "click"; x: number; y: number };
+  | { kind: "click"; x: number; y: number }
+  | { kind: "drag"; x: number; y: number }
+  | { kind: "release"; x: number; y: number };
 
 // Report clicks and wheel (1000) using SGR coordinates (1006), which work past column 223.
 const ENABLE = "\x1b[?1000h\x1b[?1006h";
@@ -20,7 +22,8 @@ export function parseMouse(chunk: string): MouseEvent[] {
     const y = Number(m[3]) - 1;
     const button = code & 0b11000011; // drop the shift/alt/ctrl bits
     if (button === 64 || button === 65) events.push({ kind: "wheel", dir: button === 64 ? -1 : 1, x, y });
-    else if (button === 0 && m[4] === "M") events.push({ kind: "click", x, y });
+    else if (button === 0 && code & 32) events.push({ kind: "drag", x, y }); // 32: moved with the left button held
+    else if (button === 0) events.push({ kind: m[4] === "M" ? "click" : "release", x, y });
   }
   return events;
 }

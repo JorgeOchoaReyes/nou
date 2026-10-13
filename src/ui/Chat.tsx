@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
-import { wrap } from "./text.js";
+import { renderMarkdown, wrap, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
@@ -21,13 +21,15 @@ type Props = {
   /** Mouse wheel over the chat: dir -1 up, 1 down; nonce changes per event. */
   wheel?: { dir: number; nonce: number } | null;
   onSubmit(text: string): void;
+  /** Answers the approval waiting in the footer (y/n typed into an empty input). */
+  onAnswer(ok: boolean): void;
 };
 
-type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string };
+type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string; spans?: Span[] };
 
-export const COMMANDS = ["/model", "/models", "/settings", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
+export const COMMANDS = ["/model", "/models", "/settings", "/auto", "/engine", "/copy", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
 
-export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, onSubmit }: Props) {
+export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, onSubmit, onAnswer }: Props) {
   const [input, setInput] = useState("");
   const [scrollBack, setScrollBack] = useState(0);
   const { frame } = useAnimation({ interval: 80, isActive: !!busy });
@@ -43,9 +45,9 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
         out.push({ text: "" });
       } else if (entry.kind === "assistant") {
         out.push({ text: "◆ nou", color: C.accent2, bold: true, bar: C.accent2 });
-        for (const line of wrap(entry.text, inner - 3)) {
-          const isCode = /^\s{2,}|^```|^\s*[{}();]/.test(line);
-          out.push({ text: line, ...(isCode ? { color: C.yellow } : {}), bar: C.accent2 });
+        for (const line of renderMarkdown(entry.text, inner - 3)) {
+          const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
+          out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), bar: C.accent2 });
         }
         out.push({ text: "" });
       } else {
@@ -72,12 +74,12 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     for (const line of wrap(JSON.stringify(approval.args), inner - 2).slice(0, 4)) footer.push({ text: ` ${line}`, color: C.text });
     footer.push({ text: " [y] allow   [n] deny   [Esc] stop", color: C.yellow });
   } else if (approval?.kind === "change") {
-    footer.push({ text: `✎ Review ${approval.change.path} →`, color: C.yellow, bold: true });
+    footer.push({ text: `✎ Nou wants to ${approval.change.isNew ? "create" : "edit"} ${approval.change.path}`, color: C.yellow, bold: true });
     if (approvalNote) {
       footer.push({ text: "⚠ This edit adds problems:", color: C.red, bold: true });
       for (const line of wrap(approvalNote, inner - 2).slice(0, 6)) footer.push({ text: ` ${line}`, color: C.red });
     }
-    footer.push({ text: " [y] accept   [n] reject   [Esc] stop", color: C.yellow });
+    footer.push({ text: " [y] accept   [n] reject   [o] show it   [Esc] stop", color: C.yellow });
   } else if (busy) {
     footer.push({ text: `${SPINNER[frame % SPINNER.length]} ${busy}`, color: C.accent2 });
   }
@@ -97,6 +99,12 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     if (wheel) setScrollBack((b) => Math.max(0, Math.min(maxBack, b - wheel.dir * 3)));
   }, [wheel?.nonce]);
 
+  // While something waits for approval, y/n into an empty input answer it; any other key starts a message.
+  useInput((typed) => {
+    if (/^[yYnN]$/.test(typed)) onAnswer(/[yY]/.test(typed));
+    else if (typed && typed >= " ") setInput(typed); // printable, not a control key
+  }, { isActive: focused && !!approval && !input });
+
   useInput((_input, key) => {
     if (key.pageUp || (key.upArrow && key.shift)) setScrollBack((b) => Math.min(maxBack, b + Math.max(1, rows - 2)));
     else if (key.pageDown || (key.downArrow && key.shift)) setScrollBack((b) => Math.max(0, b - Math.max(1, rows - 2)));
@@ -113,7 +121,11 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
   const render = (line: Line, key: string | number) => (
     <Text key={key} wrap="truncate-end">
       {line.bar ? <Text color={line.bar}>▌ </Text> : null}
-      <Text bold={!!line.bold} dimColor={!!line.dim} {...(line.color ? { color: line.color } : {})}>{line.text || " "}</Text>
+      {line.spans?.length
+        ? line.spans.map((span, i) => (
+          <Text key={i} bold={!!span.bold || !!line.bold} italic={!!span.italic} dimColor={!!span.dim} {...(span.code ? { color: C.yellow } : line.color ? { color: line.color } : { color: C.text })}>{span.text}</Text>
+        ))
+        : <Text bold={!!line.bold} dimColor={!!line.dim} {...(line.color ? { color: line.color } : {})}>{line.text || " "}</Text>}
     </Text>
   );
 
@@ -154,7 +166,7 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
         value={input}
         onChange={setInput}
         onSubmit={submit}
-        focus={focused && !approval}
+        focus={focused && !(approval && !input)}
         width={inner}
         history={history}
         placeholder={busy ? "working… Esc to stop" : "Ask anything · / for commands · ↑ history"}

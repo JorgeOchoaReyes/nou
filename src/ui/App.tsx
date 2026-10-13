@@ -24,6 +24,7 @@ import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorState } from "./Editor.js";
 import { Chat } from "./Chat.js";
+import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { QuickOpen, listAllFiles } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -31,6 +32,9 @@ import { Settings } from "./Settings.js";
 type Focus = "tree" | "code" | "chat";
 type DiffMode = "off" | "git" | "nou" | "session";
 const FOCUS_ORDER: Focus[] = ["tree", "code", "chat"];
+const MIN_TREE = 14;
+const MIN_CODE = 20;
+const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
 
 type Props = { initialModel: ModelChoice; permContext: string };
@@ -43,6 +47,8 @@ const HELP = `Commands:
   /connect <provider>  enter an API key (and URL), e.g. /connect fireworks  /connect litellm
   /pull <model>        download an Ollama model
   /engine [name]       which agent answers: nou, claude-code, codex or pi
+  /auto [ask|auto-edit|auto]  how much Nou does without asking (also: Shift+Tab)
+  /copy [code|file]    copy the last reply, its last code block, or the open file
   /plugins             your plugins and the starter ones you can add
   /plugins add <name>  add a starter plugin (copied to ~/.nou/plugins to edit)
   /plugins new <name>  start your own plugin in .nou/plugins/
@@ -56,6 +62,8 @@ const HELP = `Commands:
   /version             which version of Nou this is
 Keys:
   Ctrl+P  find a file      Tab  switch pane      Esc  stop / back
+  Shift+Tab  ask / auto-edit / auto                < > resize pane  = reset
+  m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   e  edit open file        v    diff (git / Nou / session)  f   follow mode
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
@@ -131,6 +139,11 @@ export function App({ initialModel, permContext }: Props) {
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
+  /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
+  const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
+  const paneWidthsRef = useRef(paneWidths);
+  paneWidthsRef.current = paneWidths;
+  const dragging = useRef<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
   diagnosticsRef.current ??= new DiagnosticsManager();
@@ -140,6 +153,8 @@ export function App({ initialModel, permContext }: Props) {
   const timeline = timelineRef.current;
 
   const followRef = useRef(follow);
+  /** Whether the editor is open, for the agent hooks (which outlive renders). */
+  const draftActiveRef = useRef(false);
   followRef.current = follow;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -179,8 +194,8 @@ export function App({ initialModel, permContext }: Props) {
         }
         const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
         setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
-        // Diffs awaiting approval are always shown, follow mode or not.
-        if (status === "pending" || followRef.current) {
+        // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
+        if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
           setOpenFile(change.path);
           setContent(status === "applied" ? change.after : readText(change.path));
           setDiffMode("off");
@@ -297,16 +312,17 @@ export function App({ initialModel, permContext }: Props) {
     if (!isInstalled(target)) {
       const controller = new AbortController();
       pullAbort.current = controller;
-      info(`Installing ${target.label} (${target.package}) into ~/.nou/engines. Esc to stop.`);
-      setBusy(`Installing ${target.label}...`);
+      info(`${target.label} isn't installed yet, so Nou is installing it now: npm install ${target.package} into ~/.nou/engines. This happens once and can take a minute. Esc to stop.`);
+      setBusy(`Installing the ${target.label} engine (npm)...`);
       try {
-        await installEngine(target, (line) => setBusy(`Installing ${target.label}: ${line.slice(0, 80)}`), controller.signal);
+        await installEngine(target, (line) => setBusy(`Installing the ${target.label} engine (npm): ${line.slice(0, 70)}`), controller.signal);
       } catch (error: any) {
-        return info(controller.signal.aborted ? `Stopped installing ${target.label}.` : `Couldn't install ${target.label}: ${error.message}`, "error");
+        return info(controller.signal.aborted ? `Stopped installing ${target.label}. Nothing changed; you're still on ${engineInfo(agentRef.current!.id).label}.` : `Couldn't install ${target.label}: ${error.message}`, "error");
       } finally {
         pullAbort.current = null;
         setBusy(null);
       }
+      info(`Installed ${target.label} (${target.package}).`);
     }
     agentRef.current!.dispose?.();
     const engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
@@ -381,6 +397,29 @@ export function App({ initialModel, permContext }: Props) {
     setApproval(null);
   };
 
+  /** Shows the edit waiting for approval in the code view. */
+  const openPending = () => {
+    const file = approval?.request.kind === "change" ? approval.request.change.path : null;
+    if (!file || !settleDraft(file)) return;
+    setEditing(false);
+    open(file);
+    setReveal(file);
+    setFocus("code");
+  };
+
+  /** Ask → Auto-edit (edits apply without asking) → Auto (commands too) → Ask. Undo and diffs work the same in each. */
+  const autoMode = settings.autoApproveCommands ? "auto" : settings.autoApproveEdits ? "auto-edit" : "ask";
+  const cycleAutoMode = (to?: "ask" | "auto-edit" | "auto") => {
+    const next = to ?? (autoMode === "ask" ? "auto-edit" : autoMode === "auto-edit" ? "auto" : "ask");
+    updateSettings({ autoApproveEdits: next !== "ask", autoApproveCommands: next === "auto" });
+    // Whatever is waiting now falls under the new mode too.
+    const kind = approval?.request.kind;
+    if (kind && (next === "auto" || (next === "auto-edit" && kind === "change"))) answer(true);
+    info(next === "ask" ? "Ask mode: Nou asks before every edit and command."
+      : next === "auto-edit" ? "Auto-edit mode: edits apply without asking; Nou still asks before commands. Review with the diff view, u to undo."
+        : "Auto mode: edits and commands run without asking. Review with the diff view, u to undo. Shift+Tab to change.");
+  };
+
   const record = openFile ? changes.get(openFile) : undefined;
   const pendingChange = approval?.request.kind === "change" ? approval.request.change : null;
   const gitChange = useMemo(
@@ -390,10 +429,11 @@ export function App({ initialModel, permContext }: Props) {
   const sessionId = sessionView?.id ?? agentRef.current!.session;
   const sessionFiles = useMemo(() => timeline.sessionChanges(sessionId), [sessionId, historyVersion]);
   const sessionChange = openFile ? sessionFiles.find((c) => c.path === openFile) ?? null : null;
-  const diff = pendingChange ?? (diffMode === "git" ? gitChange
+  const diff = (pendingChange && pendingChange.path === openFile ? pendingChange : null) ?? (diffMode === "git" ? gitChange
     : diffMode === "nou" && record ? record.change
       : diffMode === "session" ? sessionChange : null);
-  const showEditor = editing && !!openFile && !pendingChange;
+  const showEditor = editing && !!openFile && !(pendingChange && pendingChange.path === openFile);
+  draftActiveRef.current = showEditor;
 
   // Check Nou's proposed edit before you approve it: does it add problems?
   useEffect(() => {
@@ -434,12 +474,32 @@ export function App({ initialModel, permContext }: Props) {
     setTimeout(() => setExitArmed(false), 2000);
   };
 
+  /** Moves a pane border to column `x` and keeps every pane usable. */
+  const moveBorder = (border: "tree" | "chat", x: number) => {
+    const { treeWidth, codeWidth } = layout.current;
+    const chatWidth = columns - treeWidth - codeWidth;
+    const tree = border === "tree" ? Math.min(Math.max(x + 1, MIN_TREE), columns - chatWidth - MIN_CODE) : treeWidth;
+    const chat = border === "chat" ? Math.min(Math.max(columns - x, MIN_CHAT), columns - treeWidth - MIN_CODE) : chatWidth;
+    const next = { tree: tree / columns, chat: chat / columns };
+    setPaneWidths(next);
+    return next;
+  };
+
   // Mouse: the wheel scrolls whatever pane is under the pointer; a click focuses that pane
-  // (and in the file tree, opens the clicked file).
+  // (and in the file tree, opens the clicked file). Dragging a border between panes resizes them.
   useMouse((event) => {
     if (view !== "main" || quickOpen) return;
     const { treeWidth, codeWidth, paneHeight } = layout.current;
+    if (event.kind === "drag") return void (dragging.current && moveBorder(dragging.current, event.x));
+    if (event.kind === "release") {
+      if (dragging.current) updateSettings({ paneWidths: paneWidthsRef.current });
+      dragging.current = null;
+      return;
+    }
     if (event.y < 1 || event.y > paneHeight) return; // header or status bar
+    // Each border is two columns: the left pane's edge and the right pane's.
+    if (event.kind === "click" && Math.abs(event.x - (treeWidth - 0.5)) <= 1) return void (dragging.current = "tree");
+    if (event.kind === "click" && Math.abs(event.x - (treeWidth + codeWidth - 0.5)) <= 1) return void (dragging.current = "chat");
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
     if (event.kind === "wheel") {
       setWheel((w) => ({ pane, dir: event.dir, nonce: (w?.nonce ?? 0) + 1 }));
@@ -618,23 +678,24 @@ export function App({ initialModel, permContext }: Props) {
   };
 
   useInput((input, key) => {
-    if (approval) {
-      if (input === "y" || input === "Y") answer(true);
-      else if (input === "n" || input === "N") answer(false);
-      else if (key.escape) {
+    // A waiting approval doesn't freeze anything: y/n answer it from the tree or code view (the chat
+    // handles them itself when its input is empty), Esc stops the turn, and every other key works as usual.
+    if (approval && !(showEditor && focus === "code")) {
+      if (key.escape) {
         agentRef.current?.cancel();
-        answer(false);
+        return answer(false);
       }
-      return;
+      if (focus !== "chat" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
+      if (focus !== "chat" && input === "o" && pendingChange) return openPending();
     }
     if (key.ctrl && input === "p") {
       setQuickOpen(true);
       return;
     }
     if (showEditor && focus === "code") return; // the editor owns the keyboard
+    if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab) {
-      const step = key.shift ? -1 : 1;
-      setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + step + FOCUS_ORDER.length) % FOCUS_ORDER.length]!);
+      setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!);
       return;
     }
     if (key.escape) {
@@ -651,12 +712,24 @@ export function App({ initialModel, permContext }: Props) {
     }
     if (focus === "chat") return; // letters belong to the text box
     if (input === "f") setFollow((f) => !f);
+    else if (input === "m") {
+      updateSettings({ mouse: !settings.mouse });
+      info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
+    }
     else if (input === "p") {
       setCodePanel((p) => (p === "problems" ? "code" : "problems"));
       setEditing(false);
       setFocus("code");
     } else if (input === "u") undoLast();
-    else if (input === "v") cycleDiff();
+    else if (input === "<" || input === ">") {
+      // Moves the focused pane's inner border: the tree's right edge, or the code view's edge with the chat.
+      const { treeWidth, codeWidth } = layout.current;
+      const step = input === ">" ? 2 : -2;
+      updateSettings({ paneWidths: moveBorder(focus === "tree" ? "tree" : "chat", (focus === "tree" ? treeWidth - 1 : treeWidth + codeWidth) + step) });
+    } else if (input === "=") {
+      setPaneWidths(null);
+      updateSettings({ paneWidths: null });
+    } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "e") startEditing();
     else if (input === "s" || input === ",") setView("settings");
@@ -764,11 +837,25 @@ ${snippet}
       }
       return chooseModel(resolveModel(arg));
     }
+    case "copy": {
+      const reply = [...entries].reverse().find((e) => e.kind === "assistant")?.text;
+      const blocks = reply ? [...reply.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]!) : [];
+      const what = arg === "file" ? (openFile ? readText(openFile) : null) : arg === "code" ? blocks[blocks.length - 1] ?? null : reply ?? null;
+      if (arg && arg !== "file" && arg !== "code") return info("Usage: /copy (the last reply) · /copy code (its last code block) · /copy file (the open file)", "error");
+      if (!what) return info(arg === "file" ? "No file is open." : arg === "code" ? "The last reply has no code block." : "Nothing to copy yet.", "error");
+      const ok = await copyToClipboard(what);
+      return info(ok ? `Copied ${arg === "file" ? openFile : arg === "code" ? "the code block" : "the last reply"} (${what.split("\n").length} lines).` : "Couldn't reach the clipboard. Press m to turn off the mouse and select the text yourself.", ok ? "info" : "error");
+    }
+    case "auto": {
+      if (!arg) return cycleAutoMode();
+      if (arg === "ask" || arg === "auto-edit" || arg === "auto") return cycleAutoMode(arg);
+      return info("Usage: /auto [ask|auto-edit|auto]", "error");
+    }
     case "engine": {
       if (arg && isEngineId(arg)) return switchEngine(arg);
       if (arg) return info(`Unknown engine ${arg}. Choose one of: ${ENGINES.map((e) => e.id).join(", ")}`, "error");
       const current = agentRef.current!.id;
-      const lines = ENGINES.map((e) => `  ${e.id === current ? "●" : "○"} ${e.id.padEnd(12)} ${e.description}${isInstalled(e) ? "" : " (installs on first use)"}`);
+      const lines = ENGINES.map((e) => `  ${e.id === current ? "●" : "○"} ${e.id.padEnd(12)} ${e.description}${isInstalled(e) ? "" : ` (not installed: switching runs npm install ${e.package})`}`);
       return info(`Engines (/engine <name> to switch, or /settings → Engine):\n${lines.join("\n")}`);
     }
     case "pull": {
@@ -882,9 +969,9 @@ ${snippet}
   }
 
   const height = Math.max(10, rows - 2);
-  const treeWidth = Math.max(24, Math.floor(columns * 0.2));
-  const chatWidth = Math.max(34, Math.floor(columns * 0.3));
-  const codeWidth = Math.max(20, columns - treeWidth - chatWidth);
+  const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
+  const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
+  const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
   layout.current = { treeWidth, codeWidth, paneHeight: height };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const edited = new Set([...changes].filter(([, c]) => c.status === "applied").map(([p]) => p));
@@ -900,15 +987,27 @@ ${snippet}
         : busy ? { label: "WORKING", color: C.accent2 }
           : { label: focus.toUpperCase(), color: C.accent };
 
-  const hints = approval
-    ? "y accept · n reject · Esc stop"
+  // Shortcuts for the status bar, most useful first; the ones that don't fit are left out (all of them are in /help).
+  const hints: [string, string][] = approval && !(showEditor && focus === "code")
+    ? [["y", "accept"], ["n", "reject"], ...(pendingChange && diff !== pendingChange ? [["o", "show the edit"] as [string, string]] : []), ["Esc", "stop"], ["Shift+Tab", "auto mode"]]
     : showEditor && focus === "code"
-      ? `Ctrl+S save${settings.autoSave === "off" ? "" : " (auto-save on)"} · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G definition · Esc close`
+      ? [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Ctrl+Y", "redo"], ["Ctrl+K", "info"], ["Ctrl+G", "definition"]]
       : focus === "chat"
-        ? busy ? "Esc stop · Shift+↑↓ scroll chat · Tab switch pane" : "Enter send · Shift+↑↓ / PgUp scroll · / commands · Ctrl+P find file · Tab switch pane"
+        ? busy
+          ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
+          : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
         : focus === "tree"
-          ? "↑↓ move · Enter open · c changes · e edit · p problems · u undo · Ctrl+P find · s settings"
-          : diff ? `n/N next/prev change${diffMode === "session" ? " · [ ] prev/next file" : ""} · v cycle diff · Esc close diff` : "↑↓ scroll · e edit · v diff · p problems · u undo · s settings";
+          ? [["Enter", "open"], ["e", "edit"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
+          : diff
+            ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
+            : [["e", "edit"], ["v", "diff"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
+  const shownHints: [string, string][] = [];
+  for (let used = statusUsed, i = 0; i < hints.length; i++) {
+    used += hints[i]![0].length + hints[i]![1].length + 4;
+    if (used > columns) break;
+    shownHints.push(hints[i]!);
+  }
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -917,7 +1016,7 @@ ${snippet}
         <FileTree
           width={treeWidth}
           height={height}
-          focused={focus === "tree" && !approval}
+          focused={focus === "tree"}
           openFile={openFile}
           reveal={reveal}
           version={treeVersion}
@@ -936,7 +1035,7 @@ ${snippet}
           <ProblemsView
             width={codeWidth}
             height={height}
-            focused={focus === "code" && !approval}
+            focused={focus === "code"}
             problems={diagnostics.all()}
             checking={checking}
             wheel={wheelFor("code")}
@@ -983,17 +1082,17 @@ ${snippet}
           <CodeView
             width={codeWidth}
             height={height}
-            focused={focus === "code" && !approval}
+            focused={focus === "code"}
             filePath={openFile}
             content={content}
             diff={diff}
             diffLabel={diffMode === "git" ? "vs HEAD" : diffMode === "session" ? sessionView?.label ?? "this session" : "Nou's edit"}
-            pending={!!pendingChange}
+            pending={!!pendingChange && diff === pendingChange}
             marked={record?.lines ?? NO_LINES}
             problems={fileProblems}
             focusLine={focusLine}
             syntaxVersion={syntaxVersion}
-            diffNote={pendingChange ? pendingNote?.short ?? (checking.length ? "checking…" : null) : null}
+            diffNote={pendingChange && diff === pendingChange ? pendingNote?.short ?? (checking.length ? "checking…" : null) : null}
             wheel={wheelFor("code")}
             onViewport={(top, bottom) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom }))}
           />
@@ -1010,18 +1109,22 @@ ${snippet}
           contextChip={contextChip}
           wheel={wheelFor("chat")}
           onSubmit={send}
+          onAnswer={answer}
         />
       </Box>
       <Box>
         <Text wrap="truncate-end">
           <Text backgroundColor={mode.color} color="black" bold>{` ${mode.label} `}</Text>
+          <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
           <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{follow ? " ◉ follow " : " ○ follow "}</Text>
           <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
           <Text backgroundColor={C.panel} color={totals.warnings ? C.yellow : C.dim}>{` ▲ ${totals.warnings} `}</Text>
           {checking.length > 0 && <Text color={C.accent2}> ⟳ {checking.join(", ")}</Text>}
           {exitArmed
             ? <Text color={C.yellow} bold>{"  "}Press again to quit{draft.current && settings.autoSave === "off" ? ` (unsaved changes in ${draft.current.path} will be lost)` : ""}</Text>
-            : <Text color={C.dim}>{"  "}{hints}</Text>}
+            : shownHints.map(([key, action], i) => (
+              <Text key={key}>{i === 0 ? "  " : <Text color={C.dim}> · </Text>}<Text color={C.text}>{key}</Text><Text color={C.dim}> {action}</Text></Text>
+            ))}
         </Text>
       </Box>
       {quickOpen && (
