@@ -176,6 +176,19 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(wheel("down", 40, 10), 200);
   await press(wheel("down", 40, 10), 200);
   check("wheel over the code scrolls it", !frame().includes("const line1 = 1;") && frame().includes("const line7 = 7;"));
+  // Where the code pane's top-left corner is (╭ when focused, ┌ otherwise).
+  const codeLeft = () => frame().split("\n")[1]!.slice(1).search(/[╭┌]/) + 1;
+  const before = codeLeft();
+  await press(click(23, 10), 100);
+  await press(`\x1b[<32;${33 + 1};11M`, 100); // drag the files/code border 10 columns right
+  await press(`\x1b[<0;${33 + 1};11m`, 200);
+  check("dragging the border between panes resizes them", before === 24 && codeLeft() === 34);
+  await press(KEY.tab, 100); // to the file tree, so > and = aren't typed into the chat
+  await press(KEY.tab, 100);
+  await press(">", 200);
+  check("> widens the focused pane", codeLeft() === 36);
+  await press("=", 200);
+  check("= puts the default widths back", codeLeft() === 24);
 });
 
 console.log("Engines");

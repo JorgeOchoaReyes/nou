@@ -32,6 +32,8 @@ export type Settings = {
   mouse: boolean;
   /** Use API keys from Claude Code's and Codex's config for providers you haven't set up. */
   reuseToolConfig: boolean;
+  /** Pane widths as fractions of the terminal, set by dragging the borders or with < and >. Null means the default layout. */
+  paneWidths: { tree: number; chat: number } | null;
   /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
   /**
@@ -45,13 +47,14 @@ export const DEFAULT_SETTINGS: Settings = {
   model: "",
   engine: "nou",
   effort: "high",
-  followMode: true,
+  followMode: false,
   autoApproveEdits: false,
   autoApproveCommands: false,
   gitContext: true,
   autoSave: "delay",
   mouse: true,
   reuseToolConfig: true,
+  paneWidths: null,
   plugins: {},
   trustedPlugins: {},
 };

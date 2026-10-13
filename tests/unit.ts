@@ -34,7 +34,8 @@ console.log("Mouse input");
   const events = parseMouse("\x1b[<64;10;5M\x1b[<65;10;5M\x1b[<68;3;4M\x1b[<0;20;8M\x1b[<0;20;8m");
   check("wheel up and down", events[0]?.kind === "wheel" && events[0].dir === -1 && events[1]?.kind === "wheel" && events[1].dir === 1);
   check("wheel with Shift held still counts", events[2]?.kind === "wheel" && events[2].dir === -1);
-  check("click press is reported once (release ignored)", events.filter((e) => e.kind === "click").length === 1);
+  check("click press is reported once, then its release", events.filter((e) => e.kind === "click").length === 1 && events[4]?.kind === "release");
+  check("moving with the button held is a drag", parseMouse("[<32;30;8M")[0]?.kind === "drag");
   check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);
   check("ordinary keys are not mouse events", parseMouse("hello\x1b[A").length === 0);
 }
@@ -60,6 +61,36 @@ console.log("Keeping the model's context small");
   check("long output keeps its end, where errors are", capped.length < 10_100 && capped.endsWith("THE ERROR") && capped.includes("characters cut"));
   check("Ollama gets a bigger context window, capped at the model's", pickNumCtx("temperature 0.6", { "qwen3.context_length": 40960 }) === 32768 && pickNumCtx("", { "x.context_length": 8192 }) === 8192);
   check("a num_ctx set in the Modelfile is left alone", pickNumCtx("num_ctx                        24576\ntop_k 20", {}) === null);
+}
+
+console.log("syntax");
+{
+  const { highlightLines } = await import("../src/ui/text.js");
+  const { preload } = await import("../src/syntax/index.js");
+  const yaml = "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies: {}\n";
+  preload("pnpm-lock.yaml");
+  await new Promise((r) => setTimeout(r, 1000));
+  let lines: string[] = [];
+  let thrown = "";
+  try {
+    lines = highlightLines("pnpm-lock.yaml", yaml);
+  } catch (error: any) {
+    thrown = error.message;
+  }
+  check(`a grammar that breaks while parsing falls back instead of crashing${thrown ? ` (${thrown})` : ""}`, !thrown && lines.length === 4);
+}
+
+console.log("markdown");
+{
+  const { renderMarkdown } = await import("../src/ui/text.js");
+  const show = (md: string) => renderMarkdown(md, 60).map((l) => l.spans.map((s) => s.text).join(""));
+  const styled = renderMarkdown("## Done\nSee **bold** and `code`.", 60);
+  check("headings and inline markers render without the markdown syntax", styled[0]!.kind === "heading" && show("## Done\nSee **bold** and `code`.")[1] === "See bold and code."
+    && styled[1]!.spans.some((s) => s.bold && s.text === "bold") && styled[1]!.spans.some((s) => s.code && s.text === "code"));
+  check("code fences are hidden and their content kept as code", show("```ts\nconst a_b = 1;\n```").join("|") === "ts|const a_b = 1;");
+  check("snake_case and multiplication aren't taken for italics", show("my_var_name and 2 * 3 * 4")[0] === "my_var_name and 2 * 3 * 4");
+  check("bullets become •", show("- one\n- two").join("|") === "• one|• two");
+  check("tables drop the |---| row and line up columns", show("| a | bb |\n|---|---|\n| ccc | d |").join("|") === "a   │ bb|────┼───|ccc │ d");
 }
 
 console.log("edit_file");

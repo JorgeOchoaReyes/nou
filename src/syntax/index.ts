@@ -68,8 +68,16 @@ function parse(file: string, text: string) {
   const lang = languages.get(name);
   if (!lang) load(name);
   if (!lang || typeof lang === "string" || !parser) return null;
-  parser.setLanguage(lang);
-  return parser.parse(text);
+  try {
+    parser.setLanguage(lang);
+    return parser.parse(text);
+  } catch {
+    // Some shipped grammars call into the runtime with functions it doesn't have (e.g. YAML's scanner).
+    // Don't use that grammar again; callers fall back to highlight.js.
+    languages.set(name, "failed");
+    parser = new Parser();
+    return null;
+  }
 }
 
 export function hasGrammar(file: string): boolean {

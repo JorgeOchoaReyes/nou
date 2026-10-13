@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
-import { wrap } from "./text.js";
+import { renderMarkdown, wrap, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
@@ -23,7 +23,7 @@ type Props = {
   onSubmit(text: string): void;
 };
 
-type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string };
+type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string; spans?: Span[] };
 
 export const COMMANDS = ["/model", "/models", "/settings", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
 
@@ -43,9 +43,9 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
         out.push({ text: "" });
       } else if (entry.kind === "assistant") {
         out.push({ text: "◆ nou", color: C.accent2, bold: true, bar: C.accent2 });
-        for (const line of wrap(entry.text, inner - 3)) {
-          const isCode = /^\s{2,}|^```|^\s*[{}();]/.test(line);
-          out.push({ text: line, ...(isCode ? { color: C.yellow } : {}), bar: C.accent2 });
+        for (const line of renderMarkdown(entry.text, inner - 3)) {
+          const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
+          out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), bar: C.accent2 });
         }
         out.push({ text: "" });
       } else {
@@ -113,7 +113,11 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
   const render = (line: Line, key: string | number) => (
     <Text key={key} wrap="truncate-end">
       {line.bar ? <Text color={line.bar}>▌ </Text> : null}
-      <Text bold={!!line.bold} dimColor={!!line.dim} {...(line.color ? { color: line.color } : {})}>{line.text || " "}</Text>
+      {line.spans?.length
+        ? line.spans.map((span, i) => (
+          <Text key={i} bold={!!span.bold || !!line.bold} italic={!!span.italic} dimColor={!!span.dim} {...(span.code ? { color: C.yellow } : line.color ? { color: line.color } : { color: C.text })}>{span.text}</Text>
+        ))
+        : <Text bold={!!line.bold} dimColor={!!line.dim} {...(line.color ? { color: line.color } : {})}>{line.text || " "}</Text>}
     </Text>
   );
 

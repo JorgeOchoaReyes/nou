@@ -206,8 +206,9 @@ export function Settings({ width, height, settings, choice, plugins, onModel, on
                   <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
                   <Text color={active ? C.green : C.dim} bold>{active ? "● " : "○ "}</Text>
                   <Text color={C.text} bold={selected}>{engine.label.padEnd(14)}</Text>
-                  <Text color={C.dim}>{active ? "in use · " : ""}{isInstalled(engine) ? "" : "installs on first use · "}model: {engine.model(choice)}</Text>
+                  <Text color={C.dim}>{active ? "in use · " : ""}model: {engine.model(choice)}</Text>
                 </Text>
+                {!isInstalled(engine) && <Text color={C.orange} wrap="truncate-end">    Not installed. Enter installs it with npm ({engine.package}) into ~/.nou/engines.</Text>}
                 <Text color={C.dim} wrap="truncate-end">    {engine.description}</Text>
                 {engine.approvals === "after" && <Text color={C.orange} wrap="truncate-end">    Nou can't ask before its edits; it shows them afterwards so you can undo them.</Text>}
               </Box>
