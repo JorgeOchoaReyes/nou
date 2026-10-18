@@ -10,6 +10,10 @@ if (major! < 22 || (major === 22 && minor! < 12)) {
   process.exit(1);
 }
 
+// React and Ink pick their build from NODE_ENV when they load: without this every render runs React's
+// development build, which is several times slower and checks every update.
+process.env.NODE_ENV ??= "production";
+
 // Load the project's .env (API keys, base URLs). Providers read their settings when they load,
 // so loading .env later would be too late for them.
 if (existsSync(".env")) {

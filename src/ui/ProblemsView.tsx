@@ -3,6 +3,7 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { C, SPINNER, fileIcon } from "./theme.js";
 import { Pane } from "./Pane.js";
+import type { Wheel } from "./scroll.js";
 
 type Props = {
   width: number;
@@ -11,7 +12,7 @@ type Props = {
   problems: Diagnostic[];
   /** Checkers still running, e.g. ["TypeScript"]. */
   checking: string[];
-  wheel?: { dir: number; nonce: number } | null;
+  wheel?: Wheel | null;
   onJump(file: string, line: number): void;
   onClose(): void;
 };
@@ -51,7 +52,7 @@ export function ProblemsView({ width, height, focused, problems, checking, wheel
 
   useEffect(() => setCursor((c) => Math.min(c, Math.max(0, rows.length - 1))), [rows.length]);
   useEffect(() => {
-    if (wheel) setCursor((c) => Math.max(0, Math.min(rows.length - 1, c + wheel.dir * 3)));
+    if (wheel?.lines) setCursor((c) => Math.max(0, Math.min(rows.length - 1, c + wheel.lines)));
   }, [wheel?.nonce]);
 
   const visibleRows = Math.max(1, height - 4);

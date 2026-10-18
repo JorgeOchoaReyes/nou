@@ -24,6 +24,23 @@ const { App } = await import("../src/ui/App.js");
 const { resolveModel } = await import("../src/providers/index.js");
 const { writeFakeEngines } = await import("./fake-engines.js");
 
+// Every frame below is rendered by both Ink's own output stage and Nou's faster one (src/ui/fast-output.ts);
+// they must produce the same text, byte for byte.
+const { loadInkOutput, makeFastOutput } = await import("../src/ui/fast-output.js");
+const ink = await loadInkOutput();
+const inkGet = ink.Output.prototype.get;
+const fastGet = makeFastOutput(ink.tokenizer, ink.stringWidth).get;
+const outputCompare = { frames: 0, mismatches: 0 };
+ink.Output.prototype.get = function (this: any) {
+  const expected = inkGet.call(this);
+  const actual = fastGet.call(this);
+  outputCompare.frames++;
+  if (expected.output !== actual.output || expected.height !== actual.height) {
+    if (!outputCompare.mismatches++) console.log("fast output differs:\n" + JSON.stringify(expected.output.slice(0, 400)) + "\n" + JSON.stringify(actual.output.slice(0, 400)));
+  }
+  return expected;
+};
+
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (label: string, ok: boolean) => {
@@ -55,7 +72,8 @@ async function session(model: any, steps: (h: { press(keys: string, wait?: numbe
   }
 }
 
-const KEY = { tab: "\t", shiftTab: "\x1b[Z", enter: "\r", esc: "\x1b", down: "\x1b[B", end: "\x1b[F", ctrlC: "\x03", ctrlZ: "\x1a", ctrlY: "\x19" };
+const KEY = { tab: "\t", shiftTab: "\x1b[Z", enter: "\r", esc: "\x1b", down: "\x1b[B", end: "\x1b[F", ctrlC: "\x03", ctrlZ: "\x1a", ctrlY: "\x19", ctrlP: "\x10" };
+const [SHIFT_RIGHT, ALT_UP, LEFT, CTRL_SLASH, CTRL_D, CTRL_F, CTRL_L, CTRL_A] = ["\x1b[1;2C", "\x1b[1;3A", "\x1b[D", "\x1f", "\x04", "\x06", "\x0c", "\x01"];
 
 console.log("Editor, auto-save, undo/redo, problems");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
@@ -191,7 +209,7 @@ await session(resolveModel("ollama"), async ({ press, frame }) => {
 console.log("Mouse");
 // SGR mouse reports, 1-based like a real terminal sends them. The test screen is 100 columns:
 // files 0-23, code 24-65, chat 66-99. Pane rows start at y=3 (0-based) under the border and title.
-const wheel = (dir: "up" | "down", x: number, y: number) => `\x1b[<${dir === "up" ? 64 : 65};${x + 1};${y + 1}M`;
+const wheel = (dir: "up" | "down", x: number, y: number, shift = false) => `\x1b[<${(dir === "up" ? 64 : 65) + (shift ? 4 : 0)};${x + 1};${y + 1}M`;
 const click = (x: number, y: number) => `\x1b[<0;${x + 1};${y + 1}M`;
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   for (let i = 0; i < 4; i++) {
@@ -223,6 +241,96 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("> widens the focused pane", codeLeft() === 36);
   await press("=", 200);
   check("= puts the default widths back", codeLeft() === 24);
+});
+
+console.log("Scrolling");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/help");
+  await press(KEY.enter, 200);
+  await press(KEY.tab, 100); // files
+  await press(click(5, 3 + 3), 800); // many.ts
+  await press(wheel("down", 40, 10).repeat(5), 300);
+  check("a burst of wheel events scrolls by all of them, in one go", frame().includes("16-") && frame().includes("const line16 = 16;") && !frame().includes("const line15 = 15;"));
+  await press(wheel("down", 40, 10, true), 200);
+  check("Shift+wheel scrolls sideways", frame().includes("→6") && !frame().includes("const line16"));
+  await press("h", 100);
+  await press(click(64, 21), 300); // the bottom of the code pane's scrollbar
+  check("clicking the scrollbar jumps there", frame().includes("/100") && frame().includes("const line100 = 100;"));
+  await press(`\x1b[<32;${64 + 1};${3 + 1}M`, 200); // drag it to the top
+  await press(`\x1b[<0;${64 + 1};${3 + 1}m`, 100);
+  check("dragging the scrollbar scrolls", frame().includes("const line1 = 1;"));
+  await type("/help"); // from the code view: / goes to the chat's command box
+  check("/ in the code view starts a command in the chat", frame().includes("❯ /help") && !frame().includes("EDITING"));
+  await press(KEY.enter, 150);
+  for (let i = 0; i < 2; i++) {
+    await type("/help");
+    await press(KEY.enter, 150);
+  }
+  await press(wheel("up", 80, 8), 200);
+  await press(KEY.esc, 100);
+  await type("/version");
+  await press(KEY.enter, 300);
+  check("scrolled up in the chat, new messages don't pull the view down", frame().includes("new lines below"));
+});
+
+console.log("Editing with the mouse and keyboard");
+writeFileSync(path.join(dir, "edit.ts"), "function f() {\n  const alpha = 1;\n  const beta = 2;\n  return alpha;\n}\n// line50 marker\n");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/help");
+  await press(KEY.enter, 200);
+  await press(KEY.ctrlP, 200);
+  await type("edit.ts");
+  await press(KEY.enter, 800);
+  // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
+  await press(click(27 + 8, 3 + 1), 400); // line 2, column 9: "alpha"
+  await press(`\x1b[<0;${27 + 8 + 1};${3 + 1 + 1}m`, 100);
+  check("clicking in the code starts editing right there", frame().includes("EDITING") && frame().includes("Ln 2, Col 9"));
+  await press(SHIFT_RIGHT);
+  await press(SHIFT_RIGHT);
+  await press(SHIFT_RIGHT, 150);
+  check("Shift+arrows select", frame().includes("3 selected"));
+  await type("ZZ");
+  check("typing replaces the selection", frame().includes("const ZZha = 1;"));
+  await press(KEY.ctrlZ, 200);
+  check("undo brings the selection's text back", frame().includes("const alpha = 1;"));
+  await press(`\x1b[<0;${27 + 8 + 1};${3 + 2 + 1}M`, 100); // press on line 3, column 9
+  await press(`\x1b[<32;${27 + 12 + 1};${3 + 2 + 1}M`, 100); // drag 4 columns right
+  await press(`\x1b[<0;${27 + 12 + 1};${3 + 2 + 1}m`, 200);
+  check("dragging the mouse selects", frame().includes("4 selected") && frame().includes("Ln 3"));
+  await press(KEY.esc, 100); // clears the selection, stays in the editor
+  check("Esc with a selection only clears it", frame().includes("EDITING") && !frame().includes("selected"));
+  await press(CTRL_SLASH, 200);
+  check("Ctrl+/ comments the line", frame().includes("// const beta = 2;"));
+  await press(CTRL_SLASH, 200);
+  check("and again uncomments it", frame().includes("  const beta = 2;") && !frame().includes("// const beta"));
+  await press(ALT_UP, 200);
+  check("Alt+↑ moves the line up", /const beta = 2;[^\n]*\n[^\n]*const alpha = 1;/.test(frame()));
+  await press(KEY.ctrlZ, 200);
+  await press(CTRL_D, 200);
+  check("Ctrl+D duplicates the line", (frame().match(/const beta = 2;/g) ?? []).length === 2);
+  await press(KEY.ctrlZ, 200);
+  await press(CTRL_F, 100);
+  await type("line50");
+  await press(KEY.enter, 200);
+  check("Ctrl+F finds text", frame().includes("Find: line50") && frame().includes("edit.ts:6"));
+  await press(KEY.esc, 100);
+  await press(CTRL_L, 100);
+  await type("4");
+  await press(KEY.enter, 200);
+  check("Ctrl+L goes to a line", frame().includes("edit.ts:4") && !frame().includes("Go to line"));
+  await press(KEY.end);
+  await press(KEY.enter, 100);
+  await type("if (x) {}");
+  await press(LEFT);
+  await press(KEY.enter, 200);
+  check("Enter between braces opens an indented line", /if \(x\) \{[^\n]*\n[^\n]*\d+ ▸ {4}[^\n]*\n[^\n]*\d+ {4}\}/.test(frame()));
+  await press(CTRL_A, 100);
+  check("Ctrl+A selects everything", /\d+ selected/.test(frame()));
+  await press(KEY.ctrlC, 200);
+  check("Ctrl+C with a selection copies instead of quitting", !frame().includes("Press again to quit") && /Copied|clipboard/.test(frame()));
+  await press(KEY.esc, 100);
+  await press(KEY.esc, 1500);
+  check("Esc leaves the editor", !frame().includes("EDITING"));
 });
 
 console.log("Engines");
@@ -300,6 +408,8 @@ console.log("Fixing a rejected key");
   delete process.env.LITELLM_BASE_URL;
   delete process.env.LITELLM_API_KEY;
 }
+
+check(`fast output matches Ink's on all ${outputCompare.frames} frames`, outputCompare.frames > 100 && outputCompare.mismatches === 0);
 
 process.chdir(os.tmpdir());
 rmSync(dir, { recursive: true, force: true });

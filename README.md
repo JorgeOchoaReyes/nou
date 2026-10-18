@@ -76,12 +76,13 @@ Every change is reviewed like a code review:
 
 | Key | Does |
 | --- | --- |
-| 🖱️ Mouse | wheel scrolls the pane under the pointer · click a pane to focus it · click a file to open it · drag a border between panes to resize them (hold <kbd>Shift</kbd> to select text, or press <kbd>m</kbd> to turn the mouse off) |
-| <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | scroll the chat history |
+| 🖱️ Mouse | wheel scrolls the pane under the pointer (<kbd>Shift</kbd>+wheel or a tilt wheel: sideways) · click or drag a scrollbar to jump · click a file to open it · **click in the code to edit right there**, drag to select · drag a border between panes to resize them (press <kbd>m</kbd> to turn the mouse off and select text in your terminal) |
+| <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> | scroll the chat; scrolled up, new replies wait below instead of yanking the view (<kbd>Ctrl</kbd>+<kbd>End</kbd> jumps back) |
+| <kbd>/</kbd> | start a command from any pane |
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file |
-| <kbd>e</kbd> | edit the open file (<kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>K</kbd> info · <kbd>Ctrl</kbd>+<kbd>G</kbd> definition · <kbd>Esc</kbd> close) |
+| <kbd>e</kbd> or a click | edit the open file (see the editor keys below) |
 | <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
 | <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD`, Nou's last edit, or this session · <kbd>n</kbd>/<kbd>N</kbd> jump between changes · <kbd>[</kbd>/<kbd>]</kbd> previous/next file in a session diff |
@@ -93,6 +94,20 @@ Every change is reviewed like a code review:
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
 | <kbd>Esc</kbd> | stop Nou · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
+
+In the editor:
+
+| Key | Does |
+| --- | --- |
+| <kbd>Shift</kbd>+arrows, <kbd>Shift</kbd>+<kbd>Home</kbd>/<kbd>End</kbd>, mouse drag | select · <kbd>Ctrl</kbd>+<kbd>A</kbd> select all |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> | copy / cut / paste (the whole line when nothing is selected); your terminal's own paste works too |
+| <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> or <kbd>Ctrl</kbd>+<kbd>W</kbd> | move by word, delete a word · <kbd>Ctrl</kbd>+<kbd>Home</kbd>/<kbd>End</kbd> start / end of the file |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> · <kbd>Ctrl</kbd>+<kbd>L</kbd> | find (<kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>Shift</kbd>+<kbd>Enter</kbd>/<kbd>↑</kbd> previous) · go to line |
+| <kbd>Ctrl</kbd>+<kbd>/</kbd> · <kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> | comment the line or selection · duplicate it · move it up / down |
+| <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | indent / outdent (whole lines with a selection) · <kbd>Enter</kbd> keeps the indent, one more after `{`, `(`, `[` |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> | save (auto-save is on by default) · undo / redo |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
+| <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
 Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/help`
 

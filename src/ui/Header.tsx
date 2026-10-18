@@ -1,3 +1,4 @@
+import { memo } from "react";
 import path from "path";
 import { Box, Text, useAnimation } from "ink";
 import { C, SPINNER, gradient } from "./theme.js";
@@ -16,7 +17,7 @@ type Props = {
   update: string | null;
 };
 
-export function Header({ width, branch, changes, model, local, busy, update }: Props) {
+export const Header = memo(function Header({ width, branch, changes, model, local, busy, update }: Props) {
   const { frame } = useAnimation({ interval: 120, isActive: !!busy });
   const project = path.basename(process.cwd());
   return (
@@ -44,4 +45,4 @@ export function Header({ width, branch, changes, model, local, busy, update }: P
       </Text>
     </Box>
   );
-}
+});

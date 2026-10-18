@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 import { C } from "./theme.js";
 
@@ -53,12 +53,20 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
   const [cursor, setCursor] = useState(value.length);
   const [recall, setRecall] = useState<number | null>(null);
   const stash = useRef("");
+  // Text put in from outside (e.g. "/" typed in another pane) puts the cursor at its end.
+  const own = useRef(value);
+  useEffect(() => {
+    if (value !== own.current) setCursor(value.length);
+    own.current = value;
+  }, [value]);
   const textWidth = Math.max(4, width - 2);
-  const pos = Math.min(cursor, value.length);
+  // Until the effect above catches up, text from outside puts the cursor at its end right away.
+  const pos = value !== own.current ? value.length : Math.min(cursor, value.length);
   const segments = layout(value, textWidth);
   const line = cursorLine(segments, pos);
 
   const set = (next: string, nextCursor: number) => {
+    own.current = next;
     onChange(next);
     setCursor(Math.max(0, Math.min(next.length, nextCursor)));
   };

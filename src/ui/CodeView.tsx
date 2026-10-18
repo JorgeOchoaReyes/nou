@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
-import { highlightLines, sideBySide } from "./text.js";
+import { highlightLines, sideBySide, splitLines } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
 import { Pane } from "./Pane.js";
+import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
 type Props = {
   width: number;
@@ -29,16 +30,24 @@ type Props = {
   syntaxVersion: number;
   /** A one-line note for the problems count, e.g. "+2 problems" on a proposed edit. */
   diffNote?: string | null;
-  wheel?: { dir: number; nonce: number } | null;
+  wheel?: Wheel | null;
+  /** A click or drag on the scrollbar. */
+  scrollTo?: ScrollTo | null;
   onViewport(top: number, bottom: number): void;
 };
 
-export function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, onViewport }: Props) {
+/** Columns ←/→ and Shift+wheel move sideways. */
+const SIDE_STEP = 8;
+
+export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport }: Props) {
   const [top, setTop] = useState(0);
+  // Columns scrolled sideways. Scrolled lines show without colors (slicing colored text could cut a color code in half).
+  const [left, setLeft] = useState(0);
   const rows = Math.max(1, height - 3);
-  const inner = width - 2;
+  const inner = width - 3; // minus the borders and the scrollbar
 
   const lines = useMemo(() => (filePath ? highlightLines(filePath, content) : []), [filePath, content, syntaxVersion]);
+  const plain = useMemo(() => (left > 0 ? splitLines(content) : []), [content, left > 0]);
   const problemsByLine = useMemo(() => {
     const map = new Map<number, Diagnostic[]>();
     for (const d of problems) map.set(d.line, [...(map.get(d.line) ?? []), d]);
@@ -53,6 +62,7 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
       ? diffRows.findIndex((r) => r.changed)
       : marked.size ? Math.min(...marked) - 1 : 0;
     setTop(Math.max(0, first - 3));
+    setLeft(0);
   }, [filePath, diff, diffRows, marked]);
 
   useEffect(() => {
@@ -63,8 +73,13 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
   const start = Math.min(top, maxTop);
 
   useEffect(() => {
-    if (wheel) setTop((t) => Math.max(0, Math.min(maxTop, Math.min(t, maxTop) + wheel.dir * 3)));
+    if (!wheel) return;
+    if (wheel.lines) setTop((t) => Math.max(0, Math.min(maxTop, Math.min(t, maxTop) + wheel.lines)));
+    if (wheel.columns) setLeft((l) => Math.max(0, l + wheel.columns * 2));
   }, [wheel?.nonce]);
+  useEffect(() => {
+    if (scrollTo) setTop(topFor(scrollTo.fraction, total, rows));
+  }, [scrollTo?.nonce]);
 
   useEffect(() => {
     if (filePath && !diff) onViewport(start + 1, Math.min(total, start + rows));
@@ -73,10 +88,12 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
   useInput((input, key) => {
     if (key.upArrow || input === "k") setTop((t) => Math.max(0, Math.min(t, maxTop) - 1));
     else if (key.downArrow || input === "j") setTop((t) => Math.min(maxTop, t + 1));
-    else if (key.pageUp || input === "u") setTop((t) => Math.max(0, Math.min(t, maxTop) - rows));
+    else if (key.pageUp) setTop((t) => Math.max(0, Math.min(t, maxTop) - rows));
     else if (key.pageDown || input === "d" || input === " ") setTop((t) => Math.min(maxTop, t + rows));
-    else if (input === "g") setTop(0);
-    else if (input === "G") setTop(maxTop);
+    else if (input === "g" || key.home) setTop(0);
+    else if (input === "G" || key.end) setTop(maxTop);
+    else if (key.leftArrow || input === "h") setLeft((l) => Math.max(0, l - SIDE_STEP));
+    else if (key.rightArrow || input === "l") setLeft((l) => l + SIDE_STEP);
     else if (diff && !pending && (input === "n" || input === "N")) {
       // Jump between change hunks.
       const starts = diffRows.flatMap((r, i) => (r.changed && !diffRows[i - 1]?.changed ? [i] : []));
@@ -85,7 +102,7 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
     }
   }, { isActive: focused });
 
-  const scroll = total > rows ? `  ${start + 1}-${Math.min(total, start + rows)}/${total}` : "";
+  const scroll = (total > rows ? `  ${start + 1}-${Math.min(total, start + rows)}/${total}` : "") + (left ? `  →${left}` : "");
   const percent = total > rows ? Math.round(((start + rows) / total) * 100) : 100;
 
   if (diff) {
@@ -99,7 +116,7 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
       return (
         <Box width={w}>
           <Text wrap="truncate-end" {...(color ? { color } : { color: C.dim })}>
-            {String(c.n).padStart(gutter - 1)}{changed ? side : " "}{c.text || " "}
+            {String(c.n).padStart(gutter - 1)}{changed ? side : " "}{c.text.slice(left) || " "}
           </Text>
         </Box>
       );
@@ -116,14 +133,17 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
     );
     return (
       <Pane title={title} width={width} height={height} focused={focused} {...(pending ? { accent: C.yellow } : {})}>
-        <Box flexDirection="column">
-          {diffRows.slice(start, start + rows).map((row, i) => (
-            <Box key={start + i} flexDirection="row">
-              {cell(row.left, "-", row.changed, half)}
-              <Text color={C.dim}>│</Text>
-              {cell(row.right, "+", row.changed, inner - half - 1)}
-            </Box>
-          ))}
+        <Box flexDirection="row" height={rows}>
+          <Box flexDirection="column" width={inner} flexShrink={0}>
+            {diffRows.slice(start, start + rows).map((row, i) => (
+              <Box key={start + i} flexDirection="row">
+                {cell(row.left, "-", row.changed, half)}
+                <Text color={C.dim}>│</Text>
+                {cell(row.right, "+", row.changed, inner - half - 1)}
+              </Box>
+            ))}
+          </Box>
+          <Scrollbar total={total} top={start} rows={rows} focused={focused} />
         </Box>
       </Pane>
     );
@@ -164,28 +184,31 @@ export function CodeView({ width, height, focused, filePath, content, diff, diff
       {" "}<Text color={color}>{icon}</Text> {filePath}
       {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
-      <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused ? "   e edit · v diff" : ""}</Text>
+      <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused ? "   click or e to edit · v diff" : ""}</Text>
     </>
   );
   return (
     <Pane title={title} width={width} height={height} focused={focused}>
-      <Box flexDirection="column">
-        {lines.slice(start, start + rows).map((line, i) => {
-          const n = start + i + 1;
-          const isMarked = marked.has(n);
-          const here = problemsByLine.get(n);
-          const worst = here?.[0];
-          const style = worst ? SEVERITY_STYLE[worst.severity] : null;
-          return (
-            <Text key={n} wrap="truncate-end">
-              <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
-              {style ? <Text color={style.color}>{style.icon}</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
-              {line || " "}
-              {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
-            </Text>
-          );
-        })}
+      <Box flexDirection="row" height={rows}>
+        <Box flexDirection="column" width={inner} flexShrink={0}>
+          {lines.slice(start, start + rows).map((line, i) => {
+            const n = start + i + 1;
+            const isMarked = marked.has(n);
+            const here = problemsByLine.get(n);
+            const worst = here?.[0];
+            const style = worst ? SEVERITY_STYLE[worst.severity] : null;
+            return (
+              <Text key={n} wrap="truncate-end">
+                <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
+                {style ? <Text color={style.color}>{style.icon}</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
+                {(left ? plain[start + i]?.slice(left) : line) || " "}
+                {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
+              </Text>
+            );
+          })}
+        </Box>
+        <Scrollbar total={total} top={start} rows={rows} focused={focused} />
       </Box>
     </Pane>
   );
-}
+});
