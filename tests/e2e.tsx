@@ -327,7 +327,10 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(CTRL_A, 100);
   check("Ctrl+A selects everything", /\d+ selected/.test(frame()));
   await press(KEY.ctrlC, 200);
-  check("Ctrl+C with a selection copies instead of quitting", !frame().includes("Press again to quit") && /Copied|clipboard/.test(frame()));
+  const quitPrompt = frame().includes("Press again to quit");
+  // Copying runs the system clipboard tool, which can take a while (PowerShell on Windows).
+  for (let i = 0; i < 40 && !/Copied|clipboard/.test(frame()); i++) await delay(100);
+  check("Ctrl+C with a selection copies instead of quitting", !quitPrompt && /Copied|clipboard/.test(frame()));
   await press(KEY.esc, 100);
   await press(KEY.esc, 1500);
   check("Esc leaves the editor", !frame().includes("EDITING"));
