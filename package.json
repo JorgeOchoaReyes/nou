@@ -1,6 +1,6 @@
 {
   "name": "nou-cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Nou: an IDE-style AI coding assistant for your terminal. Local (Ollama, LM Studio) and cloud (Claude, OpenAI, Gemini...) models, live diffs, git-aware, built-in editor.",
   "type": "module",
   "bin": {

@@ -552,7 +552,10 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (event.kind === "release") {
-      if (dragging.current === "tree" || dragging.current === "chat") updateSettings({ paneWidths: paneWidthsRef.current });
+      // The release says where the button let go, so a drag lands there even in a terminal that
+      // doesn't report the movement in between.
+      if (dragging.current === "tree" || dragging.current === "chat") updateSettings({ paneWidths: moveBorder(dragging.current, event.x) });
+      else if (dragging.current && typeof dragging.current === "object") scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       dragging.current = null;
       return;

@@ -11,9 +11,11 @@ export type MouseEvent =
   | { kind: "drag"; x: number; y: number }
   | { kind: "release"; x: number; y: number };
 
-// Report clicks and wheel (1000) using SGR coordinates (1006), which work past column 223.
-const ENABLE = "\x1b[?1000h\x1b[?1006h";
-const DISABLE = "\x1b[?1000l\x1b[?1006l";
+// Report clicks and wheel (1000), and movement while a button is held (1002, without it terminals never
+// send drags: no resizing panes, dragging scrollbars or selecting), using SGR coordinates (1006), which
+// work past column 223.
+export const ENABLE = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const DISABLE = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 
 /** Mouse events in a chunk of terminal input (SGR format: ESC [ < button ; x ; y M|m). */
 export function parseMouse(chunk: string): MouseEvent[] {
