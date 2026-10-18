@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { readdirSync } from "fs";
 import path from "path";
 import { Box, Text, useInput } from "ink";
@@ -6,6 +6,7 @@ import { IGNORED } from "../commands/index.js";
 import type { GitStatus } from "../git/index.js";
 import { C, GIT_COLORS, fileIcon } from "./theme.js";
 import { Pane } from "./Pane.js";
+import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
 type Node = { path: string; name: string; depth: number; isDir: boolean };
 
@@ -23,7 +24,9 @@ type Props = {
   git: GitStatus;
   /** Problem counts per file, from the checkers. */
   problemCounts: Map<string, { errors: number; warnings: number }>;
-  wheel?: { dir: number; nonce: number } | null;
+  wheel?: Wheel | null;
+  /** A click or drag on the scrollbar. */
+  scrollTo?: ScrollTo | null;
   /** A click on a visible row (0 = first row under the title). */
   click?: { row: number; nonce: number } | null;
   onOpen(filePath: string): void;
@@ -54,16 +57,32 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export function FileTree({ width, height, focused, openFile, reveal, version, changed, git, problemCounts, wheel, click, onOpen, onHover }: Props) {
+export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, git, problemCounts, wheel, scrollTo, click, onOpen, onHover }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
+  // The first row shown. The wheel moves it on its own; the keyboard moves the cursor and the view follows.
+  const [top, setTop] = useState(0);
   const [changesOnly, setChangesOnly] = useState(false);
 
-  const nodes = useMemo(() => {
-    if (!changesOnly) return flatten(expanded);
-    return [...new Set([...git.keys(), ...changed])].sort().map((p) => ({ path: p, name: p, depth: 0, isDir: false }));
-  }, [expanded, version, changesOnly, git, changed]);
+  // Reading folders hits the disk, so only redo it when something that changes the list changes.
+  const all = useMemo(() => (changesOnly ? null : flatten(expanded)), [expanded, version, changesOnly]);
+  const nodes = useMemo(
+    () => all ?? [...new Set([...git.keys(), ...changed])].sort().map((p) => ({ path: p, name: p, depth: 0, isDir: false })),
+    [all, changesOnly ? git : null, changesOnly ? changed : null],
+  );
   const rows = Math.max(1, height - 3);
+  const maxTop = Math.max(0, nodes.length - rows);
+
+  // Keep the cursor in view when it moves (keyboard, reveal, click), not when the wheel scrolls.
+  const follow = useRef(true);
+  useEffect(() => {
+    if (!follow.current) return;
+    setTop((t) => (cursor < t ? Math.max(0, cursor - 2) : cursor >= t + rows ? Math.min(maxTop, cursor - rows + 3) : Math.min(t, maxTop)));
+  }, [cursor, rows, maxTop]);
+  const moveCursor = (fn: (c: number) => number) => {
+    follow.current = true;
+    setCursor(fn);
+  };
 
   // Folders that contain git changes get a dot.
   const dirtyDirs = useMemo(() => {
@@ -93,7 +112,7 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
     if (!pendingReveal.current) return;
     const index = nodes.findIndex((n) => n.path === pendingReveal.current);
     if (index < 0) return;
-    setCursor(index);
+    moveCursor(() => index);
     pendingReveal.current = null;
   }, [nodes]);
 
@@ -117,11 +136,13 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
     const node = nodes[cursor];
     if (input === "c") {
       setChangesOnly((v) => !v);
-      setCursor(0);
-    } else if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
-    else if (key.downArrow || input === "j") setCursor((c) => Math.min(nodes.length - 1, c + 1));
-    else if (key.pageUp) setCursor((c) => Math.max(0, c - rows));
-    else if (key.pageDown) setCursor((c) => Math.min(nodes.length - 1, c + rows));
+      moveCursor(() => 0);
+    } else if (key.upArrow || input === "k") moveCursor((c) => Math.max(0, c - 1));
+    else if (key.downArrow || input === "j") moveCursor((c) => Math.min(nodes.length - 1, c + 1));
+    else if (key.pageUp) moveCursor((c) => Math.max(0, c - rows));
+    else if (key.pageDown) moveCursor((c) => Math.min(nodes.length - 1, c + rows));
+    else if (key.home || input === "g") moveCursor(() => 0);
+    else if (key.end || input === "G") moveCursor(() => Math.max(0, nodes.length - 1));
     else if (!node) return;
     else if (key.return || key.rightArrow || input === "l") {
       if (node.isDir) toggle(node.path, key.return ? undefined : true);
@@ -131,62 +152,74 @@ export function FileTree({ width, height, focused, openFile, reveal, version, ch
       else {
         const parent = node.path.split("/").slice(0, -1).join("/");
         const index = nodes.findIndex((n) => n.path === parent);
-        if (index >= 0) setCursor(index);
+        if (index >= 0) moveCursor(() => index);
       }
     }
   }, { isActive: focused });
 
-  const start = Math.max(0, Math.min(cursor - Math.floor(rows / 2), nodes.length - rows));
+  const start = Math.min(top, maxTop);
   const visible = nodes.slice(start, start + rows);
 
+  // The wheel scrolls the list; the selection stays where it is.
   useEffect(() => {
-    if (wheel) setCursor((c) => Math.max(0, Math.min(nodes.length - 1, c + wheel.dir * 3)));
+    if (!wheel?.lines) return;
+    follow.current = false;
+    setTop((t) => Math.max(0, Math.min(maxTop, Math.min(t, maxTop) + wheel.lines)));
   }, [wheel?.nonce]);
+  useEffect(() => {
+    if (!scrollTo) return;
+    follow.current = false;
+    setTop(topFor(scrollTo.fraction, nodes.length, rows));
+  }, [scrollTo?.nonce]);
 
   // Clicking a row selects it; a file opens, a folder expands or collapses.
   useEffect(() => {
     if (!click) return;
     const node = visible[click.row];
     if (!node) return;
+    follow.current = false; // already on screen: don't jump the view
     setCursor(start + click.row);
     if (node.isDir) toggle(node.path);
     else onOpen(node.path);
   }, [click?.nonce]);
-  const inner = width - 2;
+  const inner = width - 3; // minus the borders and the scrollbar
   const title = changesOnly
     ? <> <Text color={C.yellow}>±</Text> Changes <Text color={C.dim}>({nodes.length})  c: all files</Text></>
     : <> <Text color={C.accent}>▤</Text> Explorer{git.size ? <Text color={C.dim}>  c: changes ({git.size})</Text> : null}</>;
 
   return (
     <Pane title={title} width={width} height={height} focused={focused}>
-      <Box flexDirection="column">
-        {visible.length === 0 && <Text color={C.dim}>  {changesOnly ? "No changes ✓" : "(empty)"}</Text>}
-        {visible.map((node, i) => {
-          const selected = start + i === cursor;
-          const code = git.get(node.path);
-          const isOpen = node.path === openFile;
-          const { icon, color } = node.isDir
-            ? { icon: expanded.has(node.path) ? "▾" : "▸", color: C.accent }
-            : fileIcon(node.path);
-          const counts = problemCounts.get(node.path);
-          const problemMark = counts?.errors ? "✖" : counts?.warnings ? "▲" : "";
-          const marker = problemMark || code || (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
-          const markerColor = counts?.errors ? C.red : counts?.warnings ? C.yellow : code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
-          const label = `${"  ".repeat(node.depth)}${icon} ${node.name}`;
-          const nameColor = isOpen ? C.cyan : counts?.errors ? C.red : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
-          const room = Math.max(1, inner - marker.length - 1);
-          const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label.padEnd(room);
-          const iconAt = shown.indexOf(icon);
-          return (
-            <Text key={node.path} wrap="truncate-end" {...(selected && focused ? { backgroundColor: C.panel } : {})}>
-              <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen}>{shown.slice(0, iconAt)}</Text>
-              <Text color={color}>{shown.slice(iconAt, iconAt + icon.length)}</Text>
-              <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen} inverse={selected && focused}>{shown.slice(iconAt + icon.length)}</Text>
-              <Text color={markerColor}> {marker}</Text>
-            </Text>
-          );
-        })}
+      <Box flexDirection="row" height={rows}>
+        <Box flexDirection="column" width={inner} flexShrink={0}>
+          {visible.length === 0 && <Text color={C.dim}>  {changesOnly ? "No changes ✓" : "(empty)"}</Text>}
+          {visible.map((node, i) => {
+            const selected = start + i === cursor;
+            const code = git.get(node.path);
+            const isOpen = node.path === openFile;
+            const { icon, color } = node.isDir
+              ? { icon: expanded.has(node.path) ? "▾" : "▸", color: C.accent }
+              : fileIcon(node.path);
+            const counts = problemCounts.get(node.path);
+            const problemMark = counts?.errors ? "✖" : counts?.warnings ? "▲" : "";
+            const marker = problemMark || code || (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
+            const markerColor = counts?.errors ? C.red : counts?.warnings ? C.yellow : code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
+            const label = `${"  ".repeat(node.depth)}${icon} ${node.name}`;
+            const nameColor = isOpen ? C.cyan : counts?.errors ? C.red : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
+            const room = Math.max(1, inner - marker.length - 1);
+            const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label.padEnd(room);
+            const iconAt = shown.indexOf(icon);
+            return (
+              <Text key={node.path} wrap="truncate-end" {...(selected && focused ? { backgroundColor: C.panel } : {})}>
+                <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen}>{shown.slice(0, iconAt)}</Text>
+                <Text color={color}>{shown.slice(iconAt, iconAt + icon.length)}</Text>
+                <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen} inverse={selected && focused}>{shown.slice(iconAt + icon.length)}</Text>
+                <Text color={markerColor}> {marker}</Text>
+              </Text>
+            );
+          })}
+        </Box>
+        <Scrollbar total={nodes.length} top={start} rows={rows} focused={focused} />
       </Box>
     </Pane>
   );
-}
+});

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
 import { renderMarkdown, wrap, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
+import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
 type Props = {
   width: number;
@@ -18,51 +19,94 @@ type Props = {
   approvalNote?: string | null;
   /** Short description of the editor context sent with the next message, e.g. "src/a.ts:10-40". */
   contextChip: string | null;
-  /** Mouse wheel over the chat: dir -1 up, 1 down; nonce changes per event. */
-  wheel?: { dir: number; nonce: number } | null;
+  wheel?: Wheel | null;
+  /** A click or drag on the scrollbar. */
+  scrollTo?: ScrollTo | null;
+  /** Text to start the input with, e.g. "/" typed in another pane. */
+  prefill?: { text: string; nonce: number } | null;
   onSubmit(text: string): void;
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
 };
 
-type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; bar?: string; spans?: Span[] };
+/**
+ * A display line. `lead` is its first two columns (the ▌ bar of a message, or a notice's icon), drawn
+ * in a column of its own: the rest of the line is then usually plain ASCII, which Ink measures far
+ * faster than text with symbols in it, and that's most of the cost of every streamed frame.
+ */
+type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[] };
+const BAR = "▌ ";
 
 export const COMMANDS = ["/model", "/models", "/settings", "/auto", "/engine", "/copy", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
 
-export function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, onSubmit, onAnswer }: Props) {
+/** Display lines for one message, wrapped to `inner` columns. */
+function entryLines(entry: ChatEntry, inner: number): Line[] {
+  const out: Line[] = [];
+  if (entry.kind === "user") {
+    out.push({ text: "you", color: C.cyan, bold: true, lead: BAR, leadColor: C.cyan });
+    for (const line of wrap(entry.text, inner - 3)) out.push({ text: line, color: C.text, lead: BAR, leadColor: C.cyan });
+    out.push({ text: "" });
+  } else if (entry.kind === "assistant") {
+    out.push({ text: "◆ nou", color: C.accent2, bold: true, lead: BAR, leadColor: C.accent2 });
+    for (const line of renderMarkdown(entry.text, inner - 3)) {
+      const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
+      out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), lead: BAR, leadColor: C.accent2 });
+    }
+    out.push({ text: "" });
+  } else {
+    const style = entry.kind === "tool"
+      ? { icon: "⚙", color: C.dim }
+      : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
+    wrap(entry.text, inner - 4).forEach((line, i) =>
+      out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color }));
+  }
+  return out;
+}
+
+// Finished messages never change, so each is laid out once per width; only the reply being streamed
+// is redone as it grows. Without this every streamed token re-rendered the whole conversation.
+const laidOut = new WeakMap<ChatEntry, { inner: number; lines: Line[] }>();
+function cachedLines(entry: ChatEntry, inner: number): Line[] {
+  const hit = laidOut.get(entry);
+  if (hit?.inner === inner) return hit.lines;
+  const lines = entryLines(entry, inner);
+  laidOut.set(entry, { inner, lines });
+  return lines;
+}
+
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, onSubmit, onAnswer }: Props) {
   const [input, setInput] = useState("");
+  useEffect(() => {
+    if (prefill) setInput(prefill.text);
+  }, [prefill?.nonce]);
   const [scrollBack, setScrollBack] = useState(0);
   const { frame } = useAnimation({ interval: 80, isActive: !!busy });
-  const inner = width - 2;
+  const inner = width - 3; // minus the borders and the scrollbar
 
-  const lines = useMemo(() => {
-    const out: Line[] = [];
-    const all = streaming ? [...entries, { kind: "assistant" as const, text: streaming }] : entries;
-    for (const entry of all) {
-      if (entry.kind === "user") {
-        out.push({ text: "you", color: C.cyan, bold: true, bar: C.cyan });
-        for (const line of wrap(entry.text, inner - 3)) out.push({ text: line, color: C.text, bar: C.cyan });
-        out.push({ text: "" });
-      } else if (entry.kind === "assistant") {
-        out.push({ text: "◆ nou", color: C.accent2, bold: true, bar: C.accent2 });
-        for (const line of renderMarkdown(entry.text, inner - 3)) {
-          const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
-          out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), bar: C.accent2 });
-        }
-        out.push({ text: "" });
-      } else {
-        const style = entry.kind === "tool"
-          ? { icon: "⚙", color: C.dim }
-          : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
-        wrap(entry.text, inner - 4).forEach((line, i) =>
-          out.push({ text: `${i === 0 ? ` ${style.icon}` : "  "} ${line}`, color: style.color }));
-      }
-    }
-    return out;
-  }, [entries, streaming, inner]);
+  const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
+  const lines = useMemo(
+    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: streaming }, inner)] : history),
+    [history, streaming, inner],
+  );
 
-  // New output snaps the view back to the bottom.
-  useEffect(() => setScrollBack(0), [entries.length, streaming]);
+  // At the bottom, new output scrolls into view. Scrolled up to read, the view stays where it is
+  // (counted from the bottom, so it moves up by however many lines arrived) until you scroll back down.
+  const lastCount = useRef(lines.length);
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    const added = lines.length - lastCount.current;
+    lastCount.current = lines.length;
+    if (added <= 0) return;
+    setScrollBack((b) => (b > 0 ? b + added : 0));
+    setUnread((u) => (scrollBack > 0 ? u + added : 0));
+  }, [lines.length]);
+  // Sending a message always goes back to the bottom.
+  useEffect(() => {
+    if (entries[entries.length - 1]?.kind === "user") setScrollBack(0);
+  }, [entries.length]);
+  useEffect(() => {
+    if (scrollBack === 0) setUnread(0);
+  }, [scrollBack]);
 
   const footer: Line[] = [];
   if (approval?.kind === "command") {
@@ -88,16 +132,20 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     ? COMMANDS.filter((c) => c.startsWith(input) && c !== input)
     : [];
 
-  const inputRows = inputHeight(input, inner);
+  const inputRows = inputHeight(input, inner + 1);
   const rows = Math.max(1, height - 3 - footer.length - 2 - inputRows);
-  const history = useMemo(() => entries.filter((e) => e.kind === "user").map((e) => e.text), [entries]);
+  const sent = useMemo(() => entries.filter((e) => e.kind === "user").map((e) => e.text), [entries]);
   const maxBack = Math.max(0, lines.length - rows);
   const back = Math.min(scrollBack, maxBack);
-  const visible = lines.slice(Math.max(0, lines.length - rows - back), lines.length - back);
+  const firstShown = Math.max(0, lines.length - rows - back);
+  const visible = lines.slice(firstShown, lines.length - back);
 
   useEffect(() => {
-    if (wheel) setScrollBack((b) => Math.max(0, Math.min(maxBack, b - wheel.dir * 3)));
+    if (wheel?.lines) setScrollBack((b) => Math.max(0, Math.min(maxBack, Math.min(b, maxBack) - wheel.lines)));
   }, [wheel?.nonce]);
+  useEffect(() => {
+    if (scrollTo) setScrollBack(maxBack - topFor(scrollTo.fraction, lines.length, rows));
+  }, [scrollTo?.nonce]);
 
   // While something waits for approval, y/n into an empty input answer it; any other key starts a message.
   useInput((typed) => {
@@ -106,8 +154,10 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
   }, { isActive: focused && !!approval && !input });
 
   useInput((_input, key) => {
-    if (key.pageUp || (key.upArrow && key.shift)) setScrollBack((b) => Math.min(maxBack, b + Math.max(1, rows - 2)));
-    else if (key.pageDown || (key.downArrow && key.shift)) setScrollBack((b) => Math.max(0, b - Math.max(1, rows - 2)));
+    if (key.pageUp || (key.upArrow && key.shift)) setScrollBack((b) => Math.min(maxBack, Math.min(b, maxBack) + Math.max(1, rows - 2)));
+    else if (key.pageDown || (key.downArrow && key.shift)) setScrollBack((b) => Math.max(0, Math.min(b, maxBack) - Math.max(1, rows - 2)));
+    else if (key.ctrl && key.home) setScrollBack(maxBack);
+    else if (key.ctrl && key.end) setScrollBack(0);
   }, { isActive: focused });
 
   const submit = (value: string) => {
@@ -118,9 +168,9 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     onSubmit(command);
   };
 
-  const render = (line: Line, key: string | number) => (
+  const render = (line: Line, key: string | number, withLead = true) => (
     <Text key={key} wrap="truncate-end">
-      {line.bar ? <Text color={line.bar}>▌ </Text> : null}
+      {withLead && line.lead ? <Text color={line.leadColor ?? C.dim}>{line.lead}</Text> : null}
       {line.spans?.length
         ? line.spans.map((span, i) => (
           <Text key={i} bold={!!span.bold || !!line.bold} italic={!!span.italic} dimColor={!!span.dim} {...(span.code ? { color: C.yellow } : line.color ? { color: line.color } : { color: C.text })}>{span.text}</Text>
@@ -134,24 +184,38 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
     <>
       {" "}<Text color={C.accent2}>◆</Text> Chat
       {back
-        ? <Text color={C.yellow}>  ↑ scrolled {back} lines · Shift+↓ / PgDn / wheel to go back</Text>
-        : maxBack > 0 ? <Text color={C.dim}>  Shift+↑ / PgUp / wheel to scroll</Text> : null}
+        ? unread
+          ? <Text color={C.green} bold>  ↓ {unread} new lines below<Text color={C.dim}> · PgDn / wheel / Ctrl+End</Text></Text>
+          : <Text color={C.yellow}>  ↑ scrolled {back} lines<Text color={C.dim}> · PgDn / wheel / Ctrl+End</Text></Text>
+        : maxBack > 0 ? <Text color={C.dim}>  PgUp / wheel to scroll</Text> : null}
     </>
   );
 
   return (
     <Pane title={title} width={width} height={height} focused={focused}>
-      <Box flexDirection="column" height={rows}>
-        {empty ? (
-          <Box flexDirection="column" paddingX={1}>
-            <Text color={C.dim}>Try:</Text>
-            <Text color={C.text}>  “explain this file”</Text>
-            <Text color={C.text}>  “what changed since my last commit?”</Text>
-            <Text color={C.text}>  “add error handling here”</Text>
-            <Text> </Text>
-            <Text color={C.dim}>I can see the file you have open.</Text>
-          </Box>
-        ) : visible.map((line, i) => render(line, i))}
+      <Box flexDirection="row" height={rows}>
+        <Box flexDirection="column" width={inner} flexShrink={0}>
+          {empty ? (
+            <Box flexDirection="column" paddingX={1}>
+              <Text color={C.dim}>Try:</Text>
+              <Text color={C.text}>  “explain this file”</Text>
+              <Text color={C.text}>  “what changed since my last commit?”</Text>
+              <Text color={C.text}>  “add error handling here”</Text>
+              <Text> </Text>
+              <Text color={C.dim}>I can see the file you have open.</Text>
+            </Box>
+          ) : (
+            <Box flexDirection="row">
+              <Box width={2} flexShrink={0}>
+                <Text>{visible.map((line, i) => <Text key={i} color={line.leadColor ?? C.dim}>{`${line.lead ?? "  "}${i < visible.length - 1 ? "\n" : ""}`}</Text>)}</Text>
+              </Box>
+              <Box flexDirection="column" width={inner - 2} flexShrink={0}>
+                {visible.map((line, i) => render(line, firstShown + i, false))}
+              </Box>
+            </Box>
+          )}
+        </Box>
+        <Scrollbar total={lines.length} top={firstShown} rows={rows} focused={focused} />
       </Box>
       <Box flexDirection="column">
         {footer.map((line, i) => render(line, `f${i}`))}
@@ -161,16 +225,16 @@ export function Chat({ width, height, focused, entries, streaming, busy, approva
           ? <Text color={C.accent}>{suggestions.join("  ")}  <Text color={C.dim}>{suggestions.length === 1 ? "Enter ↵" : ""}</Text></Text>
           : contextChip ? <><Text color={C.cyan}>@</Text> {contextChip}</> : " "}
       </Text>
-      <Text color={focused ? C.accent : C.dim}>{"─".repeat(Math.max(0, inner))}</Text>
+      <Text color={focused ? C.accent : C.dim}>{"─".repeat(Math.max(0, inner + 1))}</Text>
       <ChatInput
         value={input}
         onChange={setInput}
         onSubmit={submit}
         focus={focused && !(approval && !input)}
-        width={inner}
-        history={history}
+        width={inner + 1}
+        history={sent}
         placeholder={busy ? "working… Esc to stop" : "Ask anything · / for commands · ↑ history"}
       />
     </Pane>
   );
-}
+});

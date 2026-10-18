@@ -22,7 +22,8 @@ import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
-import { Editor, type EditorState } from "./Editor.js";
+import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
+import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
@@ -64,10 +65,23 @@ Keys:
   Ctrl+P  find a file      Tab  switch pane      Esc  stop / back
   Shift+Tab  ask / auto-edit / auto                < > resize pane  = reset
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
-  e  edit open file        v    diff (git / Nou / session)  f   follow mode
+  /  start a command from any pane
+  e  edit open file (or click in the code)  v  diff (git / Nou / session)  f  follow mode
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
-In the editor: Ctrl+S save · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G go to definition`;
+Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · click in the code to edit there, drag to select
+In the editor:
+  Shift+arrows / mouse drag select · Ctrl+A all · Ctrl+C/X/V copy/cut/paste · Esc clear selection or leave
+  Ctrl+←/→ word · Ctrl+Backspace or Ctrl+W delete word · Ctrl+Home/End file start/end
+  Ctrl+F find · Ctrl+L go to line · Ctrl+/ comment · Ctrl+D duplicate line · Alt+↑/↓ move line
+  Tab/Shift+Tab indent/outdent · Ctrl+S save · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G go to definition`;
+
+/** A callback that keeps one identity across renders but always runs the latest code, so memoized panes don't re-render for it. */
+function useEvent<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
 
 function readText(filePath: string): string {
   try {
@@ -124,18 +138,26 @@ export function App({ initialModel, permContext }: Props) {
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [starters, setStarters] = useState<PluginEntry[]>([]);
   const [viewport, setViewport] = useState<{ top: number; bottom: number } | null>(null);
-  const [editorState, setEditorState] = useState<EditorState | null>(null);
+  // The editor reports every keystroke; the app only re-renders when what it shows changes (line, unsaved, selection).
+  const editorStateRef = useRef<EditorState | null>(null);
+  const [editorState, setEditorState] = useState<{ line: number; dirty: boolean; selection: boolean } | null>(null);
+  const editorProblemsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Unsaved editor text survives switching to a diff and back.
   const draft = useRef<{ path: string; text: string; baseline: string } | null>(null);
   const [codePanel, setCodePanel] = useState<"code" | "problems">("code");
-  const [, setDiagVersion] = useState(0);
+  const [diagnosticsVersion, setDiagVersion] = useState(0);
   const [syntaxVersion, setSyntaxVersion] = useState(0);
   const [focusLine, setFocusLine] = useState<{ line: number; nonce: number } | null>(null);
-  const [editorStart, setEditorStart] = useState<{ line: number; nonce: number }>({ line: 1, nonce: 0 });
+  const [editorStart, setEditorStart] = useState<{ line: number; col?: number; nonce: number }>({ line: 1, nonce: 0 });
   const [pendingNote, setPendingNote] = useState<{ short: string; detail: string | null } | null>(null);
   const [exitArmed, setExitArmed] = useState(false);
   const [update, setUpdate] = useState<string | null>(null);
-  const [wheel, setWheel] = useState<{ pane: Focus; dir: number; nonce: number } | null>(null);
+  const [wheel, setWheel] = useState<(Wheel & { pane: Focus }) | null>(null);
+  const [scrollTo, setScrollTo] = useState<(ScrollTo & { pane: Focus }) | null>(null);
+  const [editorMouse, setEditorMouse] = useState<EditorMouse | null>(null);
+  /** Wheel events waiting for the next frame, added up per pane. */
+  const pendingWheel = useRef<{ pane: Focus; lines: number; columns: number; timer: ReturnType<typeof setTimeout> | null }>({ pane: "chat", lines: 0, columns: 0, timer: null });
+  const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
@@ -143,7 +165,8 @@ export function App({ initialModel, permContext }: Props) {
   const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
-  const dragging = useRef<"tree" | "chat" | null>(null);
+  /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
+  const dragging = useRef<"tree" | "chat" | "editor" | { scroll: Focus } | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
   diagnosticsRef.current ??= new DiagnosticsManager();
@@ -420,6 +443,11 @@ export function App({ initialModel, permContext }: Props) {
         : "Auto mode: edits and commands run without asking. Review with the diff view, u to undo. Shift+Tab to change.");
   };
 
+  // Derived values handed to the panes keep their identity until they really change, so a pane that
+  // didn't change skips re-rendering (memo) instead of redrawing on every keystroke elsewhere.
+  const edited = useMemo(() => new Set([...changes].filter(([, c]) => c.status === "applied").map(([p]) => p)), [changes]);
+  const problemCounts = useMemo(() => diagnostics.fileCounts(), [diagnosticsVersion]);
+  const fileProblems = useMemo(() => (openFile ? diagnostics.get(openFile) : []), [openFile, diagnosticsVersion]);
   const record = openFile ? changes.get(openFile) : undefined;
   const pendingChange = approval?.request.kind === "change" ? approval.request.change : null;
   const gitChange = useMemo(
@@ -454,12 +482,6 @@ export function App({ initialModel, permContext }: Props) {
     };
   }, [pendingChange]);
 
-  // Live problems while you type (debounced).
-  useEffect(() => {
-    if (!showEditor || !openFile || !editorState) return;
-    const timer = setTimeout(() => void diagnostics.checkFile(openFile, editorState.lines.join("\n")), 700);
-    return () => clearTimeout(timer);
-  }, [editorState?.lines]);
 
   /** Quit, saving the editor's unsaved text first if auto-save is on. */
   const quit = () => {
@@ -485,35 +507,91 @@ export function App({ initialModel, permContext }: Props) {
     return next;
   };
 
-  // Mouse: the wheel scrolls whatever pane is under the pointer; a click focuses that pane
-  // (and in the file tree, opens the clicked file). Dragging a border between panes resizes them.
+  /** Adds a wheel event to its pane's total; the panes get one update per frame however many events arrive. */
+  const queueWheel = (pane: Focus, dir: number, horizontal: boolean) => {
+    const q = pendingWheel.current;
+    if (q.timer && q.pane !== pane) flushWheel();
+    q.pane = pane;
+    if (horizontal) q.columns += dir * WHEEL_STEP;
+    else q.lines += dir * WHEEL_STEP;
+    q.timer ??= setTimeout(flushWheel, 16);
+  };
+  const flushWheel = () => {
+    const q = pendingWheel.current;
+    if (q.timer) clearTimeout(q.timer);
+    q.timer = null;
+    if (!q.lines && !q.columns) return;
+    const { pane, lines, columns } = q;
+    q.lines = 0;
+    q.columns = 0;
+    setWheel((w) => ({ pane, lines, columns, nonce: (w?.nonce ?? 0) + 1 }));
+  };
+
+  /** Scrolls a pane to where its scrollbar was clicked or dragged (rows start at y=3, under the border and title). */
+  const scrollPane = (pane: Focus, y: number) => {
+    const { paneHeight } = layout.current;
+    const fraction = (y - 3) / Math.max(1, paneHeight - 4);
+    setScrollTo((s) => ({ pane, fraction, nonce: (s?.nonce ?? 0) + 1 }));
+  };
+
+  // Mouse: the wheel scrolls whatever pane is under the pointer (Shift+wheel sideways); a click focuses
+  // that pane, opens the clicked file in the tree, and puts the cursor where you clicked in the code
+  // (starting the editor). Drag to select in the editor, drag a scrollbar to scroll, drag the border
+  // between panes to resize them.
   useMouse((event) => {
     if (view !== "main" || quickOpen) return;
     const { treeWidth, codeWidth, paneHeight } = layout.current;
-    if (event.kind === "drag") return void (dragging.current && moveBorder(dragging.current, event.x));
+    const codeLeft = treeWidth;
+    const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
+      setEditorMouse((m) => ({ x: x - codeLeft - 1, y: y - 3, kind, nonce: (m?.nonce ?? 0) + 1 }));
+    if (event.kind === "drag") {
+      const drag = dragging.current;
+      if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
+      else if (drag === "editor") editorAt(event.x, event.y, "drag");
+      else if (drag) scrollPane(drag.scroll, event.y);
+      return;
+    }
     if (event.kind === "release") {
-      if (dragging.current) updateSettings({ paneWidths: paneWidthsRef.current });
+      if (dragging.current === "tree" || dragging.current === "chat") updateSettings({ paneWidths: paneWidthsRef.current });
+      if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       dragging.current = null;
       return;
     }
     if (event.y < 1 || event.y > paneHeight) return; // header or status bar
-    // Each border is two columns: the left pane's edge and the right pane's.
-    if (event.kind === "click" && Math.abs(event.x - (treeWidth - 0.5)) <= 1) return void (dragging.current = "tree");
-    if (event.kind === "click" && Math.abs(event.x - (treeWidth + codeWidth - 0.5)) <= 1) return void (dragging.current = "chat");
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
-    if (event.kind === "wheel") {
-      setWheel((w) => ({ pane, dir: event.dir, nonce: (w?.nonce ?? 0) + 1 }));
+    if (event.kind === "wheel") return queueWheel(pane, event.dir, event.horizontal);
+    // Each border is two columns: the left pane's edge and the right pane's.
+    if (Math.abs(event.x - (treeWidth - 0.5)) <= 1) return void (dragging.current = "tree");
+    if (Math.abs(event.x - (treeWidth + codeWidth - 0.5)) <= 1) return void (dragging.current = "chat");
+    // Each pane's scrollbar is the column inside its right border.
+    const scrollbarX = pane === "tree" ? treeWidth - 2 : pane === "code" ? treeWidth + codeWidth - 2 : columns - 2;
+    if (event.x === scrollbarX && event.y >= 3) {
+      dragging.current = { scroll: pane };
+      scrollPane(pane, event.y);
       return;
     }
     if (approval) return;
     setFocus(pane);
     // Rows start under the pane's top border (y=1) and title (y=2).
     if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
+    if (pane === "code" && event.y >= 3 && codePanel === "code") {
+      if (showEditor) {
+        dragging.current = "editor";
+        editorAt(event.x, event.y, "press");
+      } else if (openFile && !diff && settleDraft(openFile)) {
+        // Click in the code: edit right there.
+        const gutter = String(content.split("\n").length).length + 1;
+        setEditorStart((s) => ({ line: (viewport?.top ?? 1) + event.y - 3, col: Math.max(1, event.x - codeLeft - gutter), nonce: s.nonce + 1 }));
+        setDiffMode("off");
+        setEditing(true);
+      }
+    }
   }, settings.mouse);
 
   // Ctrl+C: stop Nou if it's working; otherwise press twice to quit.
   useInput((input, key) => {
     if (!(key.ctrl && input === "c")) return;
+    if (showEditor && focus === "code" && editorStateRef.current?.selection) return; // the editor copies it
     if (busy || approval) {
       pullAbort.current?.abort();
       agentRef.current?.cancel();
@@ -711,7 +789,11 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (focus === "chat") return; // letters belong to the text box
-    if (input === "f") setFollow((f) => !f);
+    if (input === "/") {
+      // Commands work from anywhere: / jumps to the chat's command box.
+      setFocus("chat");
+      setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
+    } else if (input === "f") setFollow((f) => !f);
     else if (input === "m") {
       updateSettings({ mouse: !settings.mouse });
       info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
@@ -742,6 +824,7 @@ export function App({ initialModel, permContext }: Props) {
   /** What the user is looking at, attached to each message so "this file" / "here" make sense. */
   const editorContext = (): string | null => {
     if (!openFile) return null;
+    const editorState = editorStateRef.current;
     const unsaved = showEditor && editorState?.dirty;
     const lines = showEditor && editorState ? editorState.lines : content.replace(/\r\n/g, "\n").split("\n");
     let from: number;
@@ -946,6 +1029,53 @@ ${snippet}
     }
   }
 
+  // Stable callbacks for the memoized panes.
+  const onTreeOpen = useEvent((filePath: string) => {
+    open(filePath);
+    setFocus("code");
+  });
+  const onTreeHover = useEvent(() => {});
+  const onJump = useEvent((file: string, line: number) => openAt(file, line));
+  const onCloseProblems = useEvent(() => setCodePanel("code"));
+  const onViewport = useEvent((top: number, bottom: number) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom })));
+  const onSend = useEvent(send);
+  const onAnswer = useEvent(answer);
+  const onEditorHover = useEvent((text: string, line: number, col: number) => (lspEnabled && openFile ? lsp.hover(openFile, text, line, col) : Promise.resolve(null)));
+  const onEditorDefinition = useEvent((text: string, line: number, col: number) => {
+    if (!openFile) return;
+    if (!lspEnabled) return info("Go to definition needs a language server (see /settings → Plugins).", "error");
+    void lsp.definition(openFile, text, line, col).then((target) => {
+      if (!target) return info("No definition found here.");
+      // Keep unsaved text when jumping within the same file.
+      if (target.file === openFile && draft.current) draft.current = { ...draft.current, text };
+      openAt(target.file, target.line, true);
+    });
+  });
+  const onEditorSave = useEvent((text: string) => saveFromEditor(text));
+  const onEditorExit = useEvent(() => {
+    draft.current = null;
+    editorStateRef.current = null;
+    setEditing(false);
+  });
+  const onEditorState = useEvent((state: EditorState) => {
+    if (!openFile) return;
+    const prev = editorStateRef.current;
+    editorStateRef.current = state;
+    if (prev?.line !== state.line || prev?.dirty !== state.dirty || prev?.selection !== state.selection) {
+      setEditorState({ line: state.line, dirty: state.dirty, selection: state.selection });
+    }
+    draft.current = state.dirty
+      ? { path: openFile, text: state.lines.join("\n"), baseline: draft.current?.path === openFile ? draft.current.baseline : content }
+      : null;
+    // Live problems while you type (debounced).
+    if (prev && prev.lines !== state.lines) {
+      if (editorProblemsTimer.current) clearTimeout(editorProblemsTimer.current);
+      const file = openFile;
+      editorProblemsTimer.current = setTimeout(() => void diagnostics.checkFile(file, state.lines.join("\n")), 700);
+    }
+  });
+  const lspEnabled = activePlugins.some((p) => p.id === "lsp");
+
   if (view === "settings") {
     return (
       <Settings
@@ -974,11 +1104,9 @@ ${snippet}
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
   layout.current = { treeWidth, codeWidth, paneHeight: height };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
-  const edited = new Set([...changes].filter(([, c]) => c.status === "applied").map(([p]) => p));
-  const fileProblems = openFile ? diagnostics.get(openFile) : [];
+  const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
   const totals = diagnostics.counts();
   const checking = diagnostics.busy;
-  const lspEnabled = activePlugins.some((p) => p.id === "lsp");
 
   const mode = approval
     ? { label: "APPROVE", color: C.yellow }
@@ -991,16 +1119,18 @@ ${snippet}
   const hints: [string, string][] = approval && !(showEditor && focus === "code")
     ? [["y", "accept"], ["n", "reject"], ...(pendingChange && diff !== pendingChange ? [["o", "show the edit"] as [string, string]] : []), ["Esc", "stop"], ["Shift+Tab", "auto mode"]]
     : showEditor && focus === "code"
-      ? [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Ctrl+Y", "redo"], ["Ctrl+K", "info"], ["Ctrl+G", "definition"]]
+      ? editorState?.selection
+        ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
+        : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
       : focus === "chat"
         ? busy
           ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
           : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
         : focus === "tree"
-          ? [["Enter", "open"], ["e", "edit"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
+          ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
           : diff
             ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-            : [["e", "edit"], ["v", "diff"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+            : [["click/e", "edit"], ["v", "diff"], ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
@@ -1022,14 +1152,12 @@ ${snippet}
           version={treeVersion}
           changed={edited}
           git={git}
-          problemCounts={diagnostics.fileCounts()}
+          problemCounts={problemCounts}
           wheel={wheelFor("tree")}
+          scrollTo={scrollFor("tree")}
           click={treeClick}
-          onOpen={(filePath) => {
-            open(filePath);
-            setFocus("code");
-          }}
-          onHover={() => {}}
+          onOpen={onTreeOpen}
+          onHover={onTreeHover}
         />
         {codePanel === "problems" && !pendingChange ? (
           <ProblemsView
@@ -1039,8 +1167,8 @@ ${snippet}
             problems={diagnostics.all()}
             checking={checking}
             wheel={wheelFor("code")}
-            onJump={(file, line) => openAt(file, line)}
-            onClose={() => setCodePanel("code")}
+            onJump={onJump}
+            onClose={onCloseProblems}
           />
         ) : showEditor ? (
           <Editor
@@ -1052,31 +1180,18 @@ ${snippet}
             initial={draft.current?.path === openFile ? draft.current.text : content}
             baseline={draft.current?.path === openFile ? draft.current.baseline : content}
             startLine={editorStart.line}
+            {...(editorStart.col ? { startCol: editorStart.col } : {})}
             problems={fileProblems}
             autoSave={settings.autoSave}
             syntaxVersion={syntaxVersion}
             wheel={wheelFor("code")}
-            onHover={(text, line, col) => (lspEnabled ? lsp.hover(openFile, text, line, col) : Promise.resolve(null))}
-            onDefinition={(text, line, col) => {
-              if (!lspEnabled) return info("Go to definition needs a language server (see /settings → Plugins).", "error");
-              void lsp.definition(openFile, text, line, col).then((target) => {
-                if (!target) return info("No definition found here.");
-                // Keep unsaved text when jumping within the same file.
-                if (target.file === openFile && draft.current) draft.current = { ...draft.current, text };
-                openAt(target.file, target.line, true);
-              });
-            }}
-            onSave={(text) => saveFromEditor(text)}
-            onExit={() => {
-              draft.current = null;
-              setEditing(false);
-            }}
-            onState={(state) => {
-              setEditorState(state);
-              draft.current = state.dirty
-                ? { path: openFile, text: state.lines.join("\n"), baseline: draft.current?.path === openFile ? draft.current.baseline : content }
-                : null;
-            }}
+            scrollTo={scrollFor("code")}
+            mouse={editorMouse}
+            onHover={onEditorHover}
+            onDefinition={onEditorDefinition}
+            onSave={onEditorSave}
+            onExit={onEditorExit}
+            onState={onEditorState}
           />
         ) : (
           <CodeView
@@ -1094,7 +1209,8 @@ ${snippet}
             syntaxVersion={syntaxVersion}
             diffNote={pendingChange && diff === pendingChange ? pendingNote?.short ?? (checking.length ? "checking…" : null) : null}
             wheel={wheelFor("code")}
-            onViewport={(top, bottom) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom }))}
+            scrollTo={scrollFor("code")}
+            onViewport={onViewport}
           />
         )}
         <Chat
@@ -1108,8 +1224,10 @@ ${snippet}
           approvalNote={pendingChange ? pendingNote?.detail ?? null : null}
           contextChip={contextChip}
           wheel={wheelFor("chat")}
-          onSubmit={send}
-          onAnswer={answer}
+          scrollTo={scrollFor("chat")}
+          prefill={chatPrefill}
+          onSubmit={onSend}
+          onAnswer={onAnswer}
         />
       </Box>
       <Box>

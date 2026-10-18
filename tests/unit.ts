@@ -33,7 +33,10 @@ console.log("Mouse input");
 {
   const events = parseMouse("\x1b[<64;10;5M\x1b[<65;10;5M\x1b[<68;3;4M\x1b[<0;20;8M\x1b[<0;20;8m");
   check("wheel up and down", events[0]?.kind === "wheel" && events[0].dir === -1 && events[1]?.kind === "wheel" && events[1].dir === 1);
-  check("wheel with Shift held still counts", events[2]?.kind === "wheel" && events[2].dir === -1);
+  check("wheel up and down scroll vertically", events[0]?.kind === "wheel" && !events[0].horizontal);
+  check("Shift+wheel scrolls sideways", events[2]?.kind === "wheel" && events[2].dir === -1 && events[2].horizontal);
+  const tilt = parseMouse("\x1b[<66;3;4M\x1b[<67;3;4M");
+  check("a tilt wheel scrolls sideways", tilt.length === 2 && tilt.every((e) => e.kind === "wheel" && e.horizontal) && tilt[0]?.kind === "wheel" && tilt[0].dir === -1);
   check("click press is reported once, then its release", events.filter((e) => e.kind === "click").length === 1 && events[4]?.kind === "release");
   check("moving with the button held is a drag", parseMouse("[<32;30;8M")[0]?.kind === "drag");
   check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);

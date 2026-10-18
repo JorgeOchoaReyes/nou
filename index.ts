@@ -14,6 +14,8 @@ import { borrowToolConfig, ensureLocalModel, pickStartingModel } from "./src/set
 import { checkForUpdate, currentVersion, installUpdate, relaunch } from "./src/update/index.js";
 import { lsp } from "./src/lsp/index.js";
 import { App } from "./src/ui/App.js";
+import { installFastOutput } from "./src/ui/fast-output.js";
+import { RENDER_OPTIONS } from "./src/ui/render-options.js";
 
 const HELP = `nou ${currentVersion()}: an AI coding assistant for your terminal
 
@@ -97,11 +99,8 @@ async function main() {
 
   const permContext = await loadPermanentContext();
 
-  // Ctrl+C is handled inside the app: press it twice to quit, so a stray press doesn't lose work.
-  const app = render(createElement(App, { initialModel: choice, permContext }), {
-    alternateScreen: true,
-    exitOnCtrlC: false,
-  });
+  await installFastOutput();
+  const app = render(createElement(App, { initialModel: choice, permContext }), RENDER_OPTIONS);
   await app.waitUntilExit();
   lsp.stopAll();
 

@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useStdin } from "ink";
 
-/** Positions are 0-based terminal cells. `dir` is -1 for wheel up, 1 for wheel down. */
+/**
+ * Positions are 0-based terminal cells. `dir` is -1 for wheel up (or left), 1 for down (or right);
+ * `horizontal` for a tilt wheel or Shift+wheel.
+ */
 export type MouseEvent =
-  | { kind: "wheel"; dir: -1 | 1; x: number; y: number }
+  | { kind: "wheel"; dir: -1 | 1; x: number; y: number; horizontal: boolean }
   | { kind: "click"; x: number; y: number }
   | { kind: "drag"; x: number; y: number }
   | { kind: "release"; x: number; y: number };
@@ -21,7 +24,9 @@ export function parseMouse(chunk: string): MouseEvent[] {
     const x = Number(m[2]) - 1;
     const y = Number(m[3]) - 1;
     const button = code & 0b11000011; // drop the shift/alt/ctrl bits
-    if (button === 64 || button === 65) events.push({ kind: "wheel", dir: button === 64 ? -1 : 1, x, y });
+    const shift = (code & 4) !== 0;
+    if (button === 64 || button === 65) events.push({ kind: "wheel", dir: button === 64 ? -1 : 1, x, y, horizontal: shift });
+    else if (button === 66 || button === 67) events.push({ kind: "wheel", dir: button === 66 ? -1 : 1, x, y, horizontal: true });
     else if (button === 0 && code & 32) events.push({ kind: "drag", x, y }); // 32: moved with the left button held
     else if (button === 0) events.push({ kind: m[4] === "M" ? "click" : "release", x, y });
   }
