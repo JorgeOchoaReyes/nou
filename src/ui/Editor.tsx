@@ -12,8 +12,12 @@ import { copyToClipboard, readClipboard } from "./clipboard.js";
 
 export type EditorState = { line: number; col: number; dirty: boolean; lines: string[]; selection: boolean };
 
-/** A mouse press, drag or release over the editor, in cells from the top-left of its text area (gutter included). */
-export type EditorMouse = { x: number; y: number; kind: "press" | "drag" | "release"; nonce: number };
+/**
+ * A mouse press, drag or release over the editor, in cells from the top-left of its text area (gutter
+ * included). `seq` counts up: a quick click's press and release often arrive together, so the editor
+ * gets the recent events as a list and handles each one it hasn't seen yet.
+ */
+export type EditorMouse = { x: number; y: number; kind: "press" | "double" | "drag" | "release"; seq: number };
 
 type Props = {
   width: number;
@@ -33,7 +37,7 @@ type Props = {
   syntaxVersion: number;
   wheel?: Wheel | null;
   scrollTo?: ScrollTo | null;
-  mouse?: EditorMouse | null;
+  mouse?: EditorMouse[];
   onSave(text: string): void;
   onExit(): void;
   onState(state: EditorState): void;
@@ -344,9 +348,16 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
     rerender((n) => n + 1);
   }, [scrollTo?.nonce]);
 
-  // Click to put the cursor there; drag to select.
+  // Click to put the cursor there; double-click to select a word; drag to select.
+  const lastMouse = useRef(mouse?.[mouse.length - 1]?.seq ?? 0); // events from before the editor opened are done
   useEffect(() => {
-    if (!mouse) return;
+    for (const event of mouse ?? []) {
+      if (event.seq <= lastMouse.current) continue;
+      lastMouse.current = event.seq;
+      handleMouse(event);
+    }
+  }, [mouse]);
+  const handleMouse = (mouse: EditorMouse) => {
     if (mouse.kind === "release") {
       dragFrom.current = null;
       return;
@@ -361,11 +372,19 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
         dragFrom.current = { row, col };
         return { ...b, row, col, anchor: null };
       }
+      if (mouse.kind === "double") {
+        // Double-click selects the word under the pointer.
+        const line = b.lines[row]!;
+        const at = isWord(line[col]) ? col : isWord(line[col - 1]) ? col - 1 : -1;
+        dragFrom.current = null;
+        if (at < 0) return { ...b, row, col, anchor: null };
+        return { ...b, row, col: wordRight(line, at), anchor: { row, col: wordLeft(line, at + 1) } };
+      }
       return { ...b, row, col, anchor: dragFrom.current ?? b.anchor ?? { row: b.row, col: b.col } };
     });
     // Dragging past the top or bottom edge scrolls.
     if (mouse.kind === "drag" && (mouse.y < 0 || mouse.y >= rows)) reveal.current = true;
-  }, [mouse?.nonce]);
+  };
 
   usePaste((text) => {
     if (prompt) return setPrompt({ ...prompt, text: prompt.text + text.replace(/\s+/g, " ") });

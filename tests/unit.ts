@@ -41,6 +41,8 @@ console.log("Mouse input");
   check("moving with the button held is a drag", parseMouse("[<32;30;8M")[0]?.kind === "drag");
   check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);
   check("ordinary keys are not mouse events", parseMouse("hello\x1b[A").length === 0);
+  const { ENABLE } = await import("../src/ui/mouse.js");
+  check("the terminal is asked to report drags (mode 1002), not just clicks", ENABLE.includes("?1002h") && ENABLE.includes("?1000h") && ENABLE.includes("?1006h"));
 }
 
 console.log("write_file content");

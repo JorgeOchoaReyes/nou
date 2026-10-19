@@ -235,10 +235,13 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(`\x1b[<32;${33 + 1};11M`, 100); // drag the files/code border 10 columns right
   await press(`\x1b[<0;${33 + 1};11m`, 200);
   check("dragging the border between panes resizes them", before === 24 && codeLeft() === 34);
+  await press(click(33, 10), 100); // grab it again and let go further right, with no movement reported in between
+  await press(`\x1b[<0;${38 + 1};11m`, 200);
+  check("a border lands where it's released even without drag reports", codeLeft() === 39);
   await press(KEY.tab, 100); // to the file tree, so > and = aren't typed into the chat
   await press(KEY.tab, 100);
   await press(">", 200);
-  check("> widens the focused pane", codeLeft() === 36);
+  check("> widens the focused pane", codeLeft() === 41);
   await press("=", 200);
   check("= puts the default widths back", codeLeft() === 24);
 });
@@ -282,9 +285,13 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("edit.ts");
   await press(KEY.enter, 800);
   // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
-  await press(click(27 + 8, 3 + 1), 400); // line 2, column 9: "alpha"
-  await press(`\x1b[<0;${27 + 8 + 1};${3 + 1 + 1}m`, 100);
-  check("clicking in the code starts editing right there", frame().includes("EDITING") && frame().includes("Ln 2, Col 9"));
+  const up = (x: number, y: number) => `\x1b[<0;${x + 1};${y + 1}m`;
+  await press(click(27 + 8, 3 + 1) + up(27 + 8, 3 + 1), 600); // line 2, column 9: "alpha"
+  check("a single click in the code doesn't start editing", !frame().includes("EDITING"));
+  await delay(600); // too slow for a double-click
+  await press(click(27 + 8, 3 + 1) + up(27 + 8, 3 + 1), 50);
+  await press(click(27 + 8, 3 + 1) + up(27 + 8, 3 + 1), 400);
+  check("double-clicking in the code starts editing right there", frame().includes("EDITING") && frame().includes("Ln 2, Col 9"));
   await press(SHIFT_RIGHT);
   await press(SHIFT_RIGHT);
   await press(SHIFT_RIGHT, 150);
@@ -297,6 +304,10 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(`\x1b[<32;${27 + 12 + 1};${3 + 2 + 1}M`, 100); // drag 4 columns right
   await press(`\x1b[<0;${27 + 12 + 1};${3 + 2 + 1}m`, 200);
   check("dragging the mouse selects", frame().includes("4 selected") && frame().includes("Ln 3"));
+  await press(KEY.esc, 600);
+  await press(click(27 + 9, 3 + 2) + up(27 + 9, 3 + 2), 50); // double-click inside "beta"
+  await press(click(27 + 9, 3 + 2) + up(27 + 9, 3 + 2), 200);
+  check("double-clicking in the editor selects the word", frame().includes("4 selected") && frame().includes("Ln 3, Col 13"));
   await press(KEY.esc, 100); // clears the selection, stays in the editor
   check("Esc with a selection only clears it", frame().includes("EDITING") && !frame().includes("selected"));
   await press(CTRL_SLASH, 200);

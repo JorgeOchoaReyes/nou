@@ -76,13 +76,13 @@ Every change is reviewed like a code review:
 
 | Key | Does |
 | --- | --- |
-| 🖱️ Mouse | wheel scrolls the pane under the pointer (<kbd>Shift</kbd>+wheel or a tilt wheel: sideways) · click or drag a scrollbar to jump · click a file to open it · **click in the code to edit right there**, drag to select · drag a border between panes to resize them (press <kbd>m</kbd> to turn the mouse off and select text in your terminal) |
+| 🖱️ Mouse | wheel scrolls the pane under the pointer (<kbd>Shift</kbd>+wheel or a tilt wheel: sideways) · click or drag a scrollbar to jump · click a file to open it · **double-click in the code to edit right there** (in the editor: select a word), drag to select · drag a border between panes to resize them (press <kbd>m</kbd> to turn the mouse off and select text in your terminal) |
 | <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> | scroll the chat; scrolled up, new replies wait below instead of yanking the view (<kbd>Ctrl</kbd>+<kbd>End</kbd> jumps back) |
 | <kbd>/</kbd> | start a command from any pane |
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file |
-| <kbd>e</kbd> or a click | edit the open file (see the editor keys below) |
+| <kbd>e</kbd> or a double-click | edit the open file (see the editor keys below) |
 | <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
 | <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD`, Nou's last edit, or this session · <kbd>n</kbd>/<kbd>N</kbd> jump between changes · <kbd>[</kbd>/<kbd>]</kbd> previous/next file in a session diff |
