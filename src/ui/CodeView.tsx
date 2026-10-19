@@ -184,7 +184,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
       {" "}<Text color={color}>{icon}</Text> {filePath}
       {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
-      <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused ? "   click or e to edit · v diff" : ""}</Text>
+      <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused ? "   double-click or e to edit · v diff" : ""}</Text>
     </>
   );
   return (

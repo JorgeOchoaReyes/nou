@@ -37,6 +37,7 @@ const MIN_TREE = 14;
 const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
+const DOUBLE_CLICK_MS = 500;
 
 type Props = { initialModel: ModelChoice; permContext: string };
 
@@ -66,10 +67,10 @@ Keys:
   Shift+Tab  ask / auto-edit / auto                < > resize pane  = reset
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
-  e  edit open file (or click in the code)  v  diff (git / Nou / session)  f  follow mode
+  e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
-Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · click in the code to edit there, drag to select
+Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select
 In the editor:
   Shift+arrows / mouse drag select · Ctrl+A all · Ctrl+C/X/V copy/cut/paste · Esc clear selection or leave
   Ctrl+←/→ word · Ctrl+Backspace or Ctrl+W delete word · Ctrl+Home/End file start/end
@@ -154,7 +155,7 @@ export function App({ initialModel, permContext }: Props) {
   const [update, setUpdate] = useState<string | null>(null);
   const [wheel, setWheel] = useState<(Wheel & { pane: Focus }) | null>(null);
   const [scrollTo, setScrollTo] = useState<(ScrollTo & { pane: Focus }) | null>(null);
-  const [editorMouse, setEditorMouse] = useState<EditorMouse | null>(null);
+  const [editorMouse, setEditorMouse] = useState<EditorMouse[]>([]);
   /** Wheel events waiting for the next frame, added up per pane. */
   const pendingWheel = useRef<{ pane: Focus; lines: number; columns: number; timer: ReturnType<typeof setTimeout> | null }>({ pane: "chat", lines: 0, columns: 0, timer: null });
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
@@ -166,6 +167,7 @@ export function App({ initialModel, permContext }: Props) {
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
+  const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
   const dragging = useRef<"tree" | "chat" | "editor" | { scroll: Focus } | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
@@ -543,8 +545,9 @@ export function App({ initialModel, permContext }: Props) {
     const { treeWidth, codeWidth, paneHeight } = layout.current;
     const codeLeft = treeWidth;
     const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
-      setEditorMouse((m) => ({ x: x - codeLeft - 1, y: y - 3, kind, nonce: (m?.nonce ?? 0) + 1 }));
+      setEditorMouse((m) => [...m.slice(-15), { x: x - codeLeft - 1, y: y - 3, kind, seq: (m[m.length - 1]?.seq ?? 0) + 1 }]);
     if (event.kind === "drag") {
+      lastClick.current = null; // a press that became a drag doesn't start a double-click
       const drag = dragging.current;
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
@@ -577,12 +580,16 @@ export function App({ initialModel, permContext }: Props) {
     setFocus(pane);
     // Rows start under the pane's top border (y=1) and title (y=2).
     if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
+    // Two clicks in the same spot within half a second are a double-click.
+    const last = lastClick.current;
+    const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
+    lastClick.current = double ? null : { x: event.x, y: event.y, time: Date.now() };
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
       if (showEditor) {
         dragging.current = "editor";
-        editorAt(event.x, event.y, "press");
-      } else if (openFile && !diff && settleDraft(openFile)) {
-        // Click in the code: edit right there.
+        editorAt(event.x, event.y, double ? "double" : "press");
+      } else if (double && openFile && !diff && settleDraft(openFile)) {
+        // Double-click in the code: edit right there.
         const gutter = String(content.split("\n").length).length + 1;
         setEditorStart((s) => ({ line: (viewport?.top ?? 1) + event.y - 3, col: Math.max(1, event.x - codeLeft - gutter), nonce: s.nonce + 1 }));
         setDiffMode("off");
@@ -1133,7 +1140,7 @@ ${snippet}
           ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
           : diff
             ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-            : [["click/e", "edit"], ["v", "diff"], ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+            : [["double-click/e", "edit"], ["v", "diff"], ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
