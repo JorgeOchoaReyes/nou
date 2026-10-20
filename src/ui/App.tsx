@@ -41,6 +41,8 @@ const NO_LINES = new Set<number>();
 const DOUBLE_CLICK_MS = 500;
 
 type Props = { initialModel: ModelChoice; permContext: string };
+/** A clickable stretch of the status bar, in columns. */
+type StatusZone = { from: number; to: number; run(): void };
 
 /** /help: every command from the shared list, then the keys. */
 const HELP = `Commands (type / in the chat for a menu, or press ? for every action):
@@ -155,6 +157,8 @@ export function App({ initialModel, permContext }: Props) {
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
+  /** Where the status bar's parts and the header's model badge are, from the last render. */
+  const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
   const dragging = useRef<"tree" | "chat" | "editor" | { scroll: Focus } | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -555,6 +559,8 @@ export function App({ initialModel, permContext }: Props) {
       dragging.current = null;
       return;
     }
+    if (event.kind === "click" && !approval && event.y === 0 && event.x >= clickable.current.modelFrom) return setView("settings");
+    if (event.kind === "click" && event.y === paneHeight + 1) return clickable.current.status.find((z) => event.x >= z.from && event.x < z.to)?.run();
     if (event.y < 1 || event.y > paneHeight) return; // header or status bar
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
     if (event.kind === "wheel") return queueWheel(pane, event.dir, event.horizontal);
@@ -798,15 +804,9 @@ export function App({ initialModel, permContext }: Props) {
       setFocus("chat");
       setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
     } else if (input === "f") setFollow((f) => !f);
-    else if (input === "m") {
-      updateSettings({ mouse: !settings.mouse });
-      info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
-    }
-    else if (input === "p") {
-      setCodePanel((p) => (p === "problems" ? "code" : "problems"));
-      setEditing(false);
-      setFocus("code");
-    } else if (input === "u") undoLast();
+    else if (input === "m") toggleMouse();
+    else if (input === "p") toggleProblems();
+    else if (input === "u") undoLast();
     else if (input === "<" || input === ">") {
       // Moves the focused pane's inner border: the tree's right edge, or the code view's edge with the chat.
       const { treeWidth, codeWidth } = layout.current;
@@ -1201,9 +1201,42 @@ ${snippet}
     shownHints.push(hints[i]!);
   }
 
+  // The status bar and the header can be clicked: what each part shows, it does.
+  const hintAction: Record<string, (() => void) | undefined> = {
+    y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
+    "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
+    Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
+    e: startEditing, "double-click/e": startEditing, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    s: () => setView("settings"), "/help": () => void runCommand("/help"),
+    Esc: busy ? () => {
+      pullAbort.current?.abort();
+      agentRef.current?.cancel();
+    } : diff && !showEditor ? () => setDiffMode("off") : undefined,
+  };
+  const zones: StatusZone[] = [];
+  {
+    let x = ` ${mode.label} `.length;
+    const add = (width: number, run?: () => void) => {
+      if (run) zones.push({ from: x, to: x + width, run });
+      x += width;
+    };
+    add(` ${autoMode} `.length, () => cycleAutoMode());
+    add(10, () => setFollow((f) => !f));
+    add(` ✖ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
+    if (checking.length) add(3 + checking.join(", ").length);
+    if (!exitArmed) {
+      shownHints.forEach(([key, label], i) => {
+        add(i === 0 ? 2 : 3);
+        add(key.length + 1 + label.length, hintAction[key]);
+      });
+    }
+  }
+  const modelLabel = agentRef.current!.id === "nou" ? describe(choice) : `${engineInfo(agentRef.current!.id).label} · ${engineInfo(agentRef.current!.id).model(choice)}`;
+  clickable.current = { status: zones, modelFrom: columns - (" ⌂ LOCAL ".length + ` ${modelLabel} `.length + 1) };
+
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Header width={columns} branch={branch} changes={git.size} model={agentRef.current!.id === "nou" ? describe(choice) : `${engineInfo(agentRef.current!.id).label} · ${engineInfo(agentRef.current!.id).model(choice)}`} local={choice.provider.local} busy={busy} update={update} />
+      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} />
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}

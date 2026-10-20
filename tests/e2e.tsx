@@ -347,6 +347,40 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("Esc leaves the editor", !frame().includes("EDITING"));
 });
 
+console.log("Finding things: command menu, palette, clickable status bar");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/mo");
+  check("typing / lists matching commands with what they do", frame().includes("/model") && frame().includes("/models") && frame().includes("show or switch"));
+  await press(KEY.down, 100);
+  await press(KEY.tab, 150);
+  check("↓ then Tab completes the highlighted command", frame().includes("❯ /models ") && !frame().includes("EXPLORER"));
+  await press("\x15", 100); // Ctrl+U clears the input
+  await type("/ver");
+  await press(KEY.enter, 300);
+  check("Enter runs the highlighted command", /nou v\d+\.\d+\.\d+/.test(frame()));
+  await type("/conn");
+  await press(KEY.enter, 200);
+  check("a command that needs an argument is completed, not run", frame().includes("❯ /connect ") && !frame().includes("Usage: /connect"));
+  await press("\x15", 100);
+  await press(KEY.tab, 150); // to the files
+  await press("?", 300);
+  check("? opens every action, with its key", frame().includes("Find a file") && frame().includes("Ctrl+P") && frame().includes("commands"));
+  await type("follow");
+  await press(KEY.enter, 300);
+  check("running an action from the palette works", frame().includes("◉ follow"));
+  const status = () => frame().split("\n").at(-1)!;
+  const statusY = () => frame().split("\n").length - 1;
+  await press(click(status().indexOf(" ask ") + 1, statusY()), 300);
+  check("clicking the mode chip in the status bar switches it", status().includes("auto-edit"));
+  await press(click(status().indexOf("follow"), statusY()), 300);
+  check("clicking the follow chip toggles it", status().includes("○ follow"));
+  await press(click(frame().split("\n")[0]!.length - 3, 0), 400);
+  check("clicking the model in the header opens the model settings", frame().includes("Settings") && frame().includes("PROVIDER"));
+  await press(KEY.esc, 200);
+  await type("/auto ask");
+  await press(KEY.enter, 200);
+});
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");

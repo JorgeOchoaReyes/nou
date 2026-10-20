@@ -252,7 +252,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
               <Text key={c.name} wrap="truncate-end" {...(selected ? { backgroundColor: C.panel } : {})}>
                 <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸" : " "}</Text>
                 <Text color={selected ? C.accent : C.text} bold={selected}>/{c.name}</Text>
-                {c.args ? <Text color={C.dim}> {c.args}</Text> : null}
+                {c.args && inner >= 56 ? <Text color={C.dim}> {c.args}</Text> : null /* narrow: the description matters more */}
                 <Text color={C.dim}>  {c.description}</Text>
               </Text>
             );
