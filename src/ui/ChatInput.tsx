@@ -47,9 +47,11 @@ type Props = {
   /** Earlier messages, oldest first, for ↑/↓ recall. */
   history: string[];
   maxLines?: number;
+  /** ↑/↓ belong to something else right now (the command menu). */
+  arrowsTaken?: boolean;
 };
 
-export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder, history, maxLines = 6 }: Props) {
+export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder, history, maxLines = 6, arrowsTaken = false }: Props) {
   const [cursor, setCursor] = useState(value.length);
   const [recall, setRecall] = useState<number | null>(null);
   const stash = useRef("");
@@ -88,6 +90,7 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
 
   useInput((input, key) => {
     if (key.tab || key.escape || key.pageUp || key.pageDown || (key.shift && (key.upArrow || key.downArrow))) return;
+    if (arrowsTaken && (key.upArrow || key.downArrow)) return;
     if (key.return) {
       setRecall(null);
       onSubmit(value);

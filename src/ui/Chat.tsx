@@ -5,6 +5,7 @@ import { renderMarkdown, wrap, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
+import { matchCommands, type SlashCommand } from "./commands.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
 type Props = {
@@ -24,6 +25,10 @@ type Props = {
   scrollTo?: ScrollTo | null;
   /** Text to start the input with, e.g. "/" typed in another pane. */
   prefill?: { text: string; nonce: number } | null;
+  /** Commands from plugins, listed in the command menu after the built-in ones. */
+  extraCommands?: SlashCommand[];
+  /** Whether the command menu is open, so the app leaves Tab to it. */
+  onMenu?(open: boolean): void;
   onSubmit(text: string): void;
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
@@ -37,7 +42,6 @@ type Props = {
 type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[] };
 const BAR = "▌ ";
 
-export const COMMANDS = ["/model", "/models", "/settings", "/auto", "/engine", "/copy", "/undo", "/rewind", "/history", "/problems", "/version", "/clear", "/help"];
 
 /** Display lines for one message, wrapped to `inner` columns. */
 function entryLines(entry: ChatEntry, inner: number): Line[] {
@@ -74,7 +78,7 @@ function cachedLines(entry: ChatEntry, inner: number): Line[] {
   return lines;
 }
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, onSubmit, onAnswer }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer }: Props) {
   const [input, setInput] = useState("");
   useEffect(() => {
     if (prefill) setInput(prefill.text);
@@ -128,12 +132,21 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     footer.push({ text: `${SPINNER[frame % SPINNER.length]} ${busy}`, color: C.accent2 });
   }
 
-  const suggestions = input.startsWith("/") && !input.includes(" ")
-    ? COMMANDS.filter((c) => c.startsWith(input) && c !== input)
-    : [];
+  // Typing "/" opens a menu of commands with what each does; ↑↓ pick one, Tab completes, Enter runs it.
+  const menuOpen = focused && !approval && input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
+  const matches = useMemo(() => (menuOpen ? matchCommands(input, extraCommands) : []), [menuOpen, input, extraCommands]);
+  const [menuRow, setMenuRow] = useState(0);
+  useEffect(() => setMenuRow(0), [input]);
+  const showMenu = matches.length > 0;
+  useEffect(() => onMenu?.(showMenu), [showMenu]);
+  const menuRows = Math.min(matches.length, Math.max(1, Math.min(7, height - 12)));
+  const menuStart = Math.max(0, Math.min(menuRow - menuRows + 1, matches.length - menuRows));
+  const picked = matches[menuRow];
+  /** Puts the picked command in the input, with a space when it takes arguments. */
+  const complete = (c: SlashCommand) => setInput(`/${c.name}${c.args ? " " : ""}`);
 
   const inputRows = inputHeight(input, inner + 1);
-  const rows = Math.max(1, height - 3 - footer.length - 2 - inputRows);
+  const rows = Math.max(1, height - 3 - footer.length - 2 - inputRows - (showMenu ? menuRows - 1 : 0));
   const sent = useMemo(() => entries.filter((e) => e.kind === "user").map((e) => e.text), [entries]);
   const maxBack = Math.max(0, lines.length - rows);
   const back = Math.min(scrollBack, maxBack);
@@ -160,12 +173,23 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     else if (key.ctrl && key.end) setScrollBack(0);
   }, { isActive: focused });
 
+  useInput((_input, key) => {
+    if (key.upArrow && !key.shift) setMenuRow((r) => (r - 1 + matches.length) % matches.length);
+    else if (key.downArrow && !key.shift) setMenuRow((r) => (r + 1) % matches.length);
+    else if (key.tab && picked) complete(picked);
+    else if (key.escape) setInput("");
+  }, { isActive: focused && showMenu });
+
   const submit = (value: string) => {
     if (!value.trim() || busy || approval) return;
-    // "/se" + Enter runs /settings when only one command matches.
-    const command = !COMMANDS.includes(value.trim()) && suggestions.length === 1 ? suggestions[0]! : value.trim();
+    let text = value.trim();
+    if (showMenu && picked) {
+      // Enter runs the highlighted command; one that needs an argument is completed instead, to type it.
+      if (picked.args?.startsWith("<")) return complete(picked);
+      text = `/${picked.name}`;
+    }
     setInput("");
-    onSubmit(command);
+    onSubmit(text);
   };
 
   const render = (line: Line, key: string | number, withLead = true) => (
@@ -220,11 +244,25 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
       <Box flexDirection="column">
         {footer.map((line, i) => render(line, `f${i}`))}
       </Box>
-      <Text wrap="truncate-end" color={C.dim}>
-        {suggestions.length
-          ? <Text color={C.accent}>{suggestions.join("  ")}  <Text color={C.dim}>{suggestions.length === 1 ? "Enter ↵" : ""}</Text></Text>
-          : contextChip ? <><Text color={C.cyan}>@</Text> {contextChip}</> : " "}
-      </Text>
+      {showMenu ? (
+        <Box flexDirection="column">
+          {matches.slice(menuStart, menuStart + menuRows).map((c, i) => {
+            const selected = menuStart + i === menuRow;
+            return (
+              <Text key={c.name} wrap="truncate-end" {...(selected ? { backgroundColor: C.panel } : {})}>
+                <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸" : " "}</Text>
+                <Text color={selected ? C.accent : C.text} bold={selected}>/{c.name}</Text>
+                {c.args ? <Text color={C.dim}> {c.args}</Text> : null}
+                <Text color={C.dim}>  {c.description}</Text>
+              </Text>
+            );
+          })}
+        </Box>
+      ) : (
+        <Text wrap="truncate-end" color={C.dim}>
+          {contextChip ? <><Text color={C.cyan}>@</Text> {contextChip}</> : " "}
+        </Text>
+      )}
       <Text color={focused ? C.accent : C.dim}>{"─".repeat(Math.max(0, inner + 1))}</Text>
       <ChatInput
         value={input}
@@ -233,7 +271,8 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
         focus={focused && !(approval && !input)}
         width={inner + 1}
         history={sent}
-        placeholder={busy ? "working… Esc to stop" : "Ask anything · / for commands · ↑ history"}
+        arrowsTaken={showMenu}
+        placeholder={busy ? "working… Esc to stop" : showMenu ? "↑↓ choose · Tab complete · Enter run" : "Ask anything · / for commands · ↑ history"}
       />
     </Pane>
   );

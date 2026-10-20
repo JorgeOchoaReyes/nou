@@ -23,11 +23,12 @@ import { C } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
+import { SLASH_COMMANDS, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
-import { QuickOpen, listAllFiles } from "./QuickOpen.js";
+import { QuickOpen, listAllFiles, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
 type Focus = "tree" | "code" | "chat";
@@ -41,29 +42,12 @@ const DOUBLE_CLICK_MS = 500;
 
 type Props = { initialModel: ModelChoice; permContext: string };
 
-const HELP = `Commands:
-  /settings            models, preferences and plugins
-  /model               show providers and the current model
-  /model <provider[:model]>  switch, e.g. /model anthropic  /model ollama:qwen3:8b
-  /models [provider]   list models a provider offers
-  /connect <provider>  enter an API key (and URL), e.g. /connect fireworks  /connect litellm
-  /pull <model>        download an Ollama model
-  /engine [name]       which agent answers: nou, claude-code, codex or pi
-  /auto [ask|auto-edit|auto]  how much Nou does without asking (also: Shift+Tab)
-  /copy [code|file]    copy the last reply, its last code block, or the open file
-  /plugins             your plugins and the starter ones you can add
-  /plugins add <name>  add a starter plugin (copied to ~/.nou/plugins to edit)
-  /plugins new <name>  start your own plugin in .nou/plugins/
-  /clear               start a fresh conversation
-  /compact             summarize the conversation so far, to free up context
-  /undo                undo Nou's last change (also: u)
-  /rewind              undo everything from Nou's last turn
-  /history             recent changes
-  /diff [file]         everything changed this session ([ ] step through files)
-  /sessions            earlier sessions; /diff <n> shows one of them
-  /version             which version of Nou this is
+/** /help: every command from the shared list, then the keys. */
+const HELP = `Commands (type / in the chat for a menu, or press ? for every action):
+${SLASH_COMMANDS.map((c) => `  /${`${c.name}${c.args ? ` ${c.args}` : ""}`.padEnd(30)} ${c.description}`).join("\n")}
 Keys:
-  Ctrl+P  find a file      Tab  switch pane      Esc  stop / back
+  ?  every action, searchable (also Ctrl+P then >)   Ctrl+P  find a file
+  Tab  switch pane      Esc  stop / back
   Shift+Tab  ask / auto-edit / auto                < > resize pane  = reset
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
@@ -99,7 +83,8 @@ export function App({ initialModel, permContext }: Props) {
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
   const [view, setView] = useState<"main" | "settings">("main");
   const [connectTo, setConnectTo] = useState<Provider | undefined>();
-  const [quickOpen, setQuickOpen] = useState(false);
+  /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
+  const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
   const [follow, setFollow] = useState(settings.followMode);
   const [entries, setEntries] = useState<ChatEntry[]>([]);
@@ -158,6 +143,9 @@ export function App({ initialModel, permContext }: Props) {
   const [editorMouse, setEditorMouse] = useState<EditorMouse[]>([]);
   /** Wheel events waiting for the next frame, added up per pane. */
   const pendingWheel = useRef<{ pane: Focus; lines: number; columns: number; timer: ReturnType<typeof setTimeout> | null }>({ pane: "chat", lines: 0, columns: 0, timer: null });
+  /** The chat's command menu is open (Tab completes there instead of switching panes). */
+  const chatMenuOpen = useRef(false);
+  const [chatMenu, setChatMenu] = useState(false);
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
@@ -185,7 +173,7 @@ export function App({ initialModel, permContext }: Props) {
   settingsRef.current = settings;
 
   const refreshGit = useCallback(() => setGit(gitStatus()), []);
-  const allFiles = useMemo(() => (quickOpen ? listAllFiles() : []), [quickOpen]);
+  const allFiles = useMemo(() => (quickOpen !== null ? listAllFiles() : []), [quickOpen !== null]);
   const repo = useMemo(() => isRepo(), []);
   const branch = useMemo(() => (repo ? gitBranch() : null), [repo, git]);
 
@@ -271,6 +259,10 @@ export function App({ initialModel, permContext }: Props) {
     [plugins, starters],
   );
   const activePlugins = useMemo(() => allPlugins.filter((p) => isEnabled(p, settings) && p.plugin), [allPlugins, settings.plugins, settings.trustedPlugins]);
+  const pluginCommands = useMemo<SlashCommand[]>(
+    () => activePlugins.flatMap((p) => (p.plugin!.commands ?? []).map((c) => ({ name: c.name, args: "[args]", description: `${c.description} (${p.plugin!.name})` }))),
+    [activePlugins],
+  );
 
   // Checkers come from enabled plugins (built-in ones included).
   const firstCheck = useRef(true);
@@ -541,7 +533,7 @@ export function App({ initialModel, permContext }: Props) {
   // (starting the editor). Drag to select in the editor, drag a scrollbar to scroll, drag the border
   // between panes to resize them.
   useMouse((event) => {
-    if (view !== "main" || quickOpen) return;
+    if (view !== "main" || quickOpen !== null) return;
     const { treeWidth, codeWidth, paneHeight } = layout.current;
     const codeLeft = treeWidth;
     const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
@@ -777,11 +769,12 @@ export function App({ initialModel, permContext }: Props) {
       if (focus !== "chat" && input === "o" && pendingChange) return openPending();
     }
     if (key.ctrl && input === "p") {
-      setQuickOpen(true);
+      setQuickOpen("");
       return;
     }
     if (showEditor && focus === "code") return; // the editor owns the keyboard
     if (key.tab && key.shift) return cycleAutoMode();
+    if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
       setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!);
       return;
@@ -799,7 +792,8 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (focus === "chat") return; // letters belong to the text box
-    if (input === "/") {
+    if (input === "?") setQuickOpen(">"); // every action, searchable
+    else if (input === "/") {
       // Commands work from anywhere: / jumps to the chat's command box.
       setFocus("chat");
       setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
@@ -829,7 +823,7 @@ export function App({ initialModel, permContext }: Props) {
       refreshGit();
       setTreeVersion((v) => v + 1);
     } else if (input === "q") requestQuit();
-  }, { isActive: view === "main" && !quickOpen && !(codePanel === "problems" && focus === "code") });
+  }, { isActive: view === "main" && quickOpen === null && !(codePanel === "problems" && focus === "code") });
 
   /** What the user is looking at, attached to each message so "this file" / "here" make sense. */
   const editorContext = (): string | null => {
@@ -1049,6 +1043,10 @@ ${snippet}
   const onCloseProblems = useEvent(() => setCodePanel("code"));
   const onViewport = useEvent((top: number, bottom: number) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom })));
   const onSend = useEvent(send);
+  const onChatMenu = useEvent((open: boolean) => {
+    chatMenuOpen.current = open;
+    setChatMenu(open);
+  });
   const onAnswer = useEvent(answer);
   const onEditorHover = useEvent((text: string, line: number, col: number) => (lspEnabled && openFile ? lsp.hover(openFile, text, line, col) : Promise.resolve(null)));
   const onEditorDefinition = useEvent((text: string, line: number, col: number) => {
@@ -1118,6 +1116,59 @@ ${snippet}
   const totals = diagnostics.counts();
   const checking = diagnostics.busy;
 
+  /** Starts a command in the chat's input, for commands that need something typed after them. */
+  const typeCommand = (text: string) => {
+    setFocus("chat");
+    setChatPrefill((p) => ({ text, nonce: (p?.nonce ?? 0) + 1 }));
+  };
+  const toggleMouse = () => {
+    updateSettings({ mouse: !settings.mouse });
+    info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
+  };
+  const toggleProblems = () => {
+    setCodePanel((p) => (p === "problems" ? "code" : "problems"));
+    setEditing(false);
+    setFocus("code");
+  };
+  // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
+  const paletteActions: PaletteAction[] = [
+    { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
+    { title: "Edit the open file", keys: "e · double-click", run: startEditing },
+    { title: "Diff the open file (vs git, Nou's edit, this session)", keys: "v", run: cycleDiff },
+    { title: "Undo Nou's last change", keys: "u", run: undoLast },
+    { title: "Rewind everything from Nou's last turn", keys: "/rewind", run: rewind },
+    { title: "Changes this session", keys: "/diff", run: () => showSessionDiff("") },
+    { title: "Earlier sessions", keys: "/sessions", run: showSessions },
+    { title: "Recent changes", keys: "/history", run: showHistory },
+    { title: "Problems: every error and warning", keys: "p", run: toggleProblems },
+    { title: "Switch model", keys: "/model", run: () => setView("settings") },
+    { title: "Connect a provider (API key)", keys: "/connect", run: () => typeCommand("/connect ") },
+    { title: "Switch engine (Nou, Claude Code, Codex, pi)", keys: "/engine", run: () => void runCommand("/engine") },
+    { title: "Ask before every edit and command", keys: "Shift+Tab", run: () => cycleAutoMode("ask") },
+    { title: "Auto-edit: apply edits without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto-edit") },
+    { title: "Auto: edits and commands without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto") },
+    { title: `Follow mode ${follow ? "off" : "on"}: jump to files Nou works on`, keys: "f", run: () => setFollow((f) => !f) },
+    { title: `Mouse ${settings.mouse ? "off (select text in the terminal)" : "on"}`, keys: "m", run: toggleMouse },
+    { title: "Copy the last reply", keys: "/copy", run: () => void runCommand("/copy") },
+    { title: "Copy the last code block", keys: "/copy code", run: () => void runCommand("/copy code") },
+    { title: "Copy the open file", keys: "/copy file", run: () => void runCommand("/copy file") },
+    { title: "Summarize the conversation to free up context", keys: "/compact", run: () => void runCommand("/compact") },
+    { title: "Start a fresh conversation", keys: "/clear", run: () => void runCommand("/clear") },
+    { title: "Download an Ollama model", keys: "/pull", run: () => typeCommand("/pull ") },
+    { title: "Plugins", keys: "/plugins", run: () => void runCommand("/plugins") },
+    { title: "Settings: model, engine, preferences, plugins", keys: "s", run: () => setView("settings") },
+    { title: "Reset the pane widths", keys: "=", run: () => {
+      setPaneWidths(null);
+      updateSettings({ paneWidths: null });
+    } },
+    { title: "Go to the chat", keys: "Tab · Esc", run: () => setFocus("chat") },
+    { title: "Go to the files", keys: "Tab", run: () => setFocus("tree") },
+    { title: "Go to the code", keys: "Tab", run: () => setFocus("code") },
+    { title: "All commands and keys", keys: "/help", run: () => void runCommand("/help") },
+    ...pluginCommands.map((c) => ({ title: `${c.description}`, keys: `/${c.name}`, run: () => typeCommand(`/${c.name} `) })),
+    { title: "Quit Nou", keys: "Ctrl+C ×2", run: quit },
+  ];
+
   const mode = approval
     ? { label: "APPROVE", color: C.yellow }
     : showEditor ? { label: "EDIT", color: C.green }
@@ -1133,9 +1184,10 @@ ${snippet}
         ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
         : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
       : focus === "chat"
-        ? busy
-          ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
-          : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
+        ? chatMenu ? [["↑↓", "choose"], ["Tab", "complete"], ["Enter", "run"], ["Esc", "close"]]
+          : busy
+            ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
+            : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
         : focus === "tree"
           ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
           : diff
@@ -1236,6 +1288,8 @@ ${snippet}
           wheel={wheelFor("chat")}
           scrollTo={scrollFor("chat")}
           prefill={chatPrefill}
+          extraCommands={pluginCommands}
+          onMenu={onChatMenu}
           onSubmit={onSend}
           onAnswer={onAnswer}
         />
@@ -1255,18 +1309,24 @@ ${snippet}
             ))}
         </Text>
       </Box>
-      {quickOpen && (
+      {quickOpen !== null && (
         <QuickOpen
           width={columns}
           top={3}
           files={allFiles}
+          actions={paletteActions}
+          initialQuery={quickOpen}
           onPick={(file) => {
-            setQuickOpen(false);
+            setQuickOpen(null);
             open(file);
             setReveal(file);
             setFocus("code");
           }}
-          onClose={() => setQuickOpen(false)}
+          onRun={(action) => {
+            setQuickOpen(null);
+            action.run();
+          }}
+          onClose={() => setQuickOpen(null)}
         />
       )}
     </Box>
