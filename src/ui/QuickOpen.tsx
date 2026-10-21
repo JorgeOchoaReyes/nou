@@ -49,32 +49,57 @@ function score(file: string, query: string): { score: number; hits: number[] } |
   return { score: total - file.length * 0.05, hits };
 }
 
+/** An action in the command palette, with the key that does the same thing, if any. */
+export type PaletteAction = { title: string; keys?: string; run(): void };
+
 type Props = {
   width: number;
   top: number;
   files: string[];
+  /** Everything Nou can do, shown when the query starts with ">". */
+  actions: PaletteAction[];
+  /** ">" opens it on the actions (the ? key); empty on files (Ctrl+P). */
+  initialQuery?: string;
   onPick(file: string): void;
+  onRun(action: PaletteAction): void;
   onClose(): void;
 };
 
-export function QuickOpen({ width, top, files, onPick, onClose }: Props) {
-  const [query, setQuery] = useState("");
+/** Ctrl+P: find a file. Start with ">" (or press ?) for every action Nou has, with its shortcut. */
+export function QuickOpen({ width, top, files, actions, initialQuery = "", onPick, onRun, onClose }: Props) {
+  const [query, setQuery] = useState(initialQuery);
   const [cursor, setCursor] = useState(0);
   const boxWidth = Math.min(80, Math.max(40, width - 10));
   const inner = boxWidth - 2; // fill every cell so the screen underneath doesn't show through
+  const commandMode = query.startsWith(">");
+  const rowsShown = 12;
 
   const results = useMemo(() => {
+    if (commandMode) return [];
     return files
       .map((f) => ({ file: f, m: score(f, query) }))
       .filter((r): r is { file: string; m: { score: number; hits: number[] } } => r.m !== null)
       .sort((a, b) => b.m.score - a.m.score)
-      .slice(0, 12);
-  }, [files, query]);
+      .slice(0, rowsShown);
+  }, [files, query, commandMode]);
+
+  const found = useMemo(() => {
+    if (!commandMode) return [];
+    const q = query.slice(1).trim();
+    return actions
+      .map((a, order) => ({ action: a, m: score(a.title, q), order }))
+      .filter((r): r is { action: PaletteAction; m: { score: number; hits: number[] }; order: number } => r.m !== null)
+      .sort((a, b) => (q ? b.m.score - a.m.score : a.order - b.order));
+  }, [actions, query, commandMode]);
+  const count = commandMode ? found.length : results.length;
+  const first = Math.max(0, Math.min(cursor - rowsShown + 1, count - rowsShown));
 
   useInput((_input, key) => {
     if (key.escape) onClose();
-    else if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
-    else if (key.downArrow) setCursor((c) => Math.min(results.length - 1, c + 1));
+    else if (key.upArrow) setCursor((c) => (c - 1 + Math.max(1, count)) % Math.max(1, count));
+    else if (key.downArrow) setCursor((c) => (c + 1) % Math.max(1, count));
+    else if (key.pageUp) setCursor((c) => Math.max(0, c - rowsShown));
+    else if (key.pageDown) setCursor((c) => Math.min(count - 1, c + rowsShown));
   });
 
   const pad = (s: string) => (s.length > inner ? `…${s.slice(-(inner - 1))}` : s.padEnd(inner));
@@ -89,13 +114,35 @@ export function QuickOpen({ width, top, files, onPick, onClose }: Props) {
             setQuery(v);
             setCursor(0);
           }}
-          onSubmit={() => results[cursor] && onPick(results[cursor].file)}
-          placeholder="Go to file…"
+          onSubmit={() => {
+            if (commandMode) {
+              if (found[cursor]) onRun(found[cursor].action);
+            } else if (results[cursor]) onPick(results[cursor].file);
+          }}
+          placeholder="Go to file…  (> for commands)"
         />
-        <Text>{" ".repeat(Math.max(0, inner - 4 - Math.max(query.length, 11)))}</Text>
+        <Text>{" ".repeat(Math.max(0, inner - 4 - Math.max(query.length, 29)))}</Text>
       </Text>
       <Text color={C.dim}>{"─".repeat(inner)}</Text>
-      {results.length === 0 && <Text color={C.dim}>{pad("  No matching files")}</Text>}
+      {commandMode && found.length === 0 && <Text color={C.dim}>{pad("  No matching commands")}</Text>}
+      {commandMode && found.slice(first, first + rowsShown).map((r, i) => {
+        const selected = first + i === cursor;
+        const keys = r.action.keys ?? "";
+        const room = inner - 3 - keys.length - 1;
+        const title = r.action.title.length > room ? `${r.action.title.slice(0, room - 1)}…` : r.action.title.padEnd(room);
+        const hits = new Set(r.m.hits);
+        return (
+          <Text key={r.action.title} {...(selected ? { backgroundColor: C.panel } : {})}>
+            <Text color={selected ? C.accent2 : C.dim}>{selected ? "▌" : " "}</Text>
+            <Text color={C.accent2}>› </Text>
+            {[...title].map((ch, j) => (
+              <Text key={j} color={hits.has(j) ? C.yellow : selected ? C.text : C.dim} bold={hits.has(j)}>{ch}</Text>
+            ))}
+            <Text color={C.accent}> {keys}</Text>
+          </Text>
+        );
+      })}
+      {!commandMode && results.length === 0 && <Text color={C.dim}>{pad("  No matching files")}</Text>}
       {results.map((r, i) => {
         const selected = i === cursor;
         const { icon, color } = fileIcon(r.file);
@@ -111,7 +158,7 @@ export function QuickOpen({ width, top, files, onPick, onClose }: Props) {
           </Text>
         );
       })}
-      <Text color={C.dim}>{pad(" ↑↓ select · Enter open · Esc close")}</Text>
+      <Text color={C.dim}>{pad(commandMode ? ` ↑↓ select · Enter run · Esc close   ${found.length} commands` : " ↑↓ select · Enter open · > commands · Esc close")}</Text>
     </Box>
   );
 }
