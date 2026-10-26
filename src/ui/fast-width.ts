@@ -8,7 +8,8 @@
  * string-width. Ink and its dependencies import string-width by name, so a module hook points that name
  * here; it has to be installed before Ink loads (index.ts does it first).
  */
-import { registerHooks } from "module";
+// A namespace import: Node before 22.15 has no registerHooks, and a named import of it would fail to load.
+import * as nodeModule from "module";
 
 /**
  * Characters string-width counts as one column each and that never combine with what's next to them:
@@ -45,6 +46,7 @@ let installed = false;
 export function installFastWidth(): boolean {
   if (installed) return true;
   // registerHooks runs in-thread and synchronously (Node 22.15+); older versions keep the original.
+  const { registerHooks } = nodeModule as Partial<typeof nodeModule>;
   if (typeof registerHooks !== "function" || process.env.NOU_NO_FAST_WIDTH) return false;
   const shim = new URL(`./width-shim${import.meta.url.endsWith(".ts") ? ".ts" : ".js"}`, import.meta.url).href;
   registerHooks({
