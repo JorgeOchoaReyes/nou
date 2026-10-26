@@ -38,6 +38,7 @@ type Props = {
 
 /** Columns ←/→ and Shift+wheel move sideways. */
 const SIDE_STEP = 8;
+const EDIT_HINT = "   double-click or e to edit · v diff";
 
 export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport }: Props) {
   const [top, setTop] = useState(0);
@@ -151,11 +152,14 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
 
   if (!filePath) {
     const tips: [string, string][] = [
-      ["Ctrl+P", "find a file"],
-      ["Tab", "switch panes"],
-      ["e", "edit the open file"],
+      ["?", "everything Nou can do, searchable"],
+      ["Ctrl+P", "find a file (recent ones first)"],
+      ["/", "commands, with a menu"],
+      ["Tab", "switch panes (or click one)"],
+      ["e", "edit the open file (or double-click it)"],
       ["v", "diff vs git HEAD"],
-      ["/settings", "models, preferences, plugins"],
+      ["drag", "a pane's border to resize it"],
+      ["s", "settings: models, keys, plugins"],
     ];
     return (
       <Pane title={<> <Text color={C.accent2}>✦</Text> Welcome</>} width={width} height={height} focused={focused}>
@@ -179,12 +183,14 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   const { icon, color } = fileIcon(filePath);
   const errorCount = problems.filter((d) => d.severity === "error").length;
   const warningCount = problems.filter((d) => d.severity === "warning").length;
+  // The edit hint only when it fits: a cut-off hint reads as noise.
+  const titleRoom = width - 4 - (3 + filePath.length + (errorCount ? 5 + String(errorCount).length : 0) + (warningCount ? 5 + String(warningCount).length : 0) + scroll.length + (total > rows ? 7 : 0));
   const title = (
     <>
       {" "}<Text color={color}>{icon}</Text> {filePath}
       {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
-      <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused ? "   double-click or e to edit · v diff" : ""}</Text>
+      <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused && titleRoom >= EDIT_HINT.length ? EDIT_HINT : ""}</Text>
     </>
   );
   return (

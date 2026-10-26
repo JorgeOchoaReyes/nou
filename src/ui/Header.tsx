@@ -22,27 +22,32 @@ export const Header = memo(function Header({ width, branch, changes, model, loca
   const project = path.basename(process.cwd());
   return (
     <Box width={width} justifyContent="space-between">
-      <Text wrap="truncate-end">
-        {" "}
-        {gradient("◆ NOU", busy ? frame : 0).map((g, i) => <Text key={i} bold color={g.color}>{g.ch}</Text>)}
-        <Text color={C.dim}> {VERSION}</Text>
-        <Text color={C.dim}>  │  </Text>
-        <Text color={C.text}>{project}</Text>
-        {branch && (
-          <>
-            <Text color={C.dim}>  │  </Text>
-            <Text color={C.accent2}>⎇ {branch}</Text>
-            {changes > 0 && <Text color={C.yellow}> ±{changes}</Text>}
-          </>
-        )}
-        {busy && <Text color={C.accent2}>{"  "}{SPINNER[frame % SPINNER.length]} {busy}</Text>}
-      </Text>
-      <Text>
-        {update && <Text color={C.green} bold>⬆ v{update} available · run `nou update`  </Text>}
-        <Text backgroundColor={local ? C.green : C.accent2} color="black" bold>{` ${local ? "⌂ LOCAL" : "☁ CLOUD"} `}</Text>
-        <Text backgroundColor={C.panel} color={C.text}>{` ${model} `}</Text>
-        {" "}
-      </Text>
+      <Box flexShrink={1} flexGrow={1} overflow="hidden">
+        <Text wrap="truncate-end">
+          {" "}
+          {gradient("◆ NOU", busy ? frame : 0).map((g, i) => <Text key={i} bold color={g.color}>{g.ch}</Text>)}
+          <Text color={C.dim}> {VERSION}</Text>
+          <Text color={C.dim}>  │  </Text>
+          <Text color={C.text}>{project}</Text>
+          {branch && (
+            <>
+              <Text color={C.dim}>  │  </Text>
+              <Text color={C.accent2}>⎇ {branch}</Text>
+              {changes > 0 && <Text color={C.yellow}> ±{changes}</Text>}
+            </>
+          )}
+          {busy && <Text color={C.accent2}>{"  "}{SPINNER[frame % SPINNER.length]} {busy}</Text>}
+        </Text>
+      </Box>
+      {/* The model badge never wraps or shrinks: the left side gives way instead. */}
+      <Box flexShrink={0}>
+        <Text wrap="truncate-end">
+          {update && width >= 110 && <Text color={C.green} bold>⬆ v{update} available · run `nou update`  </Text>}
+          <Text backgroundColor={local ? C.green : C.accent2} color="black" bold>{` ${local ? "⌂ LOCAL" : "☁ CLOUD"} `}</Text>
+          <Text backgroundColor={C.panel} color={C.text}>{` ${model} `}</Text>
+          {" "}
+        </Text>
+      </Box>
     </Box>
   );
 });

@@ -45,6 +45,23 @@ console.log("Mouse input");
   check("the terminal is asked to report drags (mode 1002), not just clicks", ENABLE.includes("?1002h") && ENABLE.includes("?1000h") && ENABLE.includes("?1006h"));
 }
 
+console.log("Fast text widths");
+{
+  const { NARROW, fastStringWidth } = await import("../src/ui/fast-width.js");
+  const { loadInkOutput } = await import("../src/ui/fast-output.js");
+  const real = (await loadInkOutput()).stringWidth as (text: string, options?: { ambiguousIsNarrow?: boolean }) => number;
+  const wrong: string[] = [];
+  for (let c = 0; c <= 0xffff; c++) {
+    const ch = String.fromCharCode(c);
+    if (NARROW.test(ch) && real(ch) !== 1) wrong.push(c.toString(16));
+  }
+  check(`every character on the fast path is one column wide${wrong.length ? ` (not: ${wrong.slice(0, 8).join(" ")})` : ""}`, wrong.length === 0);
+  const fast = fastStringWidth(real);
+  const samples = ["", "plain ascii", "│ box ┃ ─ ▸ ✓ ✖ ☁ ⎇", "wide 中文 text", "emoji 🌞 and ✔️", "e\u0301 combining", "\x1b[31mred\x1b[39m", "tab\there", "👩‍💻 zwj", "☀\ufe0f"];
+  check("same widths as string-width, fast path or not", samples.every((t) => fast(t) === real(t) && fast(t) === real(t)));
+  check("options still reach string-width", fast("±", { ambiguousIsNarrow: false }) === real("±", { ambiguousIsNarrow: false }));
+}
+
 console.log("write_file content");
 check("keeps \\n inside string literals", cleanContent('log("a\\nb");\n') === 'log("a\\nb");\n');
 check("keeps leading indentation", cleanContent("    x()\n") === "    x()\n");

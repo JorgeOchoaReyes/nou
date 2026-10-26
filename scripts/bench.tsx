@@ -15,6 +15,8 @@ process.env.NOU_NO_UPDATE_CHECK = "1";
 process.env.HOME = process.env.USERPROFILE = mkdtempSync(path.join(os.tmpdir(), "nou-bench-home-"));
 
 await import("../src/env.js"); // as the app does: production React, before React loads
+// Older checkouts don't have it; --no-fast-width compares against Ink's own.
+if (!process.argv.includes("--no-fast-width")) await import("../src/ui/fast-width.js").then((m) => m.installFastWidth(), () => false);
 const { render } = await import("ink");
 const { createElement } = await import("react");
 const { App } = await import("../src/ui/App.js");
