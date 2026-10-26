@@ -381,6 +381,27 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 200);
 });
 
+console.log("Recent files and going back");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await press(KEY.ctrlP, 200);
+  await type("many.ts");
+  await press(KEY.enter, 500);
+  await press(KEY.ctrlP, 200);
+  await type("long.ts");
+  await press(KEY.enter, 500);
+  await press(KEY.ctrlP, 300);
+  const list = frame().split("\n").filter((l) => l.includes(".ts"));
+  const first = list.findIndex((l) => l.includes("long.ts") && l.includes("recent"));
+  const second = list.findIndex((l) => l.includes("many.ts") && l.includes("recent"));
+  check("Ctrl+P lists the files you opened first, latest first, marked recent", first >= 0 && second > first);
+  await press(KEY.esc, 200);
+  await press("b", 400);
+  check("b goes back to the previous file", frame().includes("many.ts  1-"));
+  await press("b", 400);
+  check("pressing b again flips back", frame().includes("long.ts"));
+  check("the header stays on one line", frame().split("\n")[1]!.startsWith("┌") || frame().split("\n")[1]!.startsWith("╭"));
+});
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");

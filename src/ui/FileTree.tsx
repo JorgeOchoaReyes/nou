@@ -185,7 +185,7 @@ export const FileTree = memo(function FileTree({ width, height, focused, openFil
   const inner = width - 3; // minus the borders and the scrollbar
   const title = changesOnly
     ? <> <Text color={C.yellow}>±</Text> Changes <Text color={C.dim}>({nodes.length})  c: all files</Text></>
-    : <> <Text color={C.accent}>▤</Text> Explorer{git.size ? <Text color={C.dim}>  c: changes ({git.size})</Text> : null}</>;
+    : <> <Text color={C.accent}>▤</Text> Explorer{git.size ? <Text color={C.dim}>{inner >= 30 ? `  c: changes (${git.size})` : `  ±${git.size}`}</Text> : null}</>;
 
   return (
     <Pane title={title} width={width} height={height} focused={focused}>

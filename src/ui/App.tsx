@@ -16,7 +16,7 @@ import { Timeline, type SessionSummary } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
-import { changedLines, lineCounts } from "./text.js";
+import { changedLines, lineCounts, loadFallbackHighlighter } from "./text.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
@@ -54,6 +54,7 @@ Keys:
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
   e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
+  b  back to the previous file (Ctrl+P lists recent files first)
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
 Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select
@@ -114,6 +115,8 @@ export function App({ initialModel, permContext }: Props) {
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [reveal, setReveal] = useState<string | null>(null);
+  /** Files opened this session, latest first: Ctrl+P lists them first, and b goes back to the previous one. */
+  const [recent, setRecent] = useState<string[]>([]);
   const [treeVersion, setTreeVersion] = useState(0);
   // The last change Nou made per file, so we can flag edited lines and re-open the diff.
   const [changes, setChanges] = useState<Map<string, { change: FileChange; status: ChangeStatus; lines: Set<number> }>>(new Map());
@@ -183,6 +186,7 @@ export function App({ initialModel, permContext }: Props) {
 
   const open = useCallback((filePath: string) => {
     setOpenFile(filePath);
+    setRecent((r) => [filePath, ...r.filter((f) => f !== filePath)].slice(0, 30));
     setContent(readText(filePath));
     setDiffMode("off");
     setEditing(false);
@@ -243,6 +247,7 @@ export function App({ initialModel, permContext }: Props) {
 
   useEffect(() => diagnostics.subscribe(() => setDiagVersion((v) => v + 1)), []);
   useEffect(() => onGrammarLoaded(() => setSyntaxVersion((v) => v + 1)), []);
+  useEffect(() => void loadFallbackHighlighter(), []); // once Nou is on screen (it's slow to load)
   useEffect(() => {
     void checkForUpdate().then(setUpdate);
   }, []);
@@ -818,6 +823,7 @@ export function App({ initialModel, permContext }: Props) {
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "e") startEditing();
+    else if (input === "b") goBack();
     else if (input === "s" || input === ",") setView("settings");
     else if (input === "r") {
       refreshGit();
@@ -1125,6 +1131,13 @@ ${snippet}
     updateSettings({ mouse: !settings.mouse });
     info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
   };
+  /** Back to the file that was open before this one. */
+  const goBack = () => {
+    const previous = recent.find((f) => f !== openFile);
+    if (!previous) return info("No earlier file to go back to yet: Ctrl+P lists the files you've opened.");
+    open(previous);
+    setReveal(previous);
+  };
   const toggleProblems = () => {
     setCodePanel((p) => (p === "problems" ? "code" : "problems"));
     setEditing(false);
@@ -1133,6 +1146,7 @@ ${snippet}
   // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
+    { title: "Go back to the previous file", keys: "b", run: goBack },
     { title: "Edit the open file", keys: "e · double-click", run: startEditing },
     { title: "Diff the open file (vs git, Nou's edit, this session)", keys: "v", run: cycleDiff },
     { title: "Undo Nou's last change", keys: "u", run: undoLast },
@@ -1192,7 +1206,7 @@ ${snippet}
           ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
           : diff
             ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-            : [["double-click/e", "edit"], ["v", "diff"], ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+            : [["double-click/e", "edit"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
@@ -1206,7 +1220,7 @@ ${snippet}
     y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
     "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
-    e: startEditing, "double-click/e": startEditing, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    e: startEditing, "double-click/e": startEditing, b: goBack, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
     Esc: busy ? () => {
       pullAbort.current?.abort();
@@ -1347,6 +1361,7 @@ ${snippet}
           width={columns}
           top={3}
           files={allFiles}
+          recent={recent}
           actions={paletteActions}
           initialQuery={quickOpen}
           onPick={(file) => {

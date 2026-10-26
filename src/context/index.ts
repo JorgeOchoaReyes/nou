@@ -1,13 +1,8 @@
-import { highlight } from "cli-highlight";
 import fs from "fs/promises";
 import path from "path";
 import { fileTree, readFile } from "../commands/index.js";
 import { complete, type ModelChoice } from "../providers/index.js";
 import * as p from "@clack/prompts";
-
-export const sugarfy = (str: string) => {
-  return highlight(str, { language: "typescript", ignoreIllegals: true });
-};
 
 export async function generateContext(contextPath: string, choice: ModelChoice) {
   const s = p.spinner();

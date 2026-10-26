@@ -83,7 +83,8 @@ Every change is reviewed like a code review:
 | 🖱️ Status bar | click the mode to switch it, `follow` to toggle it, the ✖/▲ counts for the Problems panel, or any shortcut hint to do it · click the model in the header to change it |
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
-| <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
+| <kbd>b</kbd> | back to the previous file (press again to flip back) |
 | <kbd>e</kbd> or a double-click | edit the open file (see the editor keys below) |
 | <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
 | <kbd>u</kbd> | undo Nou's last edit |

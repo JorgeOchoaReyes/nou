@@ -272,7 +272,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
         width={inner + 1}
         history={sent}
         arrowsTaken={showMenu}
-        placeholder={busy ? "working… Esc to stop" : showMenu ? "↑↓ choose · Tab complete · Enter run" : "Ask anything · / for commands · ↑ history"}
+        placeholder={busy ? "working… Esc to stop" : showMenu ? "↑↓ choose · Tab complete · Enter run" : inner >= 44 ? "Ask anything · / for commands · ↑ history" : "Ask anything · / commands"}
       />
     </Pane>
   );

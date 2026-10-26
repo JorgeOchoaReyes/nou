@@ -35,6 +35,11 @@ const languages = new Map<string, Language | "loading" | "failed">();
 let parser: Parser | null = null;
 const listeners = new Set<() => void>();
 
+/** Tells views to re-highlight (a grammar or the fallback highlighter just loaded). */
+export function notifySyntaxLoaded() {
+  for (const l of listeners) l();
+}
+
 /** Called when a grammar finishes loading, so views can re-highlight. */
 export function onGrammarLoaded(listener: () => void): () => void {
   listeners.add(listener);
@@ -56,7 +61,7 @@ function load(name: string) {
       const dir = grammarDir();
       if (!dir) throw new Error("grammars not found");
       languages.set(name, await Language.load(path.join(dir, `tree-sitter-${name}.wasm`)));
-      for (const l of listeners) l();
+      notifySyntaxLoaded();
     })
     .catch(() => languages.set(name, "failed"));
 }

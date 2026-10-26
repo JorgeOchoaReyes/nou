@@ -56,6 +56,8 @@ type Props = {
   width: number;
   top: number;
   files: string[];
+  /** Files opened this session, latest first: listed first when nothing's typed, and ranked higher otherwise. */
+  recent?: string[];
   /** Everything Nou can do, shown when the query starts with ">". */
   actions: PaletteAction[];
   /** ">" opens it on the actions (the ? key); empty on files (Ctrl+P). */
@@ -66,7 +68,7 @@ type Props = {
 };
 
 /** Ctrl+P: find a file. Start with ">" (or press ?) for every action Nou has, with its shortcut. */
-export function QuickOpen({ width, top, files, actions, initialQuery = "", onPick, onRun, onClose }: Props) {
+export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", onPick, onRun, onClose }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [cursor, setCursor] = useState(0);
   const boxWidth = Math.min(80, Math.max(40, width - 10));
@@ -76,12 +78,15 @@ export function QuickOpen({ width, top, files, actions, initialQuery = "", onPic
 
   const results = useMemo(() => {
     if (commandMode) return [];
+    // Recent files first when nothing's typed; a small boost otherwise, so the one you just had wins a tie.
+    const rank = new Map(recent.map((f, i) => [f, i]));
+    const boost = (f: string) => (rank.has(f) ? (query ? 3 : 1000) - rank.get(f)! * 0.01 : 0);
     return files
       .map((f) => ({ file: f, m: score(f, query) }))
       .filter((r): r is { file: string; m: { score: number; hits: number[] } } => r.m !== null)
-      .sort((a, b) => b.m.score - a.m.score)
+      .sort((a, b) => b.m.score + boost(b.file) - (a.m.score + boost(a.file)))
       .slice(0, rowsShown);
-  }, [files, query, commandMode]);
+  }, [files, recent, query, commandMode]);
 
   const found = useMemo(() => {
     if (!commandMode) return [];
@@ -102,6 +107,7 @@ export function QuickOpen({ width, top, files, actions, initialQuery = "", onPic
     else if (key.pageDown) setCursor((c) => Math.min(count - 1, c + rowsShown));
   });
 
+  const recentSet = useMemo(() => new Set(recent), [recent]);
   const pad = (s: string) => (s.length > inner ? `…${s.slice(-(inner - 1))}` : s.padEnd(inner));
 
   return (
@@ -146,7 +152,8 @@ export function QuickOpen({ width, top, files, actions, initialQuery = "", onPic
       {results.map((r, i) => {
         const selected = i === cursor;
         const { icon, color } = fileIcon(r.file);
-        const label = pad(` ${r.file}`).slice(0, inner - 2);
+        const tag = recentSet.has(r.file) ? " recent" : "";
+        const label = pad(` ${r.file}`).slice(0, inner - 2 - tag.length);
         const hits = new Set(r.m.hits.map((h) => h + 1));
         return (
           <Text key={r.file} {...(selected ? { backgroundColor: C.panel } : {})}>
@@ -155,6 +162,7 @@ export function QuickOpen({ width, top, files, actions, initialQuery = "", onPic
             {[...label].map((ch, j) => (
               <Text key={j} color={hits.has(j) ? C.yellow : selected ? C.text : C.dim} bold={hits.has(j)}>{ch}</Text>
             ))}
+            <Text color={C.dim}>{tag}</Text>
           </Text>
         );
       })}

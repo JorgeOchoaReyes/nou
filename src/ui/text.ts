@@ -1,7 +1,19 @@
 import path from "path";
-import { highlight, supportsLanguage } from "cli-highlight";
 import { diffLines } from "diff";
-import { highlightTree } from "../syntax/index.js";
+import { highlightTree, notifySyntaxLoaded } from "../syntax/index.js";
+
+// highlight.js registers every language it has when it loads (a seventh of a second), so it loads
+// after Nou is on screen; files show plain until then, or tree-sitter colors once their grammar is in.
+type CliHighlight = typeof import("cli-highlight");
+let fallback: Pick<CliHighlight, "highlight" | "supportsLanguage"> | null = null;
+let loading: Promise<void> | null = null;
+export function loadFallbackHighlighter(): Promise<void> {
+  loading ??= import("cli-highlight").then((m) => {
+    fallback = { highlight: m.highlight, supportsLanguage: m.supportsLanguage };
+    notifySyntaxLoaded();
+  }, () => {});
+  return loading;
+}
 
 const LANGUAGES: Record<string, string> = {
   ".ts": "typescript", ".tsx": "typescript", ".mts": "typescript", ".cts": "typescript",
@@ -24,9 +36,14 @@ export function highlightLines(filePath: string, text: string): string[] {
   const tree = highlightTree(filePath, plain.join("\n"));
   if (tree) return tree;
   const language = LANGUAGES[path.extname(filePath).toLowerCase()];
-  if (!language || !supportsLanguage(language) || text.length > 200_000) return plain;
+  if (!language || text.length > 200_000) return plain;
+  if (!fallback) {
+    void loadFallbackHighlighter();
+    return plain;
+  }
+  if (!fallback.supportsLanguage(language)) return plain;
   try {
-    return highlight(plain.join("\n"), { language, ignoreIllegals: true }).split("\n");
+    return fallback.highlight(plain.join("\n"), { language, ignoreIllegals: true }).split("\n");
   } catch {
     return plain;
   }
