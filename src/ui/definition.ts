@@ -61,7 +61,7 @@ export function resolveModule(fromFile: string, spec: string): string | null {
   return found ? path.normalize(found).replace(/\\/g, "/") : null;
 }
 
-const escape = (s: string) => s.replace(/[$]/g, "\\$");
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Lines that declare `name`, most specific first. */
 function declares(name: string): RegExp {
