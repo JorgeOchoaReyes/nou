@@ -75,10 +75,9 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
     out.push({ text: "" });
   } else if (entry.kind === "assistant") {
     out.push({ text: "◆ nou", color: C.accent2, bold: true, lead: BAR, leadColor: C.accent2 });
-    for (const line of renderMarkdown(entry.text, inner - 3)) {
+    for (const line of renderMarkdown(entry.text, inner - 3, links ? isProjectFile : undefined)) {
       const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
-      const spans = links && line.kind !== "code" ? linkFileRefs(line.spans, isProjectFile) : line.spans;
-      out.push({ text: "", spans, ...(color ? { color } : {}), lead: BAR, leadColor: C.accent2 });
+      out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), lead: BAR, leadColor: C.accent2 });
     }
     out.push({ text: "" });
   } else {
@@ -86,7 +85,7 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
       ? { icon: "⚙", color: C.dim }
       : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
     wrap(entry.text, inner - 4).forEach((line, i) => {
-      const spans = links && entry.kind === "tool" ? linkFileRefs([{ text: ` ${line}` }], isProjectFile) : [];
+      const spans = links && entry.kind !== "user" ? linkFileRefs([{ text: ` ${line}` }], isProjectFile) : [];
       out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color, ...(spans.some((sp) => sp.link) ? { spans } : {}) });
     });
   }

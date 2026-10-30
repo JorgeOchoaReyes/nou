@@ -82,6 +82,15 @@ console.log("Go to definition and file links");
   const spans = linkFileRefs([{ text: "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2." }], (f) => f === "def/a.ts" || f === "def/room.ts");
   const links = spans.filter((s) => s.link);
   check("file references in a reply become links, with their lines", links.length === 2 && links[0]!.link!.path === "def/a.ts" && links[0]!.link!.line === 4 && links[0]!.link!.to === 5);
+  const { renderMarkdown } = await import("../src/ui/text.js");
+  const abs = path.join(process.cwd(), "def/lib/util.ts");
+  const md = renderMarkdown(`- **Helper:** ${abs}\n  ([details](${abs}:3))`, 20, (f) => path.resolve(f) === abs);
+  const pieces = md.flatMap((l) => l.spans).filter((sp) => sp.link);
+  check("a long path that wraps over several lines is a link on every line", new Set(md.filter((l) => l.spans.some((sp) => sp.link)).map((l) => l)).size >= 3 && pieces.every((sp) => path.resolve(sp.link!.path) === abs));
+  check("including the target of a markdown link, with its line", pieces.some((sp) => sp.link!.line === 3));
+  const { sliceAnsi } = await import("../src/ui/text.js");
+  const colored = "\x1b[31mconst\x1b[39m x = \x1b[32m'hi'\x1b[39m;";
+  check("scrolled sideways, a line keeps its colors", sliceAnsi(colored, 2) === "\x1b[31mnst\x1b[39m x = \x1b[32m'hi'\x1b[39m;" && sliceAnsi(colored, 6, 3) === "\x1b[31m\x1b[39mx =\x1b[32m\x1b[39m");
   check("the text around them is kept", spans.map((s) => s.text).join("") === "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2.");
 }
 

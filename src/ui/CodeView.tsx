@@ -4,7 +4,7 @@ import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
-import { highlightLines, sideBySide, splitLines } from "./text.js";
+import { highlightLines, sideBySide, sliceAnsi } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -49,13 +49,12 @@ const EDIT_HINT = "   double-click or e to edit · v diff";
 
 export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine }: Props) {
   const [top, setTop] = useState(0);
-  // Columns scrolled sideways. Scrolled lines show without colors (slicing colored text could cut a color code in half).
+  // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
   const rows = Math.max(1, height - 3);
   const inner = width - 3; // minus the borders and the scrollbar
 
   const lines = useMemo(() => (filePath ? highlightLines(filePath, content) : []), [filePath, content, syntaxVersion]);
-  const plain = useMemo(() => (left > 0 ? splitLines(content) : []), [content, left > 0]);
   const problemsByLine = useMemo(() => {
     const map = new Map<number, Diagnostic[]>();
     for (const d of problems) map.set(d.line, [...(map.get(d.line) ?? []), d]);
@@ -229,7 +228,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
               <Text key={n} wrap="truncate-end">
                 <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
                 {style ? <Text color={style.color}>{style.icon}</Text> : isFound ? <Text color={C.cyan} bold>▌</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
-                {isFound ? <Text backgroundColor={C.panel}>{(left ? plain[start + i]?.slice(left) : line) || " "}</Text> : (left ? plain[start + i]?.slice(left) : line) || " "}
+                {isFound ? <Text backgroundColor={C.panel}>{(left ? sliceAnsi(line, left) : line) || " "}</Text> : (left ? sliceAnsi(line, left) : line) || " "}
                 {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
               </Text>
             );

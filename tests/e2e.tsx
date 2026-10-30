@@ -252,8 +252,10 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 200);
   await press(KEY.tab, 100); // files
   await press(click(5, 3 + 3), 800); // many.ts
-  await press(wheel("down", 40, 10).repeat(5), 300);
+  await press(wheel("down", 40, 10).repeat(5) + wheel("down", 40, 10, true), 300);
   check("a burst of wheel events scrolls by all of them, in one go", frame().includes("16-") && frame().includes("const line16 = 16;") && !frame().includes("const line15 = 15;"));
+  check("stray sideways steps while scrolling down are ignored (trackpads send them)", !/→\d/.test(frame()));
+  await delay(200);
   await press(wheel("down", 40, 10, true), 200);
   check("Shift+wheel scrolls sideways", frame().includes("→6") && !frame().includes("const line16"));
   await press("h", 100);
@@ -513,6 +515,15 @@ console.log("Fixing a rejected key");
     await type("good-key");
     await press(KEY.enter, 800);
     check("the new key works right away", process.env.LITELLM_API_KEY === "good-key" && frame().includes("gateway-model") && !frame().includes("rejected"));
+  });
+  process.env.LITELLM_API_KEY = "stale-key";
+  await session(resolveModel("litellm:gateway-model"), async ({ press, type, frame }) => {
+    await type("hello");
+    await press(KEY.enter, 1500);
+    check("a message that fails on a rejected key opens the provider's key form, saying why", frame().includes("Connect LiteLLM") && frame().includes("✖") && frame().includes("401"));
+    await press(KEY.esc, 300);
+    await press(KEY.esc, 300);
+    check("Esc comes back to the chat, which says what happened", frame().includes("Opened its") && frame().includes("◆ Chat"));
   });
   server.close();
   delete process.env.LITELLM_BASE_URL;

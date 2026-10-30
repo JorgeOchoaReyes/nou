@@ -3,7 +3,7 @@ import path from "path";
 import { Box, Text, useInput, usePaste } from "ink";
 import type { AutoSave } from "../config/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
-import { highlightLines } from "./text.js";
+import { highlightLines, sliceAnsi } from "./text.js";
 import { C, fileIcon } from "./theme.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { Pane } from "./Pane.js";
@@ -577,9 +577,11 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
 
   const visible = buf.lines.slice(v.top, v.top + rows);
   const colored = useMemo(
-    // Scrolled sideways: every line shifts by the same amount (plain text, since slicing highlighted
-    // text could cut a color code in half).
-    () => (v.left === 0 ? highlightLines(filePath, visible.join("\n")) : visible.map((l) => expand(l).slice(v.left, v.left + textWidth))),
+    // Scrolled sideways: every line shifts by the same amount, colors and all.
+    () => {
+      const lines = highlightLines(filePath, visible.join("\n"));
+      return v.left === 0 ? lines : lines.map((l) => sliceAnsi(l, v.left, textWidth));
+    },
     [filePath, visible.join("\n"), v.left, textWidth, syntaxVersion],
   );
 

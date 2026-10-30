@@ -18,6 +18,8 @@ type Props = {
   plugins: PluginEntry[];
   /** Open on this provider's connect form (the /connect command). */
   connectTo?: Provider;
+  /** Why settings opened, e.g. the error a request just hit, shown above the form. */
+  reason?: string | null;
   onModel(choice: ModelChoice): void;
   onEngine(id: EngineId): void;
   onChange(patch: Partial<SettingsType>): void;
@@ -44,7 +46,7 @@ const PREFS: Pref[] = [
 /** Where you are in a provider's connect form: which field, and what's been entered so far. */
 type Connecting = { step: number; values: Record<string, string> };
 
-export function Settings({ width, height, settings, choice, plugins, connectTo, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
+export function Settings({ width, height, settings, choice, plugins, connectTo, reason, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("Model");
   const [row, setRow] = useState(() => Math.max(0, providers.indexOf(connectTo ?? choice.provider)));
   const [column, setColumn] = useState<"providers" | "models">("providers");
@@ -193,6 +195,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
           </Box>
           <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={column === "models" ? C.accent : C.dim} paddingX={1}>
             <Text color={C.dim} bold>MODELS · {provider.label}</Text>
+            {reason ? <Text color={C.red} wrap="wrap">✖ {reason}</Text> : null}
             {connecting && provider.connect ? (
               <>
                 <Text color={C.accent2} bold>Connect {provider.label}</Text>

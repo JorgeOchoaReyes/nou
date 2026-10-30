@@ -5,7 +5,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
-import { describe, providers, resolveModel, saveModel, type ModelChoice, type Provider } from "../providers/index.js";
+import { describe, providers, resolveModel, saveModel, setupProblem, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
@@ -87,6 +87,8 @@ export function App({ initialModel, permContext }: Props) {
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
   const [view, setView] = useState<"main" | "settings">("main");
   const [connectTo, setConnectTo] = useState<Provider | undefined>();
+  /** Why settings were opened for you (a request failed on the provider's setup). */
+  const [setupReason, setSetupReason] = useState<string | null>(null);
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
@@ -204,7 +206,10 @@ export function App({ initialModel, permContext }: Props) {
   const engineConfig = useRef<EngineOptions>({});
   if (!hooksRef.current) {
     hooksRef.current = {
-      onEntry: (entry) => setEntries((prev) => [...prev, entry]),
+      onEntry: (entry) => {
+        setEntries((prev) => [...prev, entry]);
+        if (entry.kind === "error") setupCheckRef.current(entry.text);
+      },
       onStream: showStream,
       onBusy: setBusy,
       onOpen: (filePath, line, to) => openAtRef.current(filePath, line ?? 1, false, to),
@@ -515,7 +520,11 @@ export function App({ initialModel, permContext }: Props) {
   };
 
   /** Adds a wheel event to its pane's total; the panes get one update per frame however many events arrive. */
+  const lastVerticalWheel = useRef(0);
   const queueWheel = (pane: Focus, dir: number, horizontal: boolean) => {
+    // A trackpad scrolling down also sends stray sideways steps: while scrolling up or down, ignore them.
+    if (!horizontal) lastVerticalWheel.current = Date.now();
+    else if (Date.now() - lastVerticalWheel.current < 300) return;
     const q = pendingWheel.current;
     if (q.timer && q.pane !== pane) flushWheel();
     q.pane = pane;
@@ -764,7 +773,10 @@ export function App({ initialModel, permContext }: Props) {
   const openAtRef = useRef(openAt);
   openAtRef.current = openAt;
   /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
-  const openRef = useEvent((ref: FileRef) => openAt(ref.path, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined));
+  const openRef = useEvent((ref: FileRef) => {
+    const file = path.relative(process.cwd(), path.resolve(ref.path)).replace(/\\/g, "/");
+    openAt(file, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined);
+  });
 
   const startEditing = () => {
     if (!openFile || !settleDraft(openFile)) return;
@@ -1046,9 +1058,33 @@ ${snippet}
     }
   };
 
+  /** Takes you to where the provider's setup is fixed: its key and URL form, or its list of models. */
+  const fixSetup = (provider: Provider, reason: string, form: boolean) => {
+    setConnectTo(form && provider.connect ? provider : undefined);
+    setSetupReason(reason);
+    setView("settings");
+  };
+  // A request that failed because of the provider's setup (not the request) opens the fix for it.
+  const setupCheck = (error: string) => {
+    if (agentRef.current?.id !== "nou") return;
+    const provider = choice.provider;
+    const problem = setupProblem(provider, error);
+    if (!problem) return;
+    const what = problem === "key" ? "the key was rejected" : problem === "url" ? "its URL didn't answer" : "it doesn't have that model";
+    info(`${provider.label}: ${what}. Opened its settings to fix it (Esc to come back).`);
+    fixSetup(provider, error.split("\n")[0]!, problem !== "model");
+  };
+  const setupCheckRef = useRef(setupCheck);
+  setupCheckRef.current = setupCheck;
   const send = (text: string) => {
     if (text.startsWith("/")) {
       void runCommand(text);
+      return;
+    }
+    const missing = agentRef.current?.id === "nou" ? choice.provider.unavailable() : null;
+    if (missing) {
+      info(`${choice.provider.label} isn't set up yet (${missing}). Opened its settings: enter what it needs, then send again.`, "error");
+      fixSetup(choice.provider, `${choice.provider.label} isn't set up: ${missing}`, true);
       return;
     }
     setEntries((prev) => [...prev, { kind: "user", text }]);
@@ -1142,6 +1178,7 @@ ${snippet}
         choice={choice}
         plugins={allPlugins}
         {...(connectTo ? { connectTo } : {})}
+        reason={setupReason}
         onModel={(next) => void chooseModel(next)}
         onEngine={(id) => void switchEngine(id)}
         onChange={updateSettings}
@@ -1149,6 +1186,7 @@ ${snippet}
         onRescanPlugins={rescanPlugins}
         onClose={() => {
           setConnectTo(undefined);
+          setSetupReason(null);
           setView("main");
         }}
       />
