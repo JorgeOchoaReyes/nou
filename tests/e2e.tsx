@@ -459,7 +459,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
     await press(KEY.enter, 300);
   }
   const title = () => frame().split("\n")[2]!;
-  check("open files show as tabs over the code, the current one with ×", title().includes("◆ a.ts │") && title().includes("◆ b.ts × │"));
+  check("open files show as tabs over the code, each with a ×", title().includes("◆ a.ts × │") && title().includes("◆ b.ts × │"));
   const at = title().indexOf("◆ a.ts");
   await press(click(at, 2), 300);
   check("clicking a tab switches to it", title().includes("◆ a.ts × │") && frame().includes("const a = 1;"));
@@ -467,8 +467,18 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.tab, 100); // to the code
   await press("]", 300);
   check("] goes to the next tab", title().includes("◆ b.ts ×"));
-  await press(click(title().indexOf("×"), 2), 300);
+  await press(click(title().indexOf("×", title().indexOf("b.ts")), 2), 300);
   check("clicking × closes the tab", !title().includes("b.ts") && frame().includes("const a = 1;"));
+  await type("/open b.ts");
+  await press(KEY.enter, 300);
+  await press(click(title().indexOf("×", title().indexOf("a.ts")), 2), 300);
+  check("any tab's × closes it, not just the current one's", !title().includes("a.ts") && title().includes("b.ts ×"));
+  await press("\x17", 300); // Ctrl+W
+  check("Ctrl+W closes the current tab", frame().includes("Welcome"));
+  await type("/open a.ts");
+  await press(KEY.enter, 300);
+  check("a single open file has its tab too", title().includes("◆ a.ts ×"));
+  await press(click(title().indexOf("a.ts"), 2), 200); // a click on a tab puts the keyboard in the code
   await press("x", 300);
   check("x closes the last one, back to the welcome screen", frame().includes("Welcome"));
 });
@@ -592,16 +602,26 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const rows = frame().split("\n");
   const y = rows.findIndex((l) => l.includes("✦ Pong"));
   const x = rows[y]!.indexOf("✦ Pong");
+  check("it docks under the chat, splitting its column", x > 66 && y > 3 && rows.slice(0, y).some((l) => l.slice(66).includes("┘")));
   await press(click(x, y), 100);
-  await press(`\x1b[<32;${x - 10 + 1};${y - 1 + 1}M`, 100);
-  await press(`\x1b[<0;${x - 10 + 1};${y - 1 + 1}m`, 300);
-  const moved = frame().split("\n").findIndex((l) => l.includes("✦ Pong"));
-  check("dragging the title bar moves the panel", moved === y - 1 && frame().split("\n")[moved]!.indexOf("✦ Pong") === x - 10);
+  await press(`\x1b[<32;${40 + 1};${y + 1}M`, 100);
+  check("dragging it says where it can go", frame().includes("Drop it on a pane"));
+  await press(`\x1b[<0;${40 + 1};${y + 1}m`, 300);
+  const after = frame().split("\n");
+  const moved = after.findIndex((l) => l.includes("✦ Pong"));
+  check("letting go over the code docks it under the code", moved > 3 && after[moved]!.indexOf("✦ Pong") > 24 && after[moved]!.indexOf("✦ Pong") < 66);
   await press(KEY.esc, 300);
   check("Esc gives the keyboard back, and the game waits", !frame().split("\n").at(-1)!.includes("GAME") && frame().includes("click to play"));
   await type("/games");
   await press(KEY.enter, 300);
   check("/games again closes it", !frame().includes("✦ Pong"));
+  await type("/games");
+  await press(KEY.enter, 400);
+  const open = frame().split("\n");
+  const ty = open.findIndex((l) => l.includes("✦ Pong") || l.includes("✦ Games"));
+  check("it opens where you left it", ty > 3 && open[ty]!.indexOf("✦") > 24 && open[ty]!.indexOf("✦") < 66);
+  await press(click(open[ty]!.indexOf("×"), ty), 300);
+  check("× at its top right closes it", !frame().includes("✦ Pong") && !frame().includes("✦ Games"));
 });
 
 console.log("MCP servers");
@@ -624,6 +644,82 @@ console.log("MCP servers");
   rmSync(path.join(home, ".nou", "mcp.json"), { force: true });
 }
 
+console.log("Taking back a message");
+{
+  let replies = 0;
+  const model: any = { id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      replies++;
+      return { text: `reply ${replies}`, toolCalls: [] };
+    } };
+  await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
+    await type("make it blue");
+    await press(KEY.enter, 600);
+    check("(the reply arrives)", frame().includes("reply 1"));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes("reply 1"));
+    const x = rows[y]!.indexOf("reply 1");
+    await press(click(x, y), 50);
+    await press(`\x1b[<32;${x + 6 + 1};${y + 1}M`, 50);
+    await press(`\x1b[<0;${x + 6 + 1};${y + 1}m`, 400);
+    check("dragging over the chat selects and copies it", /Copied it ✓|Can't copy/.test(frame()));
+    await type("/cancel");
+    await press(KEY.enter, 600);
+    check("/cancel takes back the last message and its reply, putting it in the input to edit", !frame().includes("reply 1") && frame().includes("❯ make it blue") && frame().includes("Took back"));
+  });
+}
+
+console.log("Terminal");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await press(KEY.tab, 100); // off the chat, so ` opens it
+  await press("`", 300);
+  check("` opens a terminal under the code", frame().includes("▸ Terminal") && frame().includes("$ "));
+  await type("echo hello-from-term");
+  await press(KEY.enter, 800);
+  check("Enter runs the command and shows its output", frame().split("\n").some((l) => /│\s*hello-from-term/.test(l)));
+  mkdirSync(path.join(dir, "sub"), { recursive: true });
+  await type("cd sub");
+  await press(KEY.enter, 300);
+  check("cd sticks for the next command", frame().includes("sub $ "));
+  await press(KEY.esc, 200);
+  check("Esc leaves it open and gives the keyboard back", frame().includes("▸ Terminal") && !frame().split("\n").at(-1)!.includes("TERMINAL"));
+  const rows = frame().split("\n");
+  const y = rows.findIndex((l) => l.includes("▸ Terminal"));
+  await press(click(rows[y]!.indexOf("×", rows[y]!.indexOf("▸ Terminal")), y), 300);
+  check("× closes it", !frame().includes("▸ Terminal"));
+});
+
+console.log("Resuming a conversation");
+{
+  let seen: any[] = [];
+  const model: any = { id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat(request: any) {
+      seen = request.messages;
+      return { text: `answer ${seen.filter((m: any) => m.role === "user").length}`, toolCalls: [] };
+    } };
+  await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
+    await type("remember the word pineapple");
+    await press(KEY.enter, 600);
+    await type("/clear");
+    await press(KEY.enter, 300);
+    await type("/resume");
+    await press(KEY.enter, 300);
+    check("/resume lists earlier conversations here", frame().includes("just now)"));
+    await type("/resume 1");
+    await press(KEY.enter, 400);
+    check("/resume 1 picks the latest back up", frame().includes("Resumed") && frame().includes("pineapple"));
+  });
+  // A new run of Nou in the same folder.
+  await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/resume last");
+    await press(KEY.enter, 400);
+    check("/resume last brings the chat back", frame().includes("pineapple") && frame().includes("Resumed"));
+    await type("what was the word?");
+    await press(KEY.enter, 600);
+    check("and the engine carries on with it", JSON.stringify(seen).includes("pineapple") && frame().includes("answer 2"));
+  });
+}
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
@@ -637,6 +733,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("change the greeting");
   await press(KEY.enter, 1500);
   check("the Codex engine answers in the chat", frame().includes("Changed the greeting."));
+  check("Codex reconnecting on the way isn't an error", !frame().includes("Reconnecting"));
   check("its edit is on disk and listed as Nou's", readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Howdy"));
   await press(KEY.esc, 150);
   await type("/rewind");

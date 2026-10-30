@@ -103,7 +103,7 @@ const running = new Set<ReturnType<typeof spawn>>();
 let exitHooked = false;
 
 /** Stops a command and everything it started. */
-function stopProcess(child: ReturnType<typeof spawn>) {
+export function stopProcess(child: ReturnType<typeof spawn>) {
   try {
     if (process.platform === "win32") {
       if (child.pid) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });

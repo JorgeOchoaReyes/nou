@@ -3,8 +3,9 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
 import { statSync } from "fs";
 import path from "path";
-import { linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
+import { closeOpenMarkdown, linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
+import { copyToClipboard } from "./clipboard.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { matchCommands, type SlashCommand } from "./commands.js";
@@ -37,6 +38,8 @@ type Props = {
   queued?: string[];
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
+  /** Pressing, dragging and letting go over the messages: selects text, copied when you let go. */
+  select?: ChatSelect | null;
   /** A click in the conversation: `row` from the top of the messages, `col` from where their text starts. */
   click?: { row: number; col: number; nonce: number } | null;
   /** A file reference in a message was clicked. */
@@ -108,7 +111,11 @@ function cachedLines(entry: ChatEntry, inner: number): Line[] {
   return lines;
 }
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, queued = [] }: Props) {
+export type ChatSelect = { row: number; col: number; kind: "press" | "drag" | "release"; nonce: number };
+type Point = { line: number; col: number };
+const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
+
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, queued = [] }: Props) {
   const [input, setInput] = useState("");
   useEffect(() => {
     if (prefill) setInput(prefill.text);
@@ -119,7 +126,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
 
   const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
   const lines = useMemo(
-    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: streaming }, inner, false)] : history),
+    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: closeOpenMarkdown(streaming) }, inner, false)] : history),
     [history, streaming, inner],
   );
 
@@ -201,6 +208,49 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     if (ref) onOpenRef?.(ref);
   }, [click?.nonce]);
 
+  // Drag over the messages to select them (in lines of the conversation, so it holds while it scrolls);
+  // letting go copies them. Dragging past the top or bottom scrolls.
+  const [selection, setSelection] = useState<{ from: Point; to: Point } | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const anchor = useRef<Point | null>(null);
+  useEffect(() => {
+    if (!select) return;
+    const at: Point = { line: Math.max(0, Math.min(lines.length - 1, firstShown + select.row)), col: Math.max(0, select.col) };
+    if (select.kind === "press") {
+      anchor.current = at;
+      setSelection(null);
+      return;
+    }
+    if (!anchor.current) return;
+    if (select.kind === "drag") {
+      if (select.row < 0) setScrollBack((b) => Math.min(maxBack, b + 1));
+      else if (select.row >= rows) setScrollBack((b) => Math.max(0, b - 1));
+    }
+    const moved = at.line !== anchor.current.line || at.col !== anchor.current.col;
+    const range = moved ? (at.line < anchor.current.line || (at.line === anchor.current.line && at.col < anchor.current.col) ? { from: at, to: anchor.current } : { from: anchor.current, to: at }) : null;
+    setSelection(range);
+    if (select.kind !== "release") return;
+    anchor.current = null;
+    if (!range) return;
+    const text = lines.slice(range.from.line, range.to.line + 1).map((line, i, all) => {
+      const t = lineText(line);
+      return t.slice(i === 0 ? range.from.col : 0, i === all.length - 1 ? range.to.col + 1 : undefined).trimEnd();
+    }).join("\n");
+    void copyToClipboard(text).then((ok) => {
+      setFlash(ok ? `Copied ${text.split("\n").length > 1 ? `${text.split("\n").length} lines` : "it"} ✓` : "Can't copy: press m, then select");
+      setTimeout(() => setFlash(null), 2000);
+    });
+  }, [select?.nonce]);
+  // Typing or new messages leave the selection be; a new conversation clears it.
+  useEffect(() => {
+    if (!entries.length) setSelection(null);
+  }, [entries.length]);
+  /** The selected columns of a line, if any. */
+  const selectedIn = (index: number): [number, number] | null => {
+    if (!selection || index < selection.from.line || index > selection.to.line) return null;
+    return [index === selection.from.line ? selection.from.col : 0, index === selection.to.line ? selection.to.col + 1 : Infinity];
+  };
+
   // While something waits for approval, y/n into an empty input answer it; any other key starts a message.
   useInput((typed) => {
     if (/^[yYnN]$/.test(typed)) onAnswer(/[yY]/.test(typed));
@@ -248,7 +298,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const title = (
     <>
       {" "}<Text color={C.accent2}>◆</Text> Chat
-      {back
+      {flash ? <Text color={C.green} bold>  {flash}</Text> : back
         ? unread
           ? <Text color={C.green} bold>  ↓ {unread} new lines below<Text color={C.dim}> · PgDn / wheel / Ctrl+End</Text></Text>
           : <Text color={C.yellow}>  ↑ scrolled {back} lines<Text color={C.dim}> · PgDn / wheel / Ctrl+End</Text></Text>
@@ -275,7 +325,16 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
                 <Text>{visible.map((line, i) => <Text key={i} color={line.leadColor ?? C.dim}>{`${line.lead ?? "  "}${i < visible.length - 1 ? "\n" : ""}`}</Text>)}</Text>
               </Box>
               <Box flexDirection="column" width={inner - 2} flexShrink={0}>
-                {visible.map((line, i) => render(line, firstShown + i, false))}
+                {visible.map((line, i) => {
+                  const range = selectedIn(firstShown + i);
+                  if (!range) return render(line, firstShown + i, false);
+                  const t = lineText(line) || " ";
+                  return (
+                    <Text key={firstShown + i} wrap="truncate-end" color={C.text}>
+                      {t.slice(0, range[0])}<Text inverse>{t.slice(range[0], range[1]) || " "}</Text>{t.slice(range[1])}
+                    </Text>
+                  );
+                })}
               </Box>
             </Box>
           )}

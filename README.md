@@ -47,11 +47,11 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | | |
 | --- | --- |
 | 🗂️ **File explorer** | Browse your project with file icons and git status (`M` modified, `?` new). Press <kbd>c</kbd> to see only changed files. |
-| 🔀 **Live diffs** | Every edit Nou proposes shows up side by side. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
+| 🔀 **Live diffs** | Every edit Nou proposes shows up side by side, and the files it is editing shimmer in the file tree while it works. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
 | ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself, with undo/redo and **auto-save**. |
 | 📍 **Shows you where things are** | Ask "where is the LiveKit integration?" and Nou finds it and opens it in the middle panel, jumped to the exact lines and highlighted. Any file a reply mentions (`src/a.ts:12`) is a link: click it. `/open name[:line]` opens a file yourself. |
-| 🎮 **Games for a break** | Add Pong, Snake and Breakout in settings → Games, then `/games` opens a floating panel you can drag anywhere by its title. A game runs only while the panel has the keyboard: Esc goes back to your code and it waits. |
-| 🧠 **A capable engine** | Reads and searches in parallel, numbered reads for exact line references, edits that survive small whitespace mismatches, several edits to a file as one change, a plan for longer tasks, full command output (stderr too) with exit codes and timeouts, retries when a provider is overloaded, and conversation caching with Claude. It follows your repo's `AGENTS.md`, `CLAUDE.md` and `NOU.md` (and `~/.nou/NOU.md`). |
+| 🎮 **Games for a break** | Add Pong, Snake and Breakout in settings → Games, then `/games` opens a panel docked under the chat: it splits that column instead of covering anything. Drag its title onto the files, code or chat to dock it there, and × at its top right closes it. A game runs only while the panel has the keyboard: Esc goes back to your code and it waits. |
+| 🧠 **A capable engine** | Reads and searches in parallel, numbered reads for exact line references, edits that survive small whitespace mismatches, several edits to a file as one change, a plan for longer tasks, full command output (stderr too) with exit codes and timeouts, retries when a provider is overloaded or a connection drops (Codex too: it picks the turn back up instead of stopping at "Reconnecting..."), and conversation caching with Claude. It follows your repo's `AGENTS.md`, `CLAUDE.md` and `NOU.md` (and `~/.nou/NOU.md`). |
 | 🔎 **Finds its way around** | The agent searches your code (`grep`, `glob`) without asking, reads only what it needs, runs your tests to check its work, and summarizes long conversations to stay within the model's context (`/compact` does it on demand). |
 | ↶ **Undo anything** | Every change, Nou's or yours, is recorded. <kbd>u</kbd> undoes Nou's last edit, `/rewind` undoes its whole last turn, and your own later edits are kept. |
 | 🧾 **Session diffs** | `/diff` shows everything that changed this session, file by file (<kbd>[</kbd> <kbd>]</kbd> to step through). `/sessions` lists earlier sessions and `/diff 2` shows one. |
@@ -89,7 +89,7 @@ Every change is reviewed like a code review:
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
 | <kbd>b</kbd> | back to the previous file (press again to flip back) |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> | find in the open file: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
-| 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, its × to close · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> close |
+| 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, any tab's × to close it, ‹ › for ones that don't fit · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> or <kbd>Ctrl</kbd>+<kbd>W</kbd> close |
 | <kbd>Ctrl</kbd>+click | on a name in the code (or <kbd>Option</kbd>+click, or right-click): go to its definition; an imported name goes to its import, and the import's path opens that file |
 | <kbd>e</kbd> or a double-click | edit the open file (see the editor keys below) |
 | <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
@@ -98,7 +98,8 @@ Every change is reviewed like a code review:
 | <kbd>c</kbd> | in the file tree: show only changed files |
 | <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
-| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal |
+| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
 | <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
@@ -119,7 +120,9 @@ In the editor:
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/help`
+
+Conversations are saved per folder after each reply. `/resume` lists them and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far.
 
 ## 🧠 Models
 

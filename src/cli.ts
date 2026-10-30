@@ -19,6 +19,8 @@ const HELP = `nou ${currentVersion()}: an AI coding assistant for your terminal
 
 Usage:
   nou              open Nou in the current folder
+  nou --continue   pick up the last conversation in this folder (-c)
+  nou --resume     list earlier conversations here to pick one up (-r)
   nou update       update to the latest version
   nou --version    print the version
   nou --help       show this help
@@ -112,7 +114,7 @@ async function main() {
   const permContext = await loadPermanentContext();
 
   await installFastOutput();
-  const app = render(createElement(App, { initialModel: choice, permContext }), RENDER_OPTIONS);
+  const app = render(createElement(App, { initialModel: choice, permContext, ...(args.includes("--continue") || args.includes("-c") ? { resume: "last" as const } : args.includes("--resume") || args.includes("-r") ? { resume: "list" as const } : {}) }), RENDER_OPTIONS);
   await app.waitUntilExit();
   lsp.stopAll();
 

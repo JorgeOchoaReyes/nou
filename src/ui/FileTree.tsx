@@ -1,10 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { readdirSync } from "fs";
 import path from "path";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useAnimation, useInput } from "ink";
 import { IGNORED } from "../commands/index.js";
 import type { GitStatus } from "../git/index.js";
-import { C, GIT_COLORS, fileIcon } from "./theme.js";
+import { C, GIT_COLORS, fileIcon, gradient } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
@@ -21,6 +21,8 @@ type Props = {
   version: number;
   /** Files Nou edited this session. */
   changed: Set<string>;
+  /** Files Nou is editing right now (this turn): their names shimmer. */
+  working?: Set<string>;
   git: GitStatus;
   /** Problem counts per file, from the checkers. */
   problemCounts: Map<string, { errors: number; warnings: number }>;
@@ -57,7 +59,7 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, git, problemCounts, wheel, scrollTo, click, onOpen, onHover }: Props) {
+export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, working, git, problemCounts, wheel, scrollTo, click, onOpen, onHover }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
   // The first row shown. The wheel moves it on its own; the keyboard moves the cursor and the view follows.
@@ -182,6 +184,7 @@ export const FileTree = memo(function FileTree({ width, height, focused, openFil
     if (node.isDir) toggle(node.path);
     else onOpen(node.path);
   }, [click?.nonce]);
+  const { frame } = useAnimation({ interval: 120, isActive: !!working?.size });
   const inner = width - 3; // minus the borders and the scrollbar
   const title = changesOnly
     ? <> <Text color={C.yellow}>±</Text> Changes <Text color={C.dim}>({nodes.length})  c: all files</Text></>
@@ -212,7 +215,13 @@ export const FileTree = memo(function FileTree({ width, height, focused, openFil
               <Text key={node.path} wrap="truncate-end" {...(selected && focused ? { backgroundColor: C.panel } : {})}>
                 <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen}>{shown.slice(0, iconAt)}</Text>
                 <Text color={color}>{shown.slice(iconAt, iconAt + icon.length)}</Text>
-                <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen} inverse={selected && focused}>{shown.slice(iconAt + icon.length)}</Text>
+                {working?.has(node.path) ? (
+                  <Text bold inverse={selected && focused}>
+                    {gradient(shown.slice(iconAt + icon.length), frame).map((g, j) => <Text key={j} color={g.color}>{g.ch}</Text>)}
+                  </Text>
+                ) : (
+                  <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen} inverse={selected && focused}>{shown.slice(iconAt + icon.length)}</Text>
+                )}
                 <Text color={markerColor}> {marker}</Text>
               </Text>
             );

@@ -3,15 +3,15 @@ import { Box, Text, useInput } from "ink";
 import { GAMES, gameById, type Game, type Input } from "../games/index.js";
 import { C } from "./theme.js";
 
-/** The panel's size on screen, borders included. */
-export const GAME_PANEL = { width: 40, height: 19 } as const;
-const FIELD = { width: GAME_PANEL.width - 4, height: GAME_PANEL.height - 6 };
+/** The panel's tallest height (borders included) when docked under a pane, and the least it needs. */
+export const GAME_PANEL = { height: 19, minWidth: 26, minHeight: 10 } as const;
 
 type Props = {
-  /** Top-left corner, in screen cells. */
-  x: number;
-  y: number;
+  width: number;
+  height: number;
   focused: boolean;
+  /** Being dragged to another pane: says so in its title. */
+  moving?: boolean;
   /** Games you've added in settings. */
   installed: string[];
   /** Esc: back to the code (the game pauses). */
@@ -34,10 +34,11 @@ function Row({ line, colors }: { line: string; colors: Record<string, string> })
 }
 
 /**
- * A floating panel for little games. The app places it (it can be dragged by its title bar) and gives it
+ * A panel for little games, docked under a pane (drag its title to another pane; × closes it). The app gives it
  * the keyboard while it's focused; a game only runs while it has the keyboard, so it pauses as you leave.
  */
-export const GamePanel = memo(function GamePanel({ x, y, focused, installed, onLeave, onOpenSettings }: Props) {
+export const GamePanel = memo(function GamePanel({ width, height, focused, moving, installed, onLeave, onOpenSettings }: Props) {
+  const FIELD = { width: Math.max(10, width - 4), height: Math.max(3, height - 6) };
   const games = installed.map(gameById).filter((g): g is Game => !!g);
   const [row, setRow] = useState(0);
   const [playing, setPlaying] = useState<{ game: Game; state: any } | null>(null);
@@ -55,6 +56,10 @@ export const GamePanel = memo(function GamePanel({ x, y, focused, installed, onL
     }, playing!.game.tickMs);
     return () => clearInterval(timer);
   }, [running, playing?.game]);
+  // A different size (moved to another pane, or the window changed) starts the game over at that size.
+  useEffect(() => {
+    if (playing) setPlaying({ game: playing.game, state: playing.game.create(FIELD.width, FIELD.height) });
+  }, [FIELD.width, FIELD.height]);
 
   const start = (game: Game) => {
     inputs.current = [];
@@ -81,16 +86,23 @@ export const GamePanel = memo(function GamePanel({ x, y, focused, installed, onL
     if (pressed) inputs.current.push(pressed);
   }, { isActive: focused });
 
-  const color = focused ? C.accent2 : C.dim;
-  const inner = GAME_PANEL.width - 2;
-  const pad = (s: string) => (s.length >= inner ? s.slice(0, inner) : s + " ".repeat(inner - s.length));
-  const title = playing ? ` ✦ ${playing.game.title}` : " ✦ Games";
-  const hint = !focused ? "click to play · drag the title to move" : playing ? (view?.over ? "Enter again · q games · Esc leave" : `${paused ? "PAUSED · " : ""}Space pause · q games · Esc leave`) : "↑↓ choose · Enter play · Esc leave";
+  const color = focused || moving ? C.accent2 : C.dim;
+  const inner = width - 2;
+  const title = moving ? " ✦ Drop it on a pane: files, code or chat" : playing ? ` ✦ ${playing.game.title}  ⠿ drag to move` : " ✦ Games  ⠿ drag to move";
+  // The title row: the name and the drag handle, and × (close) at the right.
+  const head = title.length > inner - 3 ? `${title.slice(0, inner - 4)}…` : title.padEnd(inner - 3);
+  const hint = !focused ? "click to play" : playing ? (view?.over ? "Enter again · q games · Esc leave" : `${paused ? "PAUSED · " : ""}Space pause · q games · Esc leave`) : "↑↓ choose · Enter play · Esc leave";
+  const small = width < GAME_PANEL.minWidth || height < GAME_PANEL.minHeight;
 
   return (
-    <Box position="absolute" top={y} left={x} width={GAME_PANEL.width} height={GAME_PANEL.height} flexDirection="column" borderStyle="round" borderColor={color}>
-      <Text backgroundColor={C.panel} color={color} bold wrap="truncate-end">{pad(`${title}  ⠿ drag`)}</Text>
-      {playing && view ? (
+    <Box width={width} height={height} flexDirection="column" borderStyle="round" borderColor={color} overflow="hidden">
+      <Text backgroundColor={C.panel} wrap="truncate-end"><Text color={color} bold>{head}</Text><Text color={C.text} bold> × </Text></Text>
+      {small ? (
+        <Box flexDirection="column" paddingX={1} flexGrow={1}>
+          <Text color={C.dim} wrap="wrap">Too small here: drag me to a bigger pane, or make this one wider.</Text>
+        </Box>
+      ) : null}
+      {small ? null : playing && view ? (
         <Box flexDirection="column" paddingX={1} height={FIELD.height + 2}>
           {view.lines.map((line, i) => {
             // The end-of-game message goes over the middle of the field.

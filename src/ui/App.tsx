@@ -5,7 +5,8 @@ import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { nouRulesOnly } from "../context/index.js";
 import { MCP_PRESETS, McpManager, loadMcpServers, removeUserServer, saveUserServers, USER_MCP_FILE } from "../mcp/index.js";
 import { findOtherMcpServers } from "../mcp/import.js";
-import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
+import { ago, listConversations, loadConversation, saveConversation } from "../conversations/index.js";
+import { buildSystemPrompt, newSessionId, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
 import { describe, providers, resolveModel, saveModel, setupProblem, type ModelChoice, type Provider } from "../providers/index.js";
@@ -30,22 +31,28 @@ import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
 import { SLASH_COMMANDS, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
-import { Chat } from "./Chat.js";
+import { Chat, type ChatSelect } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GamePanel } from "./GamePanel.js";
+import { Terminal } from "./Terminal.js";
+import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
 /** "game": the Games panel has the keyboard (it isn't one of the panes Tab moves between). */
-type Focus = "tree" | "code" | "chat" | "game";
+type Focus = "tree" | "code" | "chat" | "game" | "terminal";
+type Rect = { x: number; y: number; width: number; height: number };
+/** The panes the Games panel can dock under. */
+type Dock = Exclude<Focus, "game" | "terminal">;
 type DiffMode = "off" | "git" | "nou" | "session";
 const FOCUS_ORDER: Focus[] = ["tree", "code", "chat"];
 const MIN_TREE = 14;
 const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
+const NO_FILES = new Set<string>();
 const DOUBLE_CLICK_MS = 500;
 /** A step follow mode shows: a file the agent read, and the lines when it read part of it. */
 type FollowStep = { file: string; line?: number; to?: number };
@@ -54,9 +61,14 @@ const FOLLOW_STEP_MS: Record<string, number> = { slow: 2500, normal: 1200, fast:
 /** Steps follow mode may fall behind before it skips ahead. */
 const MAX_FOLLOW_LAG = 12;
 /** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
-const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 16);
+const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 3);
 
-type Props = { initialModel: ModelChoice; permContext: string };
+type Props = {
+  initialModel: ModelChoice;
+  permContext: string;
+  /** From the command line: pick up the last conversation here (--continue) or list them (--resume). */
+  resume?: "last" | "list";
+};
 
 /** How much of the conversation a newly switched-to engine is given (the latest part when it's longer). */
 const HANDOFF_CHARS = 24_000;
@@ -111,7 +123,7 @@ function readText(filePath: string): string {
   }
 }
 
-export function App({ initialModel, permContext }: Props) {
+export function App({ initialModel, permContext, resume }: Props) {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
 
@@ -124,16 +136,17 @@ export function App({ initialModel, permContext }: Props) {
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
-  /** The Games panel: whether it's open, where it is while being dragged, and the pane to go back to. */
+  /** The Games panel: whether it's open, the pane it's being dragged over, and the pane to go back to. */
   const [gamesOpen, setGamesOpen] = useState(false);
-  const [gameDrag, setGameDrag] = useState<{ x: number; y: number } | null>(null);
+  const [gameDrag, setGameDrag] = useState<Dock | null>(null);
   const beforeGame = useRef<Focus>("chat");
-  /** Keeps the Games panel on screen (it's dragged by its title; the header row stays clear). */
-  const placeGames = (x: number, y: number) => ({
-    x: Math.max(0, Math.min(columns - GAME_PANEL.width, x)),
-    y: Math.max(1, Math.min(rows - GAME_PANEL.height - 1, y)),
-  });
-  const gamePos = gameDrag ?? placeGames(settings.gamePanel?.x ?? columns - GAME_PANEL.width - 1, settings.gamePanel?.y ?? rows - GAME_PANEL.height - 2);
+  /** It docks under a pane, splitting that pane's column: under the one it's dragged over while moving. */
+  const gameDock: Dock = gameDrag ?? settings.gameDock ?? "chat";
+  /** The terminal panel under the code (` or /terminal): its shell lives on while the panel is closed. */
+  const [termOpen, setTermOpen] = useState(false);
+  const [termVersion, setTermVersion] = useState(0);
+  const shellRef = useRef<Shell | null>(null);
+  const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
   // Follow mode replays what the agent reads a step at a time (it reads far faster than you can watch):
   // the steps waiting, and the timer that shows the next one.
@@ -147,6 +160,8 @@ export function App({ initialModel, permContext }: Props) {
     setFollowLag(0);
   };
   const [entries, setEntries] = useState<ChatEntry[]>([]);
+  /** This conversation, as saved for /resume: a new one after /clear, an old one once resumed. */
+  const [conversationId, setConversationId] = useState(newSessionId);
   const [streaming, setStreaming] = useState("");
   // Streamed text arrives a token at a time; redrawing the whole screen for each one is wasted work.
   const streamed = useRef({ text: "", timer: null as ReturnType<typeof setTimeout> | null });
@@ -165,6 +180,8 @@ export function App({ initialModel, permContext }: Props) {
     }
   };
   const [busy, setBusy] = useState<string | null>(null);
+  /** Files Nou has changed (or is asking to) since it started working: they shimmer in the tree until it's done. */
+  const [working, setWorking] = useState<Set<string>>(NO_FILES);
   const [choice, setChoice] = useState(initialModel);
   const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve(ok: boolean): void } | null>(null);
 
@@ -228,8 +245,10 @@ export function App({ initialModel, permContext }: Props) {
   };
   const [codeDefine, setCodeDefine] = useState<{ row: number; x: number; nonce: number } | null>(null);
   const [chatClick, setChatClick] = useState<{ row: number; col: number; nonce: number } | null>(null);
+  /** Dragging over the chat's messages selects them (copied when you let go). */
+  const [chatSelect, setChatSelect] = useState<ChatSelect | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
-  const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
+  const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0, heights: { tree: 0, code: 0, chat: 0 } as Record<Dock, number>, game: null as Rect | null, terminal: null as Rect | null });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
   const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
   const paneWidthsRef = useRef(paneWidths);
@@ -238,7 +257,7 @@ export function App({ initialModel, permContext }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | { game: { dx: number; dy: number } } | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "chatText" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -295,6 +314,10 @@ export function App({ initialModel, permContext }: Props) {
         }
         const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
         setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
+        setWorking((w) => {
+          if (status === "rejected") return w.has(change.path) ? new Set([...w].filter((p) => p !== change.path)) : w;
+          return w.has(change.path) ? w : new Set(w).add(change.path);
+        });
         // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
         if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
           clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
@@ -332,6 +355,21 @@ export function App({ initialModel, permContext }: Props) {
   useEffect(() => void loadFallbackHighlighter(), []); // once Nou is on screen (it's slow to load)
   useEffect(() => {
     void checkForUpdate().then(setUpdate);
+  }, []);
+  useEffect(() => {
+    if (!busy) setWorking(NO_FILES); // done: the files stop shimmering (● still marks them)
+  }, [!busy]);
+  // After each reply, the conversation is saved so /resume can pick it back up.
+  useEffect(() => {
+    const first = entries.find((e) => e.kind === "user");
+    if (busy || !first) return;
+    const engine = agentRef.current!;
+    saveConversation({ id: conversationId, title: first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: engine.id, entries, state: engine.snapshot?.() });
+  }, [!busy, entries.length, conversationId]);
+  /** Earlier conversations for the palette, read from disk when it opens. */
+  const recentChats = useMemo(() => (quickOpen !== null ? listConversations() : []), [quickOpen !== null]);
+  useEffect(() => {
+    if (resume) void resumeConversation(resume === "last" ? "last" : "");
   }, []);
 
   // Discover plugins once and load the enabled ones.
@@ -460,6 +498,43 @@ export function App({ initialModel, permContext }: Props) {
     const handoff = conversationSoFar(entries);
     if (handoff) engine.note(handoff);
     info(`Now using the ${target.label} engine (model: ${target.model(choice)}). ${handoff ? "It has the conversation so far." : "This starts a new conversation."}${target.approvals === "after" ? " It edits without asking first; review its changes in the diff view and press u to undo." : ""}`);
+  };
+
+  /**
+   * /resume: lists this folder's earlier conversations, or picks one back up (by number, or "last"). The
+   * engine it was with carries on from its own saved state where it can (Nou's messages, Claude Code's
+   * session, Codex's thread); otherwise it's handed the conversation, like switching engines.
+   */
+  const resumeConversation = async (arg: string) => {
+    if (busy) return info("Wait for the current reply to finish (or press Esc) before resuming another conversation.", "error");
+    const list = listConversations().filter((c) => c.id !== conversationId);
+    if (!list.length) return info("No earlier conversations in this folder yet. They're saved after each reply.");
+    if (!arg) {
+      const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${engineInfo(isEngineId(c.engine) ? c.engine : "nou").label} · ${ago(c.updated)})`);
+      return info(`Earlier conversations here. /resume <number> picks one up (or /resume last):\n${rows.join("\n")}`);
+    }
+    const pick = arg === "last" ? list[0] : list[Number(arg) - 1] ?? list.find((c) => c.id === arg);
+    const saved = pick && loadConversation(pick.id);
+    if (!saved) return info(`There's no conversation ${arg}: /resume lists them.`, "error");
+    let engine = agentRef.current!;
+    // Back to the engine it was with, when that's installed (its own state picks up best).
+    if (saved.engine !== engine.id && isEngineId(saved.engine) && isInstalled(engineInfo(saved.engine))) {
+      engine.dispose?.();
+      engine = createEngine(saved.engine, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+      engine.configure(engineConfig.current);
+      agentRef.current = engine;
+      updateSettings({ engine: saved.engine });
+    }
+    engine.clear();
+    const restored = saved.engine === engine.id && !!saved.state && !!engine.restore?.(saved.state);
+    if (!restored) {
+      const handoff = conversationSoFar(saved.entries);
+      if (handoff) engine.note(handoff);
+    }
+    setConversationId(saved.id);
+    setQueued([]);
+    setEntries([...saved.entries, { kind: "info", text: `Resumed "${saved.title}" from ${ago(saved.updated)} with ${engineInfo(engine.id).label}. ${restored ? "It picks up right where it left off." : "It has the conversation so far."}` }]);
+    setFocus("chat");
   };
 
   /** Downloads an Ollama model, showing progress in the status line. Esc stops it. */
@@ -649,7 +724,7 @@ export function App({ initialModel, permContext }: Props) {
 
   /** Scrolls a pane to where its scrollbar was clicked or dragged (rows start at y=3, under the border and title). */
   const scrollPane = (pane: Focus, y: number) => {
-    const { paneHeight } = layout.current;
+    const paneHeight = pane === "game" || pane === "terminal" ? 0 : layout.current.heights[pane];
     const fraction = (y - 3) / Math.max(1, paneHeight - 4);
     setScrollTo((s) => ({ pane, fraction, nonce: (s?.nonce ?? 0) + 1 }));
   };
@@ -660,30 +735,49 @@ export function App({ initialModel, permContext }: Props) {
   // between panes to resize them.
   useMouse((event) => {
     if (view !== "main" || quickOpen !== null) return;
-    // The Games panel floats over the panes: it takes the clicks that land on it, and its title bar drags it.
-    if (gamesOpen) {
+    // The Games panel sits under a pane: it takes the clicks that land on it, × on its title closes it,
+    // and dragging its title docks it under the pane you let go over.
+    const term = layout.current.terminal;
+    if (term && event.x >= term.x && event.x < term.x + term.width && event.y >= term.y && event.y < term.y + term.height && !dragging.current) {
+      if (event.kind === "wheel") return queueWheel("terminal", event.dir, false);
+      if (event.kind !== "click") return;
+      if (event.y === term.y + 1 && event.x >= term.x + term.width - 5) return toggleTerminal(false); // ×
+      if (focus !== "terminal") beforeTerm.current = focus;
+      setFocus("terminal");
+      return;
+    }
+    const game = layout.current.game;
+    if (gamesOpen && game) {
       const drag = dragging.current;
-      if (drag && typeof drag === "object" && "game" in drag) {
-        const at = placeGames(event.x - drag.game.dx, event.y - drag.game.dy);
+      if (drag === "game") {
+        const { treeWidth, codeWidth } = layout.current;
+        const over: Dock = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
         if (event.kind === "release") {
           dragging.current = null;
           setGameDrag(null);
-          updateSettings({ gamePanel: at });
-        } else setGameDrag(at);
+          updateSettings({ gameDock: over });
+        } else setGameDrag(over);
         return;
       }
-      const g = gamePos;
-      const inside = event.x >= g.x && event.x < g.x + GAME_PANEL.width && event.y >= g.y && event.y < g.y + GAME_PANEL.height;
+      const inside = event.x >= game.x && event.x < game.x + game.width && event.y >= game.y && event.y < game.y + game.height;
       if (inside) {
         if (event.kind !== "click") return;
+        if (event.y === game.y + 1 && event.x >= game.x + game.width - 5) {
+          // × closes it
+          setGamesOpen(false);
+          if (focus === "game") setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
+          return;
+        }
         if (focus !== "game") beforeGame.current = focus;
         setFocus("game");
-        if (event.y <= g.y + 1) dragging.current = { game: { dx: event.x - g.x, dy: event.y - g.y } };
+        if (event.y <= game.y + 1) dragging.current = "game";
         return;
       }
     }
     const { treeWidth, codeWidth, paneHeight } = layout.current;
     const codeLeft = treeWidth;
+    const chatAt = (x: number, y: number, kind: ChatSelect["kind"]) =>
+      setChatSelect((c) => ({ row: y - 3, col: x - treeWidth - codeWidth - 3, kind, nonce: (c?.nonce ?? 0) + 1 }));
     const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
       setEditorMouse((m) => [...m.slice(-15), { x: x - codeLeft - 1, y: y - 3, kind, seq: (m[m.length - 1]?.seq ?? 0) + 1 }]);
     if (event.kind === "drag") {
@@ -691,7 +785,8 @@ export function App({ initialModel, permContext }: Props) {
       const drag = dragging.current;
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
-      else if (drag && "scroll" in drag) scrollPane(drag.scroll, event.y);
+      else if (drag === "chatText") chatAt(event.x, event.y, "drag");
+      else if (drag && typeof drag === "object") scrollPane(drag.scroll, event.y);
       return;
     }
     if (event.kind === "release") {
@@ -702,6 +797,7 @@ export function App({ initialModel, permContext }: Props) {
         setResizing(null);
       } else if (dragging.current && typeof dragging.current === "object" && "scroll" in dragging.current) scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
+      if (dragging.current === "chatText") chatAt(event.x, event.y, "release");
       dragging.current = null;
       return;
     }
@@ -729,10 +825,15 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     // The code view's title row holds the tabs: a click switches, the × closes.
-    if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length >= 2 && !diff) {
-      const zone = layoutTabs(tabs, openFile, tabsWidth(codeWidth)).zones.find((z) => event.x - codeLeft - 1 >= z.from && event.x - codeLeft - 1 < z.to);
+    if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length && !diff) {
+      const at = event.x - codeLeft - 1;
+      const layout = layoutTabs(tabs, openFile, tabsWidth(codeWidth));
+      setFocus("code"); // so x, Ctrl+W and [ ] work next
+      if (layout.prev !== null && at === layout.prev) return cycleTab(-1);
+      if (layout.next !== null && at === layout.next) return cycleTab(1);
+      const zone = layout.zones.find((z) => at >= z.from && at < z.to);
       if (!zone) return;
-      if (zone.close !== null && Math.abs(event.x - codeLeft - 1 - zone.close) <= 1) closeTab(zone.file);
+      if (Math.abs(at - zone.close) <= 1) closeTab(zone.file);
       else switchTab(zone.file);
       return;
     }
@@ -749,7 +850,11 @@ export function App({ initialModel, permContext }: Props) {
     // Rows start under the pane's top border (y=1) and title (y=2).
     if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
     // Messages start after the chat's border and the two-column bar in front of each line.
-    if (pane === "chat" && event.y >= 3) setChatClick((c) => ({ row: event.y - 3, col: event.x - treeWidth - codeWidth - 3, nonce: (c?.nonce ?? 0) + 1 }));
+    if (pane === "chat" && event.y >= 3) {
+      setChatClick((c) => ({ row: event.y - 3, col: event.x - treeWidth - codeWidth - 3, nonce: (c?.nonce ?? 0) + 1 }));
+      dragging.current = "chatText";
+      chatAt(event.x, event.y, "press");
+    }
     // Two clicks in the same spot within half a second are a double-click.
     const last = lastClick.current;
     const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
@@ -772,6 +877,7 @@ export function App({ initialModel, permContext }: Props) {
   useInput((input, key) => {
     if (!(key.ctrl && input === "c")) return;
     if (showEditor && focus === "code" && editorStateRef.current?.selection) return; // the editor copies it
+    if (focus === "terminal") return; // the terminal stops its command
     if (busy || approval) {
       stop();
       approval?.resolve(false);
@@ -1025,7 +1131,7 @@ export function App({ initialModel, permContext }: Props) {
         stop();
         return answer(false);
       }
-      if (focus !== "chat" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
+      if (focus !== "chat" && focus !== "terminal" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
       if (focus !== "chat" && input === "o" && pendingChange) return openPending();
     }
     if (key.ctrl && input === "p") {
@@ -1034,7 +1140,7 @@ export function App({ initialModel, permContext }: Props) {
     }
     if (showEditor && focus === "code") return; // the editor owns the keyboard
     if (focus === "code" && codeFinding.current) return; // so does the find bar
-    if (focus === "game") return; // and the Games panel
+    if (focus === "game" || focus === "terminal") return; // and the Games panel and the terminal
     if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
@@ -1058,6 +1164,7 @@ export function App({ initialModel, permContext }: Props) {
       setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
     } else if (input === "f") setFollow((f) => !f);
     else if (input === "m") toggleMouse();
+    else if (input === "`") toggleTerminal();
     else if (input === "p") toggleProblems();
     else if (input === "u") undoLast();
     else if (input === "<" || input === ">") {
@@ -1071,7 +1178,7 @@ export function App({ initialModel, permContext }: Props) {
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
-    else if (input === "x") closeTab();
+    else if (input === "x" || (key.ctrl && input === "w")) closeTab();
     else if (input === "e") startEditing();
     else if (input === "b") goBack();
     else if (input === "s" || input === ",") setView("settings");
@@ -1213,6 +1320,8 @@ ${snippet}
     }
     case "games":
       return toggleGames();
+    case "cancel":
+      return cancelLast();
     case "mcp":
       return mcpCommand(rest);
     case "problems":
@@ -1301,7 +1410,12 @@ ${snippet}
     case "clear":
       agentRef.current!.clear();
       setEntries([]);
+      setConversationId(newSessionId()); // the last one stays saved for /resume
       return;
+    case "terminal":
+      return toggleTerminal();
+    case "resume":
+      return resumeConversation(rest[0] ?? "");
     case "plugins":
       return pluginsCommand(rest);
     case "version":
@@ -1344,6 +1458,34 @@ ${snippet}
   };
   const setupCheckRef = useRef(setupCheck);
   setupCheckRef.current = setupCheck;
+  /**
+   * Takes back your last message: stops Nou if it's still on it, removes the message and its reply from the
+   * conversation (yours on screen and the model's), and puts the text back in the input to edit and resend.
+   * Files it changed stay changed: /rewind undoes those.
+   */
+  // What was queued behind it comes back into the input too, rather than being sent.
+  const [retract, setRetract] = useState<{ queued: string[] } | null>(null);
+  const cancelLast = () => {
+    setRetract({ queued });
+    setQueued([]);
+    if (busy) stop();
+  };
+  useEffect(() => {
+    if (!retract || busy) return;
+    const later = retract.queued;
+    setRetract(null);
+    const engine = agentRef.current!;
+    const at = entries.findLastIndex((e) => e.kind === "user");
+    if (at < 0) return info("There's no message to take back.");
+    if (!engine.retractLast) return info(`${engineInfo(engine.id).label} keeps its own history, so a message can't be taken back there: /clear starts over.`, "error");
+    engine.retractLast();
+    const text = [entries[at]!.text, ...later].join("\n");
+    stopped.current = false;
+    setEntries((prev) => [...prev.slice(0, at), { kind: "info", text: "Took back your last message; it's in the input to edit and resend. (Any files it changed stay changed: /rewind undoes them.)" }]);
+    setChatPrefill((p) => ({ text, nonce: (p?.nonce ?? 0) + 1 }));
+    setFocus("chat");
+  }, [retract, busy]);
+
   /** Messages sent while Nou works: each goes when it finishes, in order. */
   const [queued, setQueued] = useState<string[]>([]);
   /** Set when you stop Nou: what was queued goes back into the input instead of being sent. */
@@ -1499,8 +1641,17 @@ ${snippet}
   const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
-  const tabStrip = tabs.length >= 2 && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
-  layout.current = { treeWidth, codeWidth, paneHeight: height };
+  const tabStrip = tabs.length && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
+  // The Games panel takes the bottom of its pane's column: up to 19 rows, and never more than half.
+  const gameHeight = gamesOpen ? Math.min(GAME_PANEL.height, Math.floor(height / 2)) : 0;
+  const heights: Record<Dock, number> = { tree: height, code: height, chat: height };
+  heights[gameDock] -= gameHeight;
+  // The terminal takes the bottom third of the code's column (above the Games panel when that's there too).
+  const termHeight = termOpen ? Math.max(6, Math.min(Math.floor(height / 3), heights.code - 6)) : 0;
+  heights.code -= termHeight;
+  const dockLeft = gameDock === "tree" ? 0 : gameDock === "code" ? treeWidth : treeWidth + codeWidth;
+  const dockWidth = gameDock === "tree" ? treeWidth : gameDock === "code" ? codeWidth : chatWidth;
+  layout.current = { treeWidth, codeWidth, paneHeight: height, heights, game: gamesOpen ? { x: dockLeft, y: 1 + heights[gameDock] + (gameDock === "code" ? termHeight : 0), width: dockWidth, height: gameHeight } : null, terminal: termOpen ? { x: treeWidth, y: 1 + heights.code, width: codeWidth, height: termHeight } : null };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
   const totals = diagnostics.counts();
@@ -1515,6 +1666,18 @@ ${snippet}
     updateSettings({ mouse: !settings.mouse });
     info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
   };
+  /** Opens the terminal panel (starting its shell the first time) and gives it the keyboard, or closes it. */
+  function toggleTerminal(open = !termOpen) {
+    shellRef.current ??= new Shell(() => setTermVersion((v) => v + 1));
+    setTermOpen(open);
+    if (open) {
+      if (focus !== "terminal") beforeTerm.current = focus;
+      setFocus("terminal");
+    } else if (focus === "terminal") setFocus(beforeTerm.current === "terminal" ? "code" : beforeTerm.current);
+  }
+  function leaveTerminal() {
+    setFocus(beforeTerm.current === "terminal" ? "code" : beforeTerm.current);
+  }
   /** Opens the Games panel and gives it the keyboard, or closes it. */
   const toggleGames = (open = !gamesOpen) => {
     setGamesOpen(open);
@@ -1548,6 +1711,10 @@ ${snippet}
     { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
+    { title: "Cancel your last message (edit it and resend)", keys: "/cancel", run: cancelLast },
+    { title: "Resume an earlier conversation", keys: "/resume", run: () => void resumeConversation("") },
+    { title: termOpen ? "Close the terminal" : "Open a terminal under the code", keys: "`", run: () => toggleTerminal() },
+    ...recentChats.filter((c) => c.id !== conversationId).slice(0, 5).map((c) => ({ title: `Resume: ${c.title}`, keys: ago(c.updated), run: () => void resumeConversation(c.id) })),
     { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
     { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
     { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },
@@ -1665,12 +1832,13 @@ ${snippet}
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}
-          height={height}
+          height={heights.tree}
           focused={focus === "tree"}
           openFile={openFile}
           reveal={reveal}
           version={treeVersion}
           changed={edited}
+          working={working}
           git={git}
           problemCounts={problemCounts}
           wheel={wheelFor("tree")}
@@ -1682,7 +1850,7 @@ ${snippet}
         {codePanel === "problems" && !pendingChange ? (
           <ProblemsView
             width={codeWidth}
-            height={height}
+            height={heights.code}
             focused={focus === "code"}
             problems={diagnostics.all()}
             checking={checking}
@@ -1695,7 +1863,7 @@ ${snippet}
             key={`${openFile}:${editorStart.nonce}`}
             {...(tabStrip ? { tabs: tabStrip } : {})}
             width={codeWidth}
-            height={height}
+            height={heights.code}
             focused={focus === "code"}
             filePath={openFile}
             initial={draft.current?.path === openFile ? draft.current.text : content}
@@ -1718,7 +1886,7 @@ ${snippet}
           <CodeView
             {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
-            height={height}
+            height={heights.code}
             focused={focus === "code"}
             filePath={openFile}
             content={content}
@@ -1741,7 +1909,7 @@ ${snippet}
         )}
         <Chat
           width={chatWidth}
-          height={height}
+          height={heights.chat}
           focused={focus === "chat"}
           entries={entries}
           streaming={streaming}
@@ -1758,6 +1926,7 @@ ${snippet}
           queued={queued}
           onAnswer={onAnswer}
           click={chatClick}
+          select={chatSelect}
           onOpenRef={openRef}
         />
       </Box>
@@ -1776,8 +1945,16 @@ ${snippet}
             ))}
         </Text>
       </Box>
-      {gamesOpen && (
-        <GamePanel x={gamePos.x} y={gamePos.y} focused={focus === "game"} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+      {layout.current.terminal && shellRef.current && (
+        <Box position="absolute" marginLeft={layout.current.terminal.x} marginTop={layout.current.terminal.y}>
+          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} />
+        </Box>
+      )}
+      {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}
+      {layout.current.game && (
+        <Box position="absolute" marginLeft={layout.current.game.x} marginTop={layout.current.game.y}>
+          <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+        </Box>
       )}
       {quickOpen !== null && (
         <QuickOpen

@@ -55,6 +55,17 @@ export class ClaudeCodeEngine extends ExternalEngine {
     this.claudeSession = undefined;
   }
 
+  snapshot() {
+    return this.claudeSession ? { claudeSession: this.claudeSession } : undefined;
+  }
+
+  /** Claude Code keeps its sessions on disk, so a saved one resumes in a later run too. */
+  restore(state: any): boolean {
+    if (typeof state?.claudeSession !== "string") return false;
+    this.claudeSession = state.claudeSession;
+    return true;
+  }
+
   /** Claude Code can resume its session with another model, so the conversation carries over. */
   setModel(choice: ModelChoice) {
     this.choice = choice;

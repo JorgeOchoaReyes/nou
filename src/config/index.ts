@@ -50,8 +50,8 @@ export type Settings = {
   trustedFolders: string[];
   /** Games added to the Games panel (from settings → Games). */
   games: string[];
-  /** Where the Games panel sits (its top-left corner, in screen cells), once you've moved it. */
-  gamePanel: { x: number; y: number } | null;
+  /** The pane the Games panel docks under (it splits that pane's column); drag its title to another pane. */
+  gameDock: "tree" | "code" | "chat";
   /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
   /**
@@ -77,7 +77,7 @@ export const DEFAULT_SETTINGS: Settings = {
   paneWidths: null,
   trustedFolders: [],
   games: [],
-  gamePanel: null,
+  gameDock: "chat",
   plugins: {},
   trustedPlugins: {},
 };

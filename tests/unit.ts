@@ -306,6 +306,29 @@ console.log("MCP servers");
   check("Codex's TOML tables are read", JSON.stringify(codexServers('[mcp_servers.x]\ncommand = "a"\nargs = ["b"]\n').x) === JSON.stringify({ command: "a", args: ["b"] }));
 }
 
+console.log("Retrying passing failures");
+{
+  const { transientMessage } = await import("../src/agent/index.js");
+  check("a dropped stream or a failing server is worth retrying",
+    transientMessage("stream disconnected before completion: litellm.APIError: AzureException APIError - The server had an error processing your request.")
+    && transientMessage("503 Service Unavailable") && transientMessage("socket hang up"));
+  check("a bad key or a wrong URL isn't", !transientMessage("401 Unauthorized") && !transientMessage("connect ECONNREFUSED 127.0.0.1:4000") && !transientMessage("Invalid API key"));
+}
+
+console.log("Taking back a message, steady streaming");
+{
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  const { closeOpenMarkdown } = await import("../src/ui/text.js");
+  const said: any = { id: "fake", local: true, unavailable: () => null, async chat() { return { text: "ok", toolCalls: [] }; } };
+  const engine = new Engine({ provider: said, model: "f" }, "sys", { onEntry() {}, onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true });
+  await engine.send("first");
+  await engine.send("second");
+  check("taking back the last message removes it and its reply", engine.retractLast() && JSON.stringify((engine as any).messages.map((m: any) => m.content)) === JSON.stringify(["first", "ok"]));
+  check("a streaming code block is closed for now", closeOpenMarkdown("see:\n```ts\nconst a = 1;").endsWith("\n```"));
+  check("so are **bold** and `code` on the last line", closeOpenMarkdown("it is **very") === "it is **very**" && closeOpenMarkdown("run `npm") === "run `npm`");
+  check("finished markdown is left alone", closeOpenMarkdown("**done** and `x`") === "**done** and `x`");
+}
+
 console.log("Games");
 {
   const { pong, snake, breakout, GAMES } = await import("../src/games/index.js");
@@ -834,7 +857,7 @@ console.log("Engines");
   const engines = () => (globalThis as any).__engines;
 
   /** Runs one message through an engine in a fresh folder, approving everything unless `reject` says otherwise. */
-  const runEngine = async (id: any, spec: string, reject: Partial<Record<string, boolean>> = {}, problems: string | null = null) => {
+  const runEngine = async (id: any, spec: string, reject: Partial<Record<string, boolean>> = {}, problems: string | null = null, restore?: unknown) => {
     const dir = mkdtempSync(path.join(os.tmpdir(), `nou-engine-${id}-`));
     writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
     const home = process.cwd();
@@ -853,6 +876,7 @@ console.log("Engines");
       checkChange: async () => problems,
     });
     engine.configure({ extras: ["Project note: be brief."] });
+    if (restore) engine.restore?.(restore);
     try {
       await engine.send("Change the greeting");
       return { ...log, engine, file: readFileSync(path.join(dir, "greet.js"), "utf-8"), dir };
@@ -881,9 +905,15 @@ console.log("Engines");
   // Codex: no approval hook, so changes are shown and recorded afterwards.
   const codex = await runEngine("codex", "openai:gpt-5");
   check("Codex runs in its sandbox without asking", engines().codex.threads[0].sandboxMode === "workspace-write" && engines().codex.threads[0].approvalPolicy === "never" && codex.asked.length === 0);
+  check("Codex can reach the network (npm install, fetching tests)", engines().codex.threads[0].networkAccessEnabled === true);
   check("Codex's edit is recorded for undo with the file as it was", codex.changes.some((c) => c.path === "greet.js" && c.status === "applied" && c.before.includes("Hello") && c.after.includes("Howdy")));
   check("files Codex creates are recorded as new", codex.changes.some((c) => c.path === "notes.md" && c.before === "" && c.status === "applied"));
   check("Nou's project context goes with Codex's first message", engines().codex.inputs[0].includes("be brief") && codex.entries.some((e) => e.text === "Ran: ls"));
+  const saved = codex.engine.snapshot?.();
+  const later = await runEngine("codex", "openai:gpt-5", {}, null, saved);
+  check("a saved Codex conversation resumes its thread", (saved as any)?.codexThread === "codex-thread-1" && engines().codex.resumed === "codex-thread-1" && later.changes.length > 0);
+  const claudeSaved = claude.engine.snapshot?.();
+  check("a Claude Code conversation saves its session to resume", (claudeSaved as any)?.claudeSession === "claude-session-1");
 
   // pi: an extension routes its edits through Nou; local models go through Nou's endpoint for them.
   const pi = await runEngine("pi", "ollama:qwen3:8b");

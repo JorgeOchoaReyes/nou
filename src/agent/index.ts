@@ -28,9 +28,13 @@ function transient(error: any): boolean {
   const status = Number(error?.status ?? error?.statusCode);
   if (status === 408 || status === 409 || status === 429 || status >= 500) return true;
   if (status >= 400) return false;
-  const text = String(error?.message ?? error);
-  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Invalid URL|api key|unauthori[sz]ed/i.test(text)) return false;
-  return /overloaded|rate.?limit|too many requests|ECONNRESET|socket hang up|ETIMEDOUT|timed? ?out|EPIPE|network|premature close|terminated|\b(429|5\d\d)\b/i.test(text);
+  return transientMessage(String(error?.message ?? error));
+}
+
+/** Whether an error's text reads as a passing problem (a dropped stream, a busy or failing server). */
+export function transientMessage(text: string): boolean {
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Invalid URL|api key|unauthori[sz]ed|\b40[13]\b/i.test(text)) return false;
+  return /overloaded|rate.?limit|too many requests|ECONNRESET|socket hang up|ETIMEDOUT|timed? ?out|EPIPE|network|premature close|terminated|disconnected|server had an error|internal server error|service unavailable|bad gateway|try again|\b(429|5\d\d)\b/i.test(text);
 }
 
 /** Messages kept word for word when older ones are summarized. */
@@ -157,6 +161,25 @@ export class Agent implements Engine {
   clear() {
     this.messages = [];
     this.notes = [];
+  }
+
+  /** Forgets the last message you sent and everything after it, as if it was never sent. */
+  snapshot() {
+    return { messages: this.messages };
+  }
+
+  restore(state: any): boolean {
+    if (!Array.isArray(state?.messages)) return false;
+    this.messages = state.messages;
+    this.forgetThinking(); // written in another run, maybe with another model
+    return true;
+  }
+
+  retractLast(): boolean {
+    const at = this.messages.findLastIndex((m) => m.role === "user");
+    if (at < 0) return false;
+    this.messages = this.messages.slice(0, at);
+    return true;
   }
 
   /** Something the model should know before the next message (e.g. the user undid its edit). */
@@ -299,8 +322,10 @@ export class Agent implements Engine {
         if (this.requestSize() > this.contextBudget()) await this.compact(false, signal);
         this.hooks.onBusy(`Pondering with ${describe(this.choice)}...`);
         let streamed = "";
+        let thought = "";
         const result = await this.withRetries(signal, () => {
           streamed = "";
+          thought = "";
           return this.choice.provider.chat({
             model: this.choice.model,
             system: this.system,
@@ -311,6 +336,12 @@ export class Agent implements Engine {
             onText: (delta) => {
               streamed += delta;
               this.hooks.onStream(streamed);
+            },
+            // Its thinking shows on the one-line progress (the latest of it), so the chat doesn't jump.
+            onThinking: (delta) => {
+              thought = (thought + delta).slice(-400);
+              const latest = thought.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+              if (latest) this.hooks.onBusy(`Thinking: ${latest.length > 90 ? `…${latest.slice(-89)}` : latest}`);
             },
           });
         });
