@@ -5,13 +5,17 @@ export const tools = [
     type: "function",
     function: {
       name: "run_command",
-      description: "Run a terminal command",
+      description: "Run a shell command in the project folder: tests, builds, type checks, git, package scripts. Returns its output (stdout and stderr together) and, when it fails, its exit code. Use grep, glob and read_file rather than grep/find/cat here. Quote paths with spaces. Don't start interactive programs or servers that never exit.",
       parameters: {
         type: "object",
         properties: {
           command: {
             type: "string",
             description: "The shell command to run",
+          },
+          timeout: {
+            type: "number",
+            description: "Seconds to wait before stopping it. Defaults to 120, at most 600.",
           }
         },
         required: ["command"]
@@ -22,7 +26,7 @@ export const tools = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read a file. Long files come back in pages of up to 1000 lines; the end of each page says how to read on.",
+      description: "Read a file. Lines come back numbered (\"  12\\tcode\"); the numbers aren't part of the file. Long files come back in pages of up to 1000 lines; the end of each page says how to read on.",
       parameters: {
         type: "object",
         properties: {
@@ -169,6 +173,61 @@ export const tools = [
           }
         },
         required: ["path", "old_string", "new_string"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "multi_edit",
+      description: "Make several edits to one file at once, shown to the user as one change. Each edit works like edit_file, applied in order to the result of the one before; if any fails, none are made. Use it instead of several edit_file calls on the same file.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Path to the file to edit"
+          },
+          edits: {
+            type: "array",
+            description: "The edits, in order",
+            items: {
+              type: "object",
+              properties: {
+                old_string: { type: "string", description: "The exact text to replace" },
+                new_string: { type: "string", description: "The text to put in its place" },
+                replace_all: { type: "boolean", description: "Replace every occurrence. Defaults to false." }
+              },
+              required: ["old_string", "new_string"]
+            }
+          }
+        },
+        required: ["path", "edits"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_plan",
+      description: "Keep a short checklist for a task with several steps: send the whole list each time, with each step's status. The user sees it. Use it for anything with three or more steps; skip it for quick questions and one-line fixes.",
+      parameters: {
+        type: "object",
+        properties: {
+          steps: {
+            type: "array",
+            description: "Every step, in order",
+            items: {
+              type: "object",
+              properties: {
+                step: { type: "string", description: "What the step does, in a few words" },
+                status: { type: "string", enum: ["pending", "in_progress", "done"], description: "Where it's at" }
+              },
+              required: ["step", "status"]
+            }
+          }
+        },
+        required: ["steps"]
       }
     }
   },

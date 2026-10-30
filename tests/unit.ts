@@ -117,6 +117,75 @@ console.log("Code themes");
   setCodeTheme(defaults.codeTheme);
 }
 
+console.log("Nou's engine: commands, edits, parallel tools");
+{
+  const { runCommand, editText, proposeEdits } = await import("../src/commands/index.js");
+  const both = await runCommand(`node -e "console.log('out'); console.error('warn')"`);
+  check("a command that works still shows what it wrote to stderr", both.includes("out") && both.includes("warn") && !both.startsWith("Error"));
+  const failed = await runCommand(`node -e "console.error('boom'); process.exit(3)"`);
+  check("a failing command says its exit code", failed.startsWith("Error (exit code 3)") && failed.includes("boom"));
+  const slow = await runCommand(`node -e "setTimeout(() => {}, 5000)"`, 1000);
+  check("a command can be given a timeout, and says when it ran out", slow.includes("timed out after 1s"));
+  const file = "function f() {\n    const a = 1;  \n    return a;\n}\n";
+  check("line numbers copied from read_file are ignored", editText(file, "2\t    const a = 1;  \n3\t    return a;", "2\t    const a = 2;\n3\t    return a;").includes("const a = 2;\n    return a;"));
+  check("trailing spaces and indentation don't stop an edit", editText(file, "const a = 1;\nreturn a;", "    const a = 3;\n    return a;").includes("    const a = 3;\n    return a;\n}"));
+  let hint = "";
+  try {
+    editText(file, "const b = 1;", "x");
+  } catch (error: any) {
+    hint = error.message;
+  }
+  check("an edit that doesn't match shows the closest lines, numbered", hint.includes("not found") && hint.includes("2\t    const a = 1;"));
+  let twice = "";
+  try {
+    editText("x = 1\n  x = 1\n", " x = 1 ", "y");
+  } catch (error: any) {
+    twice = error.message;
+  }
+  check("a loose match that isn't unique is refused", twice.includes("not found"));
+  writeFileSync("multi.ts", "a\nb\nc\n");
+  const multi = await proposeEdits("multi.ts", [{ old_string: "a", new_string: "A" }, { old_string: "c", new_string: "C" }]);
+  check("multi_edit makes several edits as one change", multi.after === "A\nb\nC\n");
+  let atomic = "";
+  try {
+    await proposeEdits("multi.ts", [{ old_string: "a", new_string: "A" }, { old_string: "zzz", new_string: "Z" }]);
+  } catch (error: any) {
+    atomic = error.message;
+  }
+  check("if one fails, none are made, and it says which", atomic.includes("Edit 2 of 2") && readFileSync("multi.ts", "utf-8") === "a\nb\nc\n");
+
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  let calls = 0;
+  const started: number[] = [];
+  const entries: string[] = [];
+  const looker: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "f", unavailable: () => null,
+    async chat() {
+      calls++;
+      if (calls === 1) return { text: "", toolCalls: [
+        { id: "s1", name: "slow_look", args: {} }, { id: "s2", name: "slow_look", args: {} },
+        { id: "p1", name: "update_plan", args: { steps: [{ step: "Look", status: "done" }, { step: "Fix", status: "in_progress" }] } },
+      ] };
+      return { text: "ok", toolCalls: [] };
+    },
+  };
+  const engine = new Engine({ provider: looker, model: "f" }, "sys", {
+    onEntry: (e: any) => entries.push(e.text), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true,
+  });
+  engine.configure({ extraTools: [{ definition: { name: "slow_look", description: "", parameters: { type: "object", properties: {}, required: [] } }, readOnly: true, source: "test",
+    run: async () => {
+      started.push(Date.now());
+      await new Promise((r) => setTimeout(r, 300));
+      return "seen";
+    } }] });
+  const t0 = Date.now();
+  await engine.send("look");
+  check("read-only tools in one response run at the same time", started.length === 2 && Math.abs(started[0]! - started[1]!) < 100 && Date.now() - t0 < 550);
+  const results = ((engine as any).messages as any[]).filter((m) => m.role === "tool").map((m) => m.callId);
+  check("their results stay in the calls' order", results.join(",") === "s1,s2,p1");
+  check("update_plan shows the plan in the chat", entries.some((e) => e.includes("✓ Look") && e.includes("▸ Fix")));
+}
+
 console.log("write_file content");
 check("keeps \\n inside string literals", cleanContent('log("a\\nb");\n') === 'log("a\\nb");\n');
 check("keeps leading indentation", cleanContent("    x()\n") === "    x()\n");
@@ -128,12 +197,12 @@ console.log("Keeping the model's context small");
   const { readForModel, capOutput } = await import("../src/commands/index.js");
   const { pickNumCtx } = await import("../src/providers/ollama.js");
   writeFileSync("small.txt", "one\r\ntwo\r\n");
-  check("a small file is returned unchanged", (await readForModel("small.txt")) === "one\r\ntwo\r\n");
+  check("a small file is returned whole, its lines numbered", (await readForModel("small.txt")) === "1\tone\n2\ttwo");
   writeFileSync("big.txt", Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
   const page = await readForModel("big.txt");
-  check("a long file comes back one page at a time", page.includes("line 1000\n") && !page.includes("line 1001") && page.includes("Read more with offset=1001"));
+  check("a long file comes back one page at a time", page.includes("1000\tline 1000\n") && !page.includes("line 1001") && page.includes("Read more with offset=1001"));
   const last = await readForModel("big.txt", 2001, 1000);
-  check("offset reads on to the end", last.startsWith("line 2001\n") && last.includes("[Lines 2001-2500 of 2500.]"));
+  check("offset reads on to the end", last.startsWith("2001\tline 2001\n") && last.includes("[Lines 2001-2500 of 2500.]"));
   const capped = capOutput("a".repeat(30_000) + "THE ERROR", 10_000);
   check("long output keeps its end, where errors are", capped.length < 10_100 && capped.endsWith("THE ERROR") && capped.includes("characters cut"));
   check("Ollama gets a bigger context window, capped at the model's", pickNumCtx("temperature 0.6", { "qwen3.context_length": 40960 }) === 32768 && pickNumCtx("", { "x.context_length": 8192 }) === 8192);
@@ -357,7 +426,7 @@ console.log("Reading outside the project");
   });
   await agent.send("read it");
   check("reading outside the project asks first", asked.length === 1 && !results[0]!.includes("SECRET") && results[0]!.includes("denied"));
-  check("reading inside the project doesn't ask", asked.length === 1 && results[1] === "one\r\ntwo\r\n");
+  check("reading inside the project doesn't ask", asked.length === 1 && results[1] === "1\tone\n2\ttwo");
   const history = (agent as any).messages as any[];
   check("<think> blocks aren't sent back to the model", history.at(-1).content === "done");
 }

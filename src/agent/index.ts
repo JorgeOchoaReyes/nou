@@ -7,6 +7,7 @@ import {
   fileTree,
   isInProject,
   proposeEdit,
+  proposeEdits,
   proposeWrite,
   readForModel,
   runCommand,
@@ -78,6 +79,12 @@ How to work:
 4. Keep going until the task is done. The user approves each edit and command as it happens, so don't stop to ask permission between steps; ask only when the request is unclear or you need a decision.
 5. End with a short summary of what you changed and why. When the user only asks a question, answer it without editing anything.
 
+- Make independent calls together: several reads or searches in one response run at the same time.
+- Use grep, glob and read_file to look around, not run_command with grep, find or cat. Several edits to one file go in one multi_edit.
+- If an edit fails twice, read the file again before the next try.
+- For work with three or more steps, keep a plan with update_plan and update it as you go.
+- Don't commit, push, install packages or delete files unless the user asked. Don't add comments the code didn't need.
+- Before saying something works, check it (run the tests or the code). If you couldn't, say so.
 - When the user asks where something is, or to show, open or find something, search for it (grep, glob), read enough to be sure, then call open_file on the exact place (with line and end_line) so it opens in their code view, and answer in a sentence or two with path:line.
 - If the user rejects an edit or command, don't retry it: ask what they would like instead.
 - Keep replies short. Refer to code as path:line.
@@ -300,18 +307,29 @@ export class Agent implements Engine {
         }
         if (result.toolCalls.length === 0) return;
 
-        for (const call of result.toolCalls) {
-          if (signal.aborted) break;
-          this.hooks.onBusy(`Running ${call.name}...`);
-          const problem = invalidArgs(call, this.tools);
-          const output = problem ?? capOutput(await this.runTool(call));
-          this.messages.push({
-            role: "tool",
-            callId: call.id,
-            name: call.name,
-            content: problem ? `Error: ${problem}` : output,
-            ...(problem ? { isError: true } : {}),
+        // Calls that only look (reads, searches) run together; the rest run one at a time, in order,
+        // since they may ask you first or change what a later call sees. Results keep the calls' order.
+        const calls = result.toolCalls;
+        for (let i = 0; i < calls.length && !signal.aborted;) {
+          let j = i + 1;
+          if (this.onlyLooks(calls[i]!)) while (j < calls.length && this.onlyLooks(calls[j]!)) j++;
+          const batch = calls.slice(i, j);
+          this.hooks.onBusy(batch.length > 1 ? `Running ${batch.length} tools...` : `Running ${batch[0]!.name}...`);
+          const outputs = await Promise.all(batch.map(async (call) => {
+            const problem = invalidArgs(call, this.tools);
+            return problem ? { error: `Error: ${problem}` } : { output: capOutput(await this.runTool(call)) };
+          }));
+          batch.forEach((call, k) => {
+            const out = outputs[k]!;
+            this.messages.push({
+              role: "tool",
+              callId: call.id,
+              name: call.name,
+              content: "error" in out ? out.error! : out.output!,
+              ...("error" in out ? { isError: true } : {}),
+            });
           });
+          i = j;
         }
         if (signal.aborted) throw new Error("aborted");
       }
@@ -342,6 +360,13 @@ export class Agent implements Engine {
         answered.add(call.id);
       }
     }
+  }
+
+  /** Tools that only read, which can run alongside each other. */
+  private onlyLooks(call: ToolCall): boolean {
+    if (["grep", "glob", "list_files", "get_file_tree"].includes(call.name)) return true;
+    if (call.name === "read_file") return typeof call.args.path === "string" && isInProject(call.args.path);
+    return this.extraTools.some((t) => t.definition.name === call.name && t.readOnly);
   }
 
   private async runTool(call: ToolCall): Promise<string> {
@@ -394,11 +419,19 @@ export class Agent implements Engine {
         return globFiles(String(args.pattern), typeof args.path === "string" ? args.path : ".");
       }
       case "edit_file":
+      case "multi_edit":
       case "write_file": {
+        if (name === "multi_edit" && (!Array.isArray(args.edits) || !args.edits.length)) return "Error: edits must be a list of {old_string, new_string}.";
         const change = name === "edit_file"
           ? await proposeEdit(args.path, args.old_string, args.new_string, args.replace_all === true)
-          : await proposeWrite(args.path, args.content ?? "");
+          : name === "multi_edit" ? await proposeEdits(args.path, args.edits) : await proposeWrite(args.path, args.content ?? "");
         return await this.reviewChange(change);
+      }
+      case "update_plan": {
+        const steps = Array.isArray(args.steps) ? args.steps : [];
+        const mark = { done: "✓", in_progress: "▸", pending: "○" } as Record<string, string>;
+        this.hooks.onEntry({ kind: "tool", text: `Plan:\n${steps.map((st: any) => `${mark[st.status] ?? "○"} ${st.step}`).join("\n")}` });
+        return "Plan updated.";
       }
       case "run_command": {
         const ok = await this.hooks.approve({ kind: "command", command: args.command });
@@ -407,7 +440,7 @@ export class Agent implements Engine {
           return "User denied permission to run this command.";
         }
         this.hooks.onEntry({ kind: "tool", text: `Ran: ${args.command}` });
-        const output = await runCommand(args.command);
+        const output = await runCommand(args.command, Number(args.timeout) > 0 ? Number(args.timeout) * 1000 : undefined);
         return output.trim() || "(no output)";
       }
       default: {
