@@ -24,9 +24,9 @@ jobs:
     # NPM_TOKEN lives in this environment's secrets; its protection rules (reviewers) apply before publishing.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -46,7 +46,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           if npm view "nou-cli@$VERSION" version >/dev/null 2>&1; then
-            echo "::error::nou-cli@$VERSION is already published. Bump \"version\" in package.json first."
+            echo "::error::nou-cli@$VERSION is already published. Bump \"version\" in package.json first (npm version patch --no-git-tag-version, in a PR; see README → Releasing)."
             exit 1
           fi
 

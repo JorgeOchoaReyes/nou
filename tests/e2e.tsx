@@ -482,7 +482,8 @@ console.log("Queueing and interrupting");
       const last = messages[messages.length - 1];
       heard.push(typeof last.content === "string" ? last.content.replace(/<editor_context>[\s\S]*/, "").trim() : "");
       await new Promise((r, reject) => {
-        const t = setTimeout(r, 800);
+        // "later" is the turn the test interrupts: long enough that "never" is always typed while it runs.
+        const t = setTimeout(r, heard.at(-1) === "later" ? 8000 : 800);
         signal?.addEventListener("abort", () => (clearTimeout(t), reject(new Error("aborted"))));
       });
       return { text: `ok ${heard.length}`, toolCalls: [] };
