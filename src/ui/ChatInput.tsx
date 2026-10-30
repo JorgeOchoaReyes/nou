@@ -40,7 +40,8 @@ function cursorLine(segments: Segment[], cursor: number): number {
 type Props = {
   value: string;
   onChange(value: string): void;
-  onSubmit(value: string): void;
+  /** `now`: Alt+Enter, which sends right away even while Nou works (interrupting it). */
+  onSubmit(value: string, now?: boolean): void;
   focus: boolean;
   width: number;
   placeholder: string;
@@ -93,7 +94,7 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
     if (arrowsTaken && (key.upArrow || key.downArrow)) return;
     if (key.return) {
       setRecall(null);
-      onSubmit(value);
+      onSubmit(value, key.meta);
       return;
     }
     if (key.backspace) return pos > 0 && set(value.slice(0, pos - 1) + value.slice(pos), pos - 1);

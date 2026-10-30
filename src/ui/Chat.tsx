@@ -31,7 +31,10 @@ type Props = {
   extraCommands?: SlashCommand[];
   /** Whether the command menu is open, so the app leaves Tab to it. */
   onMenu?(open: boolean): void;
-  onSubmit(text: string): void;
+  /** `now`: send right away, interrupting Nou if it's working; otherwise a message sent while it works waits its turn. */
+  onSubmit(text: string, now?: boolean): void;
+  /** Messages waiting to be sent when Nou finishes. */
+  queued?: string[];
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
   /** A click in the conversation: `row` from the top of the messages, `col` from where their text starts. */
@@ -103,7 +106,7 @@ function cachedLines(entry: ChatEntry, inner: number): Line[] {
   return lines;
 }
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, queued = [] }: Props) {
   const [input, setInput] = useState("");
   useEffect(() => {
     if (prefill) setInput(prefill.text);
@@ -155,6 +158,9 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     footer.push({ text: " [y] accept   [n] reject   [o] show it   [Esc] stop", color: C.yellow });
   } else if (busy) {
     footer.push({ text: `${SPINNER[frame % SPINNER.length]} ${busy}`, color: C.accent2 });
+  }
+  for (const text of queued) {
+    footer.push({ text: `⏳ next: ${text.replace(/\s+/g, " ")}`, color: C.dim });
   }
 
   // Typing "/" opens a menu of commands with what each does; ↑↓ pick one, Tab completes, Enter runs it.
@@ -213,8 +219,8 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     else if (key.escape) setInput("");
   }, { isActive: focused && showMenu });
 
-  const submit = (value: string) => {
-    if (!value.trim() || busy || approval) return;
+  const submit = (value: string, now = false) => {
+    if (!value.trim() || approval) return;
     let text = value.trim();
     if (showMenu && picked) {
       // Enter runs the highlighted command; one that needs an argument is completed instead, to type it.
@@ -222,7 +228,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
       text = `/${picked.name}`;
     }
     setInput("");
-    onSubmit(text);
+    onSubmit(text, now);
   };
 
   const render = (line: Line, key: string | number, withLead = true) => (
@@ -305,7 +311,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
         width={inner + 1}
         history={sent}
         arrowsTaken={showMenu}
-        placeholder={busy ? "working… Esc to stop" : showMenu ? "↑↓ choose · Tab complete · Enter run" : inner >= 44 ? "Ask anything · / for commands · ↑ history" : "Ask anything · / commands"}
+        placeholder={busy ? (inner >= 44 ? "Enter queues · Alt+Enter sends now · Esc stops" : "Enter queues · Esc stops") : showMenu ? "↑↓ choose · Tab complete · Enter run" : inner >= 44 ? "Ask anything · / for commands · ↑ history" : "Ask anything · / commands"}
       />
     </Pane>
   );

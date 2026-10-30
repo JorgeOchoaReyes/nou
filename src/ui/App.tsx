@@ -643,8 +643,7 @@ export function App({ initialModel, permContext }: Props) {
     if (!(key.ctrl && input === "c")) return;
     if (showEditor && focus === "code" && editorStateRef.current?.selection) return; // the editor copies it
     if (busy || approval) {
-      pullAbort.current?.abort();
-      agentRef.current?.cancel();
+      stop();
       approval?.resolve(false);
       setApproval(null);
       return;
@@ -855,7 +854,7 @@ export function App({ initialModel, permContext }: Props) {
     // handles them itself when its input is empty), Esc stops the turn, and every other key works as usual.
     if (approval && !(showEditor && focus === "code")) {
       if (key.escape) {
-        agentRef.current?.cancel();
+        stop();
         return answer(false);
       }
       if (focus !== "chat" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
@@ -873,10 +872,7 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (key.escape) {
-      if (busy) {
-        pullAbort.current?.abort();
-        agentRef.current?.cancel();
-      }
+      if (busy) stop();
       else if (diffMode !== "off") {
         setDiffMode("off");
         setSessionView(null);
@@ -1127,6 +1123,39 @@ ${snippet}
   };
   const setupCheckRef = useRef(setupCheck);
   setupCheckRef.current = setupCheck;
+  /** Messages sent while Nou works: each goes when it finishes, in order. */
+  const [queued, setQueued] = useState<string[]>([]);
+  /** Set when you stop Nou: what was queued goes back into the input instead of being sent. */
+  const stopped = useRef(false);
+  const stop = () => {
+    pullAbort.current?.abort();
+    agentRef.current?.cancel();
+    stopped.current = true;
+  };
+  useEffect(() => {
+    if (busy || approval || !queued.length) return;
+    if (stopped.current) {
+      stopped.current = false;
+      setChatPrefill((p) => ({ text: queued.join("\n"), nonce: (p?.nonce ?? 0) + 1 }));
+      setQueued([]);
+      return;
+    }
+    const [next, ...rest] = queued;
+    setQueued(rest);
+    send(next!);
+  }, [busy, approval, queued]);
+  useEffect(() => {
+    if (busy) stopped.current = false;
+  }, [busy]);
+  /** From the chat: while Nou works, a message waits its turn, or (`now`) stops Nou and goes right away. */
+  const submit = (text: string, now = false) => {
+    if (!busy) return send(text);
+    if (now) {
+      stop();
+      stopped.current = false; // this one is meant to go
+      setQueued((q) => [text, ...q]);
+    } else setQueued((q) => [...q, text]);
+  };
   const send = (text: string) => {
     if (text.startsWith("/")) {
       void runCommand(text);
@@ -1169,7 +1198,7 @@ ${snippet}
   const onJump = useEvent((file: string, line: number) => openAt(file, line));
   const onCloseProblems = useEvent(() => setCodePanel("code"));
   const onViewport = useEvent((top: number, bottom: number) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom })));
-  const onSend = useEvent(send);
+  const onSend = useEvent(submit);
   const onChatMenu = useEvent((open: boolean) => {
     chatMenuOpen.current = open;
     setChatMenu(open);
@@ -1359,10 +1388,7 @@ ${snippet}
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
     e: startEditing, "double-click/e": startEditing, b: goBack, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
-    Esc: busy ? () => {
-      pullAbort.current?.abort();
-      agentRef.current?.cancel();
-    } : diff && !showEditor ? () => setDiffMode("off") : undefined,
+    Esc: busy ? stop : diff && !showEditor ? () => setDiffMode("off") : undefined,
   };
   const zones: StatusZone[] = [];
   {
@@ -1479,6 +1505,7 @@ ${snippet}
           extraCommands={pluginCommands}
           onMenu={onChatMenu}
           onSubmit={onSend}
+          queued={queued}
           onAnswer={onAnswer}
           click={chatClick}
           onOpenRef={openRef}

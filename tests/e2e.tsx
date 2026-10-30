@@ -466,6 +466,44 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("x closes the last one, back to the welcome screen", frame().includes("Welcome"));
 });
 
+console.log("Queueing and interrupting");
+{
+  const heard: string[] = [];
+  const slow: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages, signal }: any) {
+      const last = messages[messages.length - 1];
+      heard.push(typeof last.content === "string" ? last.content.replace(/<editor_context>[\s\S]*/, "").trim() : "");
+      await new Promise((r, reject) => {
+        const t = setTimeout(r, 800);
+        signal?.addEventListener("abort", () => (clearTimeout(t), reject(new Error("aborted"))));
+      });
+      return { text: `ok ${heard.length}`, toolCalls: [] };
+    },
+  };
+  await session({ provider: slow, model: "fake" }, async ({ press, type, frame }) => {
+    await type("first");
+    await press(KEY.enter, 200);
+    await type("second");
+    await press(KEY.enter, 200);
+    check("a message sent while Nou works waits its turn, shown as next", frame().includes("⏳ next: second"));
+    await delay(1800);
+    check("and goes when Nou finishes", heard.includes("second") && !frame().includes("⏳ next"));
+    await type("third");
+    await press(KEY.enter, 200);
+    await type("urgent");
+    await press("\x1b\r", 1200);
+    check("Alt+Enter stops Nou and sends right away", heard.at(-1) === "urgent" && frame().includes("Cancelled"));
+    await delay(800);
+    await type("later");
+    await press(KEY.enter, 200);
+    await type("never");
+    await press(KEY.enter, 200);
+    await press(KEY.esc, 600);
+    check("Esc stops Nou and puts what was queued back in the input", !heard.includes("never") && frame().includes("❯ never"));
+  });
+}
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
