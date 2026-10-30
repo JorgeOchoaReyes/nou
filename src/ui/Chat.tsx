@@ -148,7 +148,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     for (const line of wrap(`$ ${approval.command}`, inner - 2)) footer.push({ text: ` ${line}`, color: C.text });
     footer.push({ text: " [y] allow   [n] deny   [Esc] stop", color: C.yellow });
   } else if (approval?.kind === "tool") {
-    footer.push({ text: `🔌 Plugin tool: ${approval.name}`, color: C.yellow, bold: true });
+    footer.push({ text: `🔌 ${approval.name.startsWith("mcp__") ? `MCP tool ${approval.name.split("__")[1]} → ${approval.name.split("__").slice(2).join("__")}` : `Plugin tool: ${approval.name}`}`, color: C.yellow, bold: true });
     for (const line of wrap(JSON.stringify(approval.args), inner - 2).slice(0, 4)) footer.push({ text: ` ${line}`, color: C.text });
     footer.push({ text: " [y] allow   [n] deny   [Esc] stop", color: C.yellow });
   } else if (approval?.kind === "change") {

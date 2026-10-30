@@ -175,6 +175,20 @@ nou --version
 
 Set `NOU_NO_UPDATE_CHECK=1` to turn the check off.
 
+## 🔌 MCP servers and browser control
+
+Nou's engine can use tools from [MCP](https://modelcontextprotocol.io) servers: a browser, GitHub, your database...
+
+- **Already use some?** Nou finds the MCP servers you've set up in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini CLI and Codex, and offers them on start: `/mcp import` brings them over, with their settings. (Your Claude Code and Codex API keys are picked up too; see *Use Claude Code / Codex keys* in settings.)
+- **Browser control:** `/mcp add browser` adds [Playwright's MCP server](https://github.com/microsoft/playwright-mcp), so you can ask Nou to open a page, click through it, fill a form or check what your app shows.
+- **Your own:** `/mcp add <name> <command and arguments>` or `/mcp add <name> <url>`; `/mcp` lists them and their status, `/mcp remove <name>` removes one. They live in `~/.nou/mcp.json` (same format as Claude Code and Cursor); a project's `.mcp.json` is used too, in folders you trust.
+
+Tools that say they only read run on their own; any other MCP tool asks you first, like Nou's edits and commands. A server's own output never reaches Nou's screen.
+
+## 🔒 Trusting a folder
+
+The first time you open a folder, Nou asks whether you trust its files: it reads them, and can run the folder's MCP servers and plugins. Say no and Nou doesn't open it. Trusted folders are listed in `~/.nou/config.json`.
+
 ## 🧩 Plugins *(early)*
 
 **Starter plugins** ship with Nou and are optional: open <kbd>s</kbd> settings → **Plugins** and press Enter on one, or type `/plugins add <name>`. Adding one copies it into `~/.nou/plugins/`, where it's yours to edit.

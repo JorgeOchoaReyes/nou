@@ -46,6 +46,8 @@ export type Settings = {
   reuseToolConfig: boolean;
   /** Pane widths as fractions of the terminal, set by dragging the borders or with < and >. Null means the default layout. */
   paneWidths: { tree: number; chat: number } | null;
+  /** Folders you've said you trust: Nou reads their files and runs their MCP servers and plugins. */
+  trustedFolders: string[];
   /** Games added to the Games panel (from settings → Games). */
   games: string[];
   /** Where the Games panel sits (its top-left corner, in screen cells), once you've moved it. */
@@ -73,6 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mouse: true,
   reuseToolConfig: true,
   paneWidths: null,
+  trustedFolders: [],
   games: [],
   gamePanel: null,
   plugins: {},
@@ -97,4 +100,10 @@ export function saveSettings(patch: Partial<Settings>): Settings {
     // settings are best effort; the session still uses them
   }
   return next;
+}
+
+/** Whether you trust this folder (or one it's inside). */
+export function isTrustedFolder(dir = process.cwd(), settings: Settings = loadSettings()): boolean {
+  const here = path.resolve(dir);
+  return settings.trustedFolders.some((t) => here === t || here.startsWith(t.endsWith(path.sep) ? t : t + path.sep));
 }

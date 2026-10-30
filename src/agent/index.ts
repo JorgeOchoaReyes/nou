@@ -136,6 +136,10 @@ export class Agent implements Engine {
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
 
   configure(options: EngineOptions) {
+    // A different system prompt or tool list (an MCP server connected, a plugin switched) changes what the
+    // earlier thinking was written against: newer Claude models reject replaying it, so it's dropped.
+    const toolsChanged = options.extraTools && options.extraTools.map((t) => t.definition.name).join() !== this.extraTools.map((t) => t.definition.name).join();
+    if (this.messages.length && ((options.system !== undefined && options.system !== this.system) || toolsChanged)) this.forgetThinking();
     if (options.system !== undefined) this.system = options.system;
     if (options.extraTools) this.extraTools = options.extraTools;
     if (options.effort) this.effort = options.effort;

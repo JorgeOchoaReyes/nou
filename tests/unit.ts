@@ -270,6 +270,42 @@ console.log("Review fixes");
   check("a reply cut off mid tool call is told so and carries on", calls === 2 && said.includes("smaller steps then"));
 }
 
+console.log("MCP servers");
+{
+  const { McpManager, loadMcpServers, saveUserServers } = await import("../src/mcp/index.js");
+  const { findOtherMcpServers, codexServers } = await import("../src/mcp/import.js");
+  saveUserServers({ test: { command: process.execPath, args: [path.join(root, "tests", "fixtures", "mcp-server.mjs")], cwd: root } });
+  const entries = loadMcpServers(false);
+  check("servers in ~/.nou/mcp.json are loaded", entries.some((e) => e.name === "test" && e.scope === "user"));
+  let changes = 0;
+  const mcp = new McpManager(() => changes++);
+  await mcp.connect(entries);
+  const st = mcp.status().find((x) => x.name === "test");
+  check("Nou connects to an MCP server and lists its tools", st?.state === "ready" && st.tools === 2 && changes > 0);
+  const tools = mcp.tools();
+  const echo = tools.find((t) => t.definition.name === "mcp__test__echo");
+  const flag = tools.find((t) => t.definition.name === "mcp__test__set_flag");
+  check("its tools are named for the server and keep their schema", !!echo && echo.definition.parameters.required.includes("text") && echo.definition.description.startsWith("[test]"));
+  check("tools that say they only read run without asking; the rest ask first", echo?.readOnly === true && flag?.readOnly === false);
+  check("calling a tool returns its text", (await echo!.run({ text: "hi" })) === "echo: hi");
+  mcp.close();
+  const broken = new McpManager(() => {});
+  await broken.connect([{ name: "nope", scope: "user", file: "", config: { command: process.execPath, args: ["-e", "console.error('bad config'); process.exit(1)"] } }]);
+  const failed = broken.status()[0];
+  check("a server that fails says why (its stderr, kept off the screen)", failed?.state === "failed" && (failed.error ?? "").includes("bad config"));
+
+  const home = mkdtempSync(path.join(os.tmpdir(), "nou-mcp-home-"));
+  mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ mcpServers: { github: { type: "http", url: "https://example.com/mcp", headers: { Authorization: "Bearer x" } } } }));
+  writeFileSync(path.join(home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { db: { command: "npx", args: ["db-mcp"], env: { DB: "x" } }, github: { command: "ignored" } } }));
+  writeFileSync(path.join(home, ".codex", "config.toml"), 'model = "gpt-5"\n\n[mcp_servers.docs]\ncommand = "uvx"\nargs = ["docs-mcp", "--fast"]\n\n[mcp_servers.docs.env]\nTOKEN = "abc"\n');
+  const found = findOtherMcpServers(home, home);
+  check("MCP servers set up in Claude Code, Cursor and Codex are found", ["github", "db", "docs"].every((n) => found.some((f) => f.name === n)));
+  check("with their settings, the first tool's wins on a name", found.find((f) => f.name === "github")?.config.url === "https://example.com/mcp" && found.find((f) => f.name === "docs")?.config.env?.TOKEN === "abc");
+  check("Codex's TOML tables are read", JSON.stringify(codexServers('[mcp_servers.x]\ncommand = "a"\nargs = ["b"]\n').x) === JSON.stringify({ command: "a", args: ["b"] }));
+}
+
 console.log("Games");
 {
   const { pong, snake, breakout, GAMES } = await import("../src/games/index.js");

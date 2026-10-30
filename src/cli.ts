@@ -6,7 +6,7 @@ import chalk from "chalk";
 import { artWork } from "./util/index.js";
 import { ensureProjectContext, loadPermanentContext } from "./context/index.js";
 import { describe, initialModel, resolveModel, saveModel } from "./providers/index.js";
-import { loadSettings } from "./config/index.js";
+import { isTrustedFolder, loadSettings, saveSettings } from "./config/index.js";
 import { loadCredentials } from "./config/credentials.js";
 import { borrowToolConfig, ensureLocalModel, pickStartingModel } from "./setup/index.js";
 import { checkForUpdate, currentVersion, installUpdate, relaunch } from "./update/index.js";
@@ -52,6 +52,19 @@ async function main() {
     process.exit(1);
   }
   p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞  ${chalk.dim(`v${currentVersion()}`)}`));
+
+  // A folder's files can run things (its MCP servers, plugins, the commands Nou is asked to run), so a
+  // folder is trusted once, like Claude Code and VS Code ask.
+  if (!isTrustedFolder()) {
+    const here = process.cwd();
+    p.log.warn(`Nou will read the files in ${chalk.bold(here)} and can run its MCP servers and plugins, and commands you approve.`);
+    const trust = await p.confirm({ message: "Do you trust the files in this folder?" });
+    if (trust !== true) {
+      p.outro("OK, not opening it. Run nou in a folder you trust.");
+      return;
+    }
+    saveSettings({ trustedFolders: [...loadSettings().trustedFolders, here] });
+  }
 
   const latest = await checkForUpdate();
   if (latest) {

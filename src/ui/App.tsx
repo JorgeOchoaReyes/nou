@@ -3,13 +3,15 @@ import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { nouRulesOnly } from "../context/index.js";
+import { MCP_PRESETS, McpManager, loadMcpServers, removeUserServer, saveUserServers, USER_MCP_FILE } from "../mcp/index.js";
+import { findOtherMcpServers } from "../mcp/import.js";
 import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
 import { describe, providers, resolveModel, saveModel, setupProblem, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
-import { FOLLOW_SPEEDS, loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
+import { FOLLOW_SPEEDS, isTrustedFolder, loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, sameStatus, status as gitStatus, statusAsync as gitStatusAsync, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch, trustState, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
@@ -363,13 +365,32 @@ export function App({ initialModel, permContext }: Props) {
     }
   }, [activePlugins]);
 
-  // Keep the agent's system prompt and tools in sync with settings and plugins.
+  // MCP servers (yours, and in a trusted folder the project's): connected in the background; their tools
+  // join the engine's as they come up.
+  const mcpRef = useRef<McpManager | null>(null);
+  const [mcpVersion, setMcpVersion] = useState(0);
+  mcpRef.current ??= new McpManager(() => setMcpVersion((v) => v + 1));
+  const connectMcp = () => mcpRef.current!.connect(loadMcpServers(isTrustedFolder()));
+  useEffect(() => {
+    void connectMcp().then(() => {
+      // Servers you use in other tools, offered once there's nothing set up here yet.
+      if (loadMcpServers(false).length) return;
+      const found = findOtherMcpServers();
+      if (found.length) {
+        const from = [...new Set(found.map((f) => f.from.replace(/ \(this project\)$/, "")))].join(", ");
+        info(`Found ${found.length} MCP server${found.length > 1 ? "s" : ""} you use in ${from} (${found.map((f) => f.name).join(", ")}). Type /mcp import to use them here too.`);
+      }
+    });
+    return () => mcpRef.current?.close();
+  }, []);
+
+  // Keep the agent's system prompt and tools in sync with settings, plugins and MCP servers.
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools, effort: settings.effort };
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
-  }, [settings.gitContext, settings.effort, activePlugins]);
+  }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
   // Pick up changes made outside Nou (other editors, git commands).
   const polling = useRef(false);
@@ -1089,6 +1110,52 @@ ${snippet}
     ? `${openFile}${showEditor && editorState ? `:${editorState.line}${editorState.dirty ? " ✎ unsaved" : ""}` : viewport ? `:${viewport.top}-${viewport.bottom}` : ""}`
     : null;
 
+  /** /mcp: list servers; add (a preset, a command, or a URL), remove, or import the ones from other tools. */
+  const mcpCommand = async ([action, name, ...more]: string[]) => {
+    if (action === "add") {
+      if (!name) return info(`Usage: /mcp add <name> <command and arguments | url>, or a ready-made one: ${Object.keys(MCP_PRESETS).join(", ")}`, "error");
+      const preset = MCP_PRESETS[name];
+      const target = more.join(" ").trim();
+      if (!preset && !target) return info(`Usage: /mcp add ${name} <command and arguments | url>`, "error");
+      const config = preset && !target ? preset.config : /^https?:\/\//.test(target) ? { url: target } : { command: more[0]!, args: more.slice(1) };
+      saveUserServers({ [name]: config });
+      info(`Added ${name} to ${USER_MCP_FILE}. Connecting...`);
+      await connectMcp();
+      const st = mcpRef.current!.status().find((x) => x.name === name);
+      return info(st?.state === "ready" ? `${name} is connected: ${st.tools} tools. Just ask; tools that change things ask you first.` : `${name} didn't connect: ${st?.error ?? "unknown error"}`, st?.state === "ready" ? "info" : "error");
+    }
+    if (action === "remove") {
+      if (!name || !removeUserServer(name)) return info(`No server called "${name ?? ""}" in ${USER_MCP_FILE}.`, "error");
+      await connectMcp();
+      return info(`Removed ${name}.`);
+    }
+    if (action === "import") {
+      const have = new Set(loadMcpServers(true).map((e) => e.name));
+      const found = findOtherMcpServers().filter((f) => !have.has(f.name));
+      if (!found.length) return info("No MCP servers to import: none set up in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini CLI or Codex that Nou doesn't have.");
+      saveUserServers(Object.fromEntries(found.map((f) => [f.name, f.config])));
+      info(`Imported ${found.map((f) => `${f.name} (from ${f.from})`).join(", ")} into ${USER_MCP_FILE}. Connecting...`);
+      await connectMcp();
+      return mcpCommand([]);
+    }
+    if (action === "reconnect") {
+      mcpRef.current!.close();
+      await connectMcp();
+      return mcpCommand([]);
+    }
+    if (action) return info("Usage: /mcp, /mcp add <name> <command|url>, /mcp add browser, /mcp remove <name>, /mcp import, /mcp reconnect", "error");
+    const list = mcpRef.current!.status();
+    const mark = { ready: "●", connecting: "◌", failed: "✖", off: "○" };
+    const lines = list.map((x) => `  ${mark[x.state]} ${x.name.padEnd(16)} ${x.state === "ready" ? `${x.tools} tools` : x.state}${x.scope === "project" ? " · this project" : ""}${x.error ? ` · ${x.error}` : ""}`);
+    const others = findOtherMcpServers().filter((f) => !list.some((x) => x.name === f.name));
+    return info([
+      list.length ? `MCP servers:\n${lines.join("\n")}` : "No MCP servers yet.",
+      `Ready-made: ${Object.entries(MCP_PRESETS).map(([k, v]) => `/mcp add ${k} (${v.about})`).join(" · ")}`,
+      others.length ? `In your other tools: ${others.map((f) => `${f.name} (${f.from})`).join(", ")}. /mcp import adds them.` : "",
+      `Yours are in ${USER_MCP_FILE}; a project's in .mcp.json (used in trusted folders).`,
+    ].filter(Boolean).join("\n"));
+  };
+
   const pluginsCommand = async ([action, name]: string[]) => {
     if (action === "add") {
       const starter = starters.find((s) => s.id === name);
@@ -1146,6 +1213,8 @@ ${snippet}
     }
     case "games":
       return toggleGames();
+    case "mcp":
+      return mcpCommand(rest);
     case "problems":
       setCodePanel("problems");
       setFocus("code");
@@ -1479,6 +1548,9 @@ ${snippet}
     { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
+    { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
+    { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
+    { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },
     { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout", keys: "/games", run: () => toggleGames() },
     { title: "Next tab", keys: "]", run: () => cycleTab(1) },
     { title: "Previous tab", keys: "[", run: () => cycleTab(-1) },

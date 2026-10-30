@@ -2,9 +2,10 @@
  * End-to-end tests: drives the real app with simulated keypresses in a temporary project.
  * Run: npm test
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const dir = mkdtempSync(path.join(os.tmpdir(), "nou-e2e-"));
 writeFileSync(path.join(dir, "a.ts"), "const a = 1;\n");
@@ -599,6 +600,26 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 300);
   check("/games again closes it", !frame().includes("✦ Pong"));
 });
+
+console.log("MCP servers");
+{
+  const home = process.env.HOME!;
+  mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "mcp-server.mjs");
+  writeFileSync(path.join(home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [server] } } }));
+  await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+    await delay(800);
+    check("MCP servers from your other tools are offered", frame().includes("Found 1 MCP server") && frame().includes("/mcp"));
+    await type("/mcp import");
+    await press(KEY.enter, 4000);
+    const ok = readFileSync(path.join(home, ".nou", "mcp.json"), "utf-8").includes("mcp-server.mjs") && /● test\s+2\b/.test(frame());
+    if (!ok) console.log(frame());
+    check("/mcp import brings them over and connects", ok);
+    check("the server's log never reaches the screen", !frame().includes("noisy server log line"));
+  });
+  rmSync(path.join(home, ".cursor"), { recursive: true, force: true });
+  rmSync(path.join(home, ".nou", "mcp.json"), { force: true });
+}
 
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
