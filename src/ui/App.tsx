@@ -30,7 +30,7 @@ import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
 import { SLASH_COMMANDS, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
-import { Chat } from "./Chat.js";
+import { Chat, type ChatSelect } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
@@ -229,6 +229,8 @@ export function App({ initialModel, permContext }: Props) {
   };
   const [codeDefine, setCodeDefine] = useState<{ row: number; x: number; nonce: number } | null>(null);
   const [chatClick, setChatClick] = useState<{ row: number; col: number; nonce: number } | null>(null);
+  /** Dragging over the chat's messages selects them (copied when you let go). */
+  const [chatSelect, setChatSelect] = useState<ChatSelect | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0, heights: { tree: 0, code: 0, chat: 0 } as Record<Dock, number>, game: null as { x: number; y: number; width: number; height: number } | null });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
@@ -239,7 +241,7 @@ export function App({ initialModel, permContext }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | "game" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "chatText" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -700,6 +702,8 @@ export function App({ initialModel, permContext }: Props) {
     }
     const { treeWidth, codeWidth, paneHeight } = layout.current;
     const codeLeft = treeWidth;
+    const chatAt = (x: number, y: number, kind: ChatSelect["kind"]) =>
+      setChatSelect((c) => ({ row: y - 3, col: x - treeWidth - codeWidth - 3, kind, nonce: (c?.nonce ?? 0) + 1 }));
     const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
       setEditorMouse((m) => [...m.slice(-15), { x: x - codeLeft - 1, y: y - 3, kind, seq: (m[m.length - 1]?.seq ?? 0) + 1 }]);
     if (event.kind === "drag") {
@@ -707,6 +711,7 @@ export function App({ initialModel, permContext }: Props) {
       const drag = dragging.current;
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
+      else if (drag === "chatText") chatAt(event.x, event.y, "drag");
       else if (drag && typeof drag === "object") scrollPane(drag.scroll, event.y);
       return;
     }
@@ -718,6 +723,7 @@ export function App({ initialModel, permContext }: Props) {
         setResizing(null);
       } else if (dragging.current && typeof dragging.current === "object" && "scroll" in dragging.current) scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
+      if (dragging.current === "chatText") chatAt(event.x, event.y, "release");
       dragging.current = null;
       return;
     }
@@ -770,7 +776,11 @@ export function App({ initialModel, permContext }: Props) {
     // Rows start under the pane's top border (y=1) and title (y=2).
     if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
     // Messages start after the chat's border and the two-column bar in front of each line.
-    if (pane === "chat" && event.y >= 3) setChatClick((c) => ({ row: event.y - 3, col: event.x - treeWidth - codeWidth - 3, nonce: (c?.nonce ?? 0) + 1 }));
+    if (pane === "chat" && event.y >= 3) {
+      setChatClick((c) => ({ row: event.y - 3, col: event.x - treeWidth - codeWidth - 3, nonce: (c?.nonce ?? 0) + 1 }));
+      dragging.current = "chatText";
+      chatAt(event.x, event.y, "press");
+    }
     // Two clicks in the same spot within half a second are a double-click.
     const last = lastClick.current;
     const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
@@ -1817,6 +1827,7 @@ ${snippet}
           queued={queued}
           onAnswer={onAnswer}
           click={chatClick}
+          select={chatSelect}
           onOpenRef={openRef}
         />
       </Box>
