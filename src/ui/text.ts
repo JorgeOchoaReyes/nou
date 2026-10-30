@@ -1,6 +1,7 @@
 import path from "path";
 import { diffLines } from "diff";
 import { highlightTree, notifySyntaxLoaded } from "../syntax/index.js";
+import { highlightJsTheme } from "../syntax/themes.js";
 
 // highlight.js registers every language it has when it loads (a seventh of a second), so it loads
 // after Nou is on screen; files show plain until then, or tree-sitter colors once their grammar is in.
@@ -43,7 +44,7 @@ export function highlightLines(filePath: string, text: string): string[] {
   }
   if (!fallback.supportsLanguage(language)) return plain;
   try {
-    return fallback.highlight(plain.join("\n"), { language, ignoreIllegals: true }).split("\n");
+    return fallback.highlight(plain.join("\n"), { language, ignoreIllegals: true, theme: highlightJsTheme() }).split("\n");
   } catch {
     return plain;
   }

@@ -104,6 +104,19 @@ console.log("Handing a conversation to another engine");
   check("a long one is cut to its latest part", long.length < 26_000 && long.includes("message 399") && !long.includes("message 0 "));
 }
 
+console.log("Code themes");
+{
+  const { setCodeTheme, themeColors, highlightJsTheme } = await import("../src/syntax/themes.js");
+  const { CODE_THEMES, DEFAULT_SETTINGS: defaults } = await import("../src/config/index.js");
+  check("the default code theme is one of the themes", (CODE_THEMES as readonly string[]).includes(defaults.codeTheme));
+  const before = themeColors().keyword("x");
+  setCodeTheme("github-light");
+  const after = themeColors().keyword("x");
+  check("switching themes changes the colors", before !== after || !process.stdout.isTTY);
+  check("highlight.js gets the same colors", highlightJsTheme().keyword === themeColors().keyword);
+  setCodeTheme(defaults.codeTheme);
+}
+
 console.log("write_file content");
 check("keeps \\n inside string literals", cleanContent('log("a\\nb");\n') === 'log("a\\nb");\n');
 check("keeps leading indentation", cleanContent("    x()\n") === "    x()\n");

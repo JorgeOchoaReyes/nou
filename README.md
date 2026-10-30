@@ -55,7 +55,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🧾 **Session diffs** | `/diff` shows everything that changed this session, file by file (<kbd>[</kbd> <kbd>]</kbd> to step through). `/sessions` lists earlier sessions and `/diff 2` shows one. |
 | 🩺 **Problems, live** | Syntax errors instantly, plus ESLint, TypeScript, Ruff and language servers when your project has them. Shown in the gutter, inline, and in a <kbd>p</kbd> Problems panel. |
 | 🤖 **Self-correcting** | Nou checks its own edits: you see "⚠ +1 problem" *before* approving, and any problems it introduced are fed back so it fixes them. |
-| 🎨 **Real syntax highlighting** | tree-sitter parsing for 14 languages (TS, JS, Python, Go, Rust, Java, C, JSON, YAML…). |
+| 🎨 **Real syntax highlighting** | tree-sitter parsing for 14 languages (TS, JS, Python, Go, Rust, Java, C, JSON, YAML…), in your choice of theme: One Dark (default), Tokyo Night, GitHub Dark, Dracula, High Contrast or GitHub Light (settings → Preferences → Code colors, with a preview). |
 | 🧭 **Code intelligence** | <kbd>Ctrl</kbd>+<kbd>K</kbd> hover info and <kbd>Ctrl</kbd>+<kbd>G</kbd> go-to-definition via language servers (typescript-language-server, pyright, rust-analyzer, gopls, clangd). |
 | 👀 **Knows what you're looking at** | The open file, visible lines, your cursor and unsaved edits ride along with each message. "Fix this function" just works. |
 | 🌿 **Git aware** | Sees your branch, uncommitted changes and recent commits, and can diff on its own. Press <kbd>v</kbd> to diff any file against `HEAD`. |

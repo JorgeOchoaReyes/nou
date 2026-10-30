@@ -15,6 +15,7 @@ import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostic
 import { Timeline, type SessionSummary } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
+import { setCodeTheme } from "../syntax/themes.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
 import { changedLines, lineCounts, loadFallbackHighlighter, type FileRef } from "./text.js";
 import { findDefinition, wordAt } from "./definition.js";
@@ -104,6 +105,7 @@ export function App({ initialModel, permContext }: Props) {
   const { columns, rows } = useWindowSize();
 
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
+  setCodeTheme(settings.codeTheme); // before anything below highlights code
   const [view, setView] = useState<"main" | "settings">("main");
   const [connectTo, setConnectTo] = useState<Provider | undefined>();
   /** Why settings were opened for you (a request failed on the provider's setup). */
@@ -294,6 +296,7 @@ export function App({ initialModel, permContext }: Props) {
 
   useEffect(() => diagnostics.subscribe(() => setDiagVersion((v) => v + 1)), []);
   useEffect(() => onGrammarLoaded(() => setSyntaxVersion((v) => v + 1)), []);
+  useEffect(() => setSyntaxVersion((v) => v + 1), [settings.codeTheme]); // re-color the code
   useEffect(() => void loadFallbackHighlighter(), []); // once Nou is on screen (it's slow to load)
   useEffect(() => {
     void checkForUpdate().then(setUpdate);

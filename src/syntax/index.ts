@@ -2,8 +2,8 @@ import { existsSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { fileURLToPath } from "url";
-import chalk from "chalk";
 import { Language, Parser, type Node } from "web-tree-sitter";
+import { themeColors, type Role } from "./themes.js";
 import type { Diagnostic, DiagnosticsProvider } from "../diagnostics/types.js";
 
 /** File extension -> grammar name (tree-sitter-<name>.wasm). Only these are shipped with Nou. */
@@ -97,20 +97,7 @@ export function preload(file: string) {
 
 // --- highlighting --------------------------------------------------------------
 
-const COLORS = {
-  keyword: chalk.hex("#bb9af7"),
-  string: chalk.hex("#9ece6a"),
-  number: chalk.hex("#ff9e64"),
-  comment: chalk.hex("#565f89").italic,
-  type: chalk.hex("#2ac3de"),
-  func: chalk.hex("#7aa2f7"),
-  property: chalk.hex("#73daca"),
-  constant: chalk.hex("#ff9e64"),
-  tag: chalk.hex("#f7768e"),
-  punctuation: chalk.hex("#89ddff"),
-  plain: chalk.hex("#c0caf5"),
-};
-type Color = keyof typeof COLORS;
+type Color = Role;
 
 const STRINGS = /^(string|template_string|string_fragment|string_content|raw_string_literal|interpreted_string_literal|char_literal|character_literal|escape_sequence|string_literal|heredoc_body)$/;
 const NUMBERS = /^(number|integer|float|integer_literal|float_literal|number_literal|decimal_integer_literal|decimal_floating_point_literal)$/;
@@ -175,11 +162,11 @@ export function highlightTree(file: string, text: string): string[] | null {
       const node = cursor.currentNode;
       if (node.childCount === 0 || node.type.includes("comment") || (isString(node) && !hasSubstitution(node))) {
         if (node.startIndex >= pos) {
-          out += COLORS.plain(text.slice(pos, node.startIndex));
+          out += themeColors().plain(text.slice(pos, node.startIndex));
           const color = colorFor(node);
           const span = text.slice(node.startIndex, node.endIndex);
           // Color each line separately so styles don't bleed across line breaks.
-          out += span.split("\n").map((part) => (color ? COLORS[color](part) : COLORS.plain(part))).join("\n");
+          out += span.split("\n").map((part) => (color ? themeColors()[color](part) : themeColors().plain(part))).join("\n");
           pos = node.endIndex;
         }
       } else if (cursor.gotoFirstChild()) {
@@ -189,7 +176,7 @@ export function highlightTree(file: string, text: string): string[] | null {
     } while (cursor.gotoNextSibling());
   };
   if (cursor.gotoFirstChild()) visit();
-  out += COLORS.plain(text.slice(pos));
+  out += themeColors().plain(text.slice(pos));
   tree.delete();
   return out.split("\n");
 }

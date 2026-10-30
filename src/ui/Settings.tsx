@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/index.js";
+import { AUTO_SAVE, CODE_THEMES, EFFORTS, type Settings as SettingsType } from "../config/index.js";
+import { highlightLines } from "./text.js";
 import { saveCredentials } from "../config/credentials.js";
 import { originOf, setOutsideNou } from "../config/origins.js";
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
@@ -28,12 +29,19 @@ type Props = {
   onClose(): void;
 };
 
+/** A few lines of code to show what a code theme looks like. */
+const THEME_PREVIEW = `// Greets someone, politely
+export function greet(name: string, times = 2): string {
+  return \`Hello \${name}!\`.repeat(times) || null;
+}`;
+
 const TABS = ["Model", "Engine", "Preferences", "Plugins"] as const;
 type Tab = (typeof TABS)[number];
 
 type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boolean };
 const PREFS: Pref[] = [
   { key: "effort", label: "Reasoning effort", help: "How hard Claude thinks (low → max). Higher is smarter but slower and pricier." },
+  { key: "codeTheme", label: "Code colors", help: "The theme for code. ←/→ to try them; github-light is for light terminals." },
   { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
   { key: "mouse", label: "Mouse", help: "Wheel scrolls the pane under the pointer; click to focus or open files. Hold Shift to select text." },
   { key: "followMode", label: "Follow mode on start", help: "The code view jumps to files Nou reads and edits." },
@@ -154,6 +162,8 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
       const step = key.leftArrow ? -1 : 1;
       if (pref.key === "effort") {
         onChange({ effort: EFFORTS[(EFFORTS.indexOf(settings.effort) + step + EFFORTS.length) % EFFORTS.length]! });
+      } else if (pref.key === "codeTheme") {
+        onChange({ codeTheme: CODE_THEMES[(CODE_THEMES.indexOf(settings.codeTheme) + step + CODE_THEMES.length) % CODE_THEMES.length]! });
       } else if (pref.key === "autoSave") {
         onChange({ autoSave: AUTO_SAVE[(AUTO_SAVE.indexOf(settings.autoSave) + step + AUTO_SAVE.length) % AUTO_SAVE.length]! });
       } else {
@@ -166,6 +176,18 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   });
 
   const boxHeight = height - 6;
+  // Preferences take three rows each (label, help, gap), the code theme's preview four more: show the ones
+  // around the selected one that fit.
+  const prefWindow = (() => {
+    const room = Math.max(3, boxHeight - 4);
+    const cost = (i: number) => 3 + (tab === "Preferences" && i === row && PREFS[i]?.key === "codeTheme" ? 4 : 0);
+    let first = tab === "Preferences" ? row : 0;
+    let last = first + 1;
+    let used = cost(first);
+    while (last < PREFS.length && used + cost(last) <= room) used += cost(last++);
+    while (first > 0 && used + cost(first - 1) <= room) used += cost(--first);
+    return { first, last };
+  })();
   const toggle = (on: boolean, warn?: boolean) => (
     <Text color={on ? (warn ? C.orange : C.green) : C.dim} bold>{on ? "● ON " : "○ OFF"}</Text>
   );
@@ -309,8 +331,10 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
 
     if (tab === "Preferences") {
       return (
-        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
-          {PREFS.map((pref, i) => {
+        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1} overflow="hidden">
+          {prefWindow.first > 0 ? <Text color={C.dim}>  ↑ {prefWindow.first} more</Text> : null}
+          {PREFS.slice(prefWindow.first, prefWindow.last).map((pref, at) => {
+            const i = prefWindow.first + at;
             const selected = i === row;
             const value = settings[pref.key];
             return (
@@ -318,14 +342,20 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                 <Text {...(selected ? { backgroundColor: C.panel } : {})}>
                   <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
                   <Text color={C.text} bold={selected}>{pref.label.padEnd(26)}</Text>
-                  {pref.key === "effort" || pref.key === "autoSave"
-                    ? <Text>{(pref.key === "effort" ? EFFORTS : AUTO_SAVE).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
-                    : toggle(value as boolean, pref.warn)}
+                  {pref.key === "codeTheme"
+                    ? <Text><Text color={C.dim}>‹ </Text><Text color={C.accent2} bold>{String(value)}</Text><Text color={C.dim}> ›  {CODE_THEMES.indexOf(value as never) + 1}/{CODE_THEMES.length}</Text></Text>
+                    : pref.key === "effort" || pref.key === "autoSave"
+                      ? <Text>{(pref.key === "effort" ? EFFORTS : AUTO_SAVE).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
+                      : toggle(value as boolean, pref.warn)}
                 </Text>
-                <Text color={C.dim}>    {pref.help}</Text>
+                <Text color={C.dim} wrap="truncate-end">    {pref.help}</Text>
+                {pref.key === "codeTheme" && selected
+                  ? highlightLines("preview.ts", THEME_PREVIEW).map((line, n) => <Text key={n} wrap="truncate-end">{"    "}{line}</Text>)
+                  : null}
               </Box>
             );
           })}
+          {prefWindow.last < PREFS.length ? <Text color={C.dim}>  ↓ {PREFS.length - prefWindow.last} more</Text> : null}
         </Box>
       );
     }

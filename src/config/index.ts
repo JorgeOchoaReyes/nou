@@ -11,6 +11,10 @@ export type Effort = (typeof EFFORTS)[number];
 export const AUTO_SAVE = ["delay", "focus", "off"] as const;
 export type AutoSave = (typeof AUTO_SAVE)[number];
 
+/** Color themes for code (see src/syntax/themes.ts). */
+export const CODE_THEMES = ["one-dark", "tokyo-night", "github-dark", "dracula", "high-contrast", "github-light"] as const;
+export type CodeTheme = (typeof CODE_THEMES)[number];
+
 export type Settings = {
   /** provider:model, e.g. "ollama:qwen3:8b". Empty means the built-in default. */
   model: string;
@@ -28,6 +32,8 @@ export type Settings = {
   gitContext: boolean;
   /** Editor auto-save: shortly after you stop typing, when you leave the editor, or never. */
   autoSave: AutoSave;
+  /** Colors for code: syntax highlighting in the code view, editor and diffs. */
+  codeTheme: CodeTheme;
   /** Mouse wheel scrolls the pane under the pointer; clicks focus panes and open files. */
   mouse: boolean;
   /** Use API keys from Claude Code's and Codex's config for providers you haven't set up. */
@@ -52,6 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoApproveCommands: false,
   gitContext: true,
   autoSave: "delay",
+  codeTheme: "one-dark",
   mouse: true,
   reuseToolConfig: true,
   paneWidths: null,
