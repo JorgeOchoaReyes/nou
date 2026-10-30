@@ -31,10 +31,12 @@ import { Chat } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
+import { GAME_PANEL, GamePanel } from "./GamePanel.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
-type Focus = "tree" | "code" | "chat";
+/** "game": the Games panel has the keyboard (it isn't one of the panes Tab moves between). */
+type Focus = "tree" | "code" | "chat" | "game";
 type DiffMode = "off" | "git" | "nou" | "session";
 const FOCUS_ORDER: Focus[] = ["tree", "code", "chat"];
 const MIN_TREE = 14;
@@ -119,6 +121,16 @@ export function App({ initialModel, permContext }: Props) {
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
+  /** The Games panel: whether it's open, where it is while being dragged, and the pane to go back to. */
+  const [gamesOpen, setGamesOpen] = useState(false);
+  const [gameDrag, setGameDrag] = useState<{ x: number; y: number } | null>(null);
+  const beforeGame = useRef<Focus>("chat");
+  /** Keeps the Games panel on screen (it's dragged by its title; the header row stays clear). */
+  const placeGames = (x: number, y: number) => ({
+    x: Math.max(0, Math.min(columns - GAME_PANEL.width, x)),
+    y: Math.max(1, Math.min(rows - GAME_PANEL.height - 1, y)),
+  });
+  const gamePos = gameDrag ?? placeGames(settings.gamePanel?.x ?? columns - GAME_PANEL.width - 1, settings.gamePanel?.y ?? rows - GAME_PANEL.height - 2);
   const [follow, setFollow] = useState(settings.followMode);
   // Follow mode replays what the agent reads a step at a time (it reads far faster than you can watch):
   // the steps waiting, and the timer that shows the next one.
@@ -223,7 +235,7 @@ export function App({ initialModel, permContext }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | { game: { dx: number; dy: number } } | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -616,6 +628,28 @@ export function App({ initialModel, permContext }: Props) {
   // between panes to resize them.
   useMouse((event) => {
     if (view !== "main" || quickOpen !== null) return;
+    // The Games panel floats over the panes: it takes the clicks that land on it, and its title bar drags it.
+    if (gamesOpen) {
+      const drag = dragging.current;
+      if (drag && typeof drag === "object" && "game" in drag) {
+        const at = placeGames(event.x - drag.game.dx, event.y - drag.game.dy);
+        if (event.kind === "release") {
+          dragging.current = null;
+          setGameDrag(null);
+          updateSettings({ gamePanel: at });
+        } else setGameDrag(at);
+        return;
+      }
+      const g = gamePos;
+      const inside = event.x >= g.x && event.x < g.x + GAME_PANEL.width && event.y >= g.y && event.y < g.y + GAME_PANEL.height;
+      if (inside) {
+        if (event.kind !== "click") return;
+        if (focus !== "game") beforeGame.current = focus;
+        setFocus("game");
+        if (event.y <= g.y + 1) dragging.current = { game: { dx: event.x - g.x, dy: event.y - g.y } };
+        return;
+      }
+    }
     const { treeWidth, codeWidth, paneHeight } = layout.current;
     const codeLeft = treeWidth;
     const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
@@ -625,7 +659,7 @@ export function App({ initialModel, permContext }: Props) {
       const drag = dragging.current;
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
-      else if (drag) scrollPane(drag.scroll, event.y);
+      else if (drag && "scroll" in drag) scrollPane(drag.scroll, event.y);
       return;
     }
     if (event.kind === "release") {
@@ -634,7 +668,7 @@ export function App({ initialModel, permContext }: Props) {
       if (dragging.current === "tree" || dragging.current === "chat") {
         updateSettings({ paneWidths: moveBorder(dragging.current, event.x) });
         setResizing(null);
-      } else if (dragging.current && typeof dragging.current === "object") scrollPane(dragging.current.scroll, event.y);
+      } else if (dragging.current && typeof dragging.current === "object" && "scroll" in dragging.current) scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       dragging.current = null;
       return;
@@ -965,6 +999,7 @@ export function App({ initialModel, permContext }: Props) {
     }
     if (showEditor && focus === "code") return; // the editor owns the keyboard
     if (focus === "code" && codeFinding.current) return; // so does the find bar
+    if (focus === "game") return; // and the Games panel
     if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
@@ -1095,6 +1130,8 @@ ${snippet}
       if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
       return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
     }
+    case "games":
+      return toggleGames();
     case "problems":
       setCodePanel("problems");
       setFocus("code");
@@ -1393,6 +1430,20 @@ ${snippet}
     updateSettings({ mouse: !settings.mouse });
     info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
   };
+  /** Opens the Games panel and gives it the keyboard, or closes it. */
+  const toggleGames = (open = !gamesOpen) => {
+    setGamesOpen(open);
+    if (open) {
+      if (focus !== "game") beforeGame.current = focus;
+      setFocus("game");
+    } else if (focus === "game") setFocus(beforeGame.current);
+  };
+  // Plain functions, not hooks: this runs after the settings screen's early return.
+  const leaveGames = () => setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
+  const gamesSettings = () => {
+    setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
+    setView("settings");
+  };
   /** Back to the file that was open before this one. */
   const goBack = () => {
     const previous = recent.find((f) => f !== openFile);
@@ -1411,6 +1462,7 @@ ${snippet}
     { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
+    { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout", keys: "/games", run: () => toggleGames() },
     { title: "Next tab", keys: "]", run: () => cycleTab(1) },
     { title: "Previous tab", keys: "[", run: () => cycleTab(-1) },
     { title: "Close the tab", keys: "x", run: () => closeTab() },
@@ -1635,6 +1687,9 @@ ${snippet}
             ))}
         </Text>
       </Box>
+      {gamesOpen && (
+        <GamePanel x={gamePos.x} y={gamePos.y} focused={focus === "game"} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+      )}
       {quickOpen !== null && (
         <QuickOpen
           width={columns}

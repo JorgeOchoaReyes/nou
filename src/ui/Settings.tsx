@@ -3,6 +3,7 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { AUTO_SAVE, CODE_THEMES, EFFORTS, FOLLOW_SPEEDS, type Settings as SettingsType } from "../config/index.js";
 import { highlightLines } from "./text.js";
+import { GAMES } from "../games/index.js";
 import { saveCredentials } from "../config/credentials.js";
 import { originOf, setOutsideNou } from "../config/origins.js";
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
@@ -35,7 +36,7 @@ export function greet(name: string, times = 2): string {
   return \`Hello \${name}!\`.repeat(times) || null;
 }`;
 
-const TABS = ["Model", "Engine", "Preferences", "Plugins"] as const;
+const TABS = ["Model", "Engine", "Preferences", "Plugins", "Games"] as const;
 type Tab = (typeof TABS)[number];
 
 type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boolean };
@@ -108,7 +109,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   };
 
   const modelItems = Array.isArray(listed) ? listed : [];
-  const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Engine" ? ENGINES.length : t === "Preferences" ? PREFS.length : plugins.length);
+  const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Engine" ? ENGINES.length : t === "Preferences" ? PREFS.length : t === "Games" ? GAMES.length : plugins.length);
 
   useInput((input, key) => {
     if (connecting) {
@@ -172,6 +173,9 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
       } else {
         onChange({ [pref.key]: !settings[pref.key] } as Partial<SettingsType>);
       }
+    } else if (tab === "Games" && (key.return || input === " ") && GAMES[row]) {
+      const id = GAMES[row].id;
+      onChange({ games: settings.games.includes(id) ? settings.games.filter((g) => g !== id) : [...settings.games, id] });
     } else if (tab === "Plugins") {
       if (input === "r") onRescanPlugins();
       else if ((key.return || input === " ") && plugins[row]) onTogglePlugin(plugins[row].id, !isEnabled(plugins[row], settings));
@@ -363,6 +367,30 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
       );
     }
 
+    if (tab === "Games") {
+      return (
+        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
+          <Text color={C.dim}>Little games for a break while Nou works. Added ones show in the Games panel: /games, or ? then "games".</Text>
+          <Text> </Text>
+          {GAMES.map((g, i) => {
+            const selected = i === row;
+            const added = settings.games.includes(g.id);
+            return (
+              <Box key={g.id} flexDirection="column" marginBottom={1}>
+                <Text {...(selected ? { backgroundColor: C.panel } : {})}>
+                  <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
+                  {added ? <Text color={C.green} bold>✓ ADDED</Text> : <Text color={C.accent2} bold>⬇ GET  </Text>}
+                  <Text color={C.text} bold> {g.title}</Text>
+                  <Text color={C.dim}>  {g.controls}</Text>
+                </Text>
+                <Text color={C.dim} wrap="truncate-end">    {g.blurb}</Text>
+              </Box>
+            );
+          })}
+        </Box>
+      );
+    }
+
     return (
       <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
         {plugins.map((p, i) => {
@@ -401,7 +429,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
 
   const hints = tab === "Model"
     ? connecting ? "Enter next · Esc cancel" : column === "models" ? `↑↓ choose · Enter use model · ← providers${provider.connect ? " · k change key" : ""}` : `↑↓ provider · Enter/→ ${provider.unavailable() ? "connect" : "pick a model"}${provider.connect ? " · k change key" : ""}`
-    : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
+    : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : tab === "Games" ? "↑↓ move · Enter add / remove · /games opens the panel" : "↑↓ move · Enter toggle · r rescan";
 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1}>

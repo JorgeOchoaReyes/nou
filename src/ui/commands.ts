@@ -29,6 +29,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "clear", description: "start a fresh conversation" },
   { name: "pull", args: "<model>", description: "download an Ollama model" },
   { name: "plugins", args: "[add|new <name>]", description: "your plugins and the starter ones" },
+  { name: "games", description: "open or close the Games panel (Pong, Snake, Breakout)" },
   { name: "version", description: "which version of Nou this is" },
   { name: "help", description: "all commands and keys" },
 ];

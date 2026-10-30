@@ -570,6 +570,36 @@ console.log("Follow along");
   });
 }
 
+console.log("Games");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/settings");
+  await press(KEY.enter, 300);
+  for (let i = 0; i < 4; i++) await press(KEY.tab, 150);
+  check("settings has a Games tab to get them from", frame().includes("Pong") && frame().includes("⬇ GET"));
+  await press(KEY.enter, 200);
+  check("Enter adds a game", frame().includes("✓ ADDED"));
+  await press(KEY.esc, 300);
+  await type("/games");
+  await press(KEY.enter, 400);
+  check("/games opens the Games panel with what you added", frame().includes("✦ Games") && frame().includes("▸ Pong"));
+  await press(KEY.enter, 400);
+  check("Enter starts the game", frame().includes("✦ Pong") && frame().includes("you 0 · 0 computer"));
+  check("the panel has the keyboard", frame().split("\n").at(-1)!.includes("GAME"));
+  const rows = frame().split("\n");
+  const y = rows.findIndex((l) => l.includes("✦ Pong"));
+  const x = rows[y]!.indexOf("✦ Pong");
+  await press(click(x, y), 100);
+  await press(`\x1b[<32;${x - 10 + 1};${y - 1 + 1}M`, 100);
+  await press(`\x1b[<0;${x - 10 + 1};${y - 1 + 1}m`, 300);
+  const moved = frame().split("\n").findIndex((l) => l.includes("✦ Pong"));
+  check("dragging the title bar moves the panel", moved === y - 1 && frame().split("\n")[moved]!.indexOf("✦ Pong") === x - 10);
+  await press(KEY.esc, 300);
+  check("Esc gives the keyboard back, and the game waits", !frame().split("\n").at(-1)!.includes("GAME") && frame().includes("click to play"));
+  await type("/games");
+  await press(KEY.enter, 300);
+  check("/games again closes it", !frame().includes("✦ Pong"));
+});
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");

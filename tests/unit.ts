@@ -219,6 +219,35 @@ console.log("Retrying a model that's busy");
   check("a rejected key isn't retried", keyTries === 1 && said2.includes("error"));
 }
 
+console.log("Games");
+{
+  const { pong, snake, breakout, GAMES } = await import("../src/games/index.js");
+  for (const g of GAMES) {
+    let st = g.create(36, 13, 7);
+    for (let i = 0; i < 400; i++) st = g.tick(st, i % 7 === 0 ? ["up"] : i % 5 === 0 ? ["left"] : []);
+    const v = g.view(st);
+    check(`${g.title} runs 400 ticks and draws a 36×13 field`, v.lines.length === 13 && v.lines.every((l) => [...l].length === 36));
+  }
+  let s1 = snake.create(20, 10, 3);
+  const len = s1.body.length;
+  s1 = { ...s1, food: { x: s1.body[0]!.x + 1, y: s1.body[0]!.y } };
+  s1 = snake.tick(s1, []);
+  check("the snake grows when it eats", s1.body.length === len + 1 && s1.score === 1);
+  s1 = snake.tick(s1, ["left"]);
+  check("the snake can't turn straight back on itself", s1.dir === "right" && !s1.dead);
+  let s2 = snake.create(20, 10, 3);
+  for (let i = 0; i < 40; i++) s2 = snake.tick(s2, []);
+  check("running into the wall ends the game", s2.dead && !!snake.view(s2).over);
+  let p = pong.create(36, 13, 1);
+  const top = p.you;
+  p = pong.tick(p, ["up", "up"]);
+  check("Pong: the paddle moves with the keys", p.you === top - 2);
+  let b = breakout.create(36, 13, 2);
+  const paddle = b.paddle;
+  b = breakout.tick(b, ["right"]);
+  check("Breakout: the paddle moves with the keys", b.paddle === paddle + 2);
+}
+
 console.log("Project instructions");
 {
   const { loadPermanentContext } = await import("../src/context/index.js");

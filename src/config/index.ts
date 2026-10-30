@@ -46,6 +46,10 @@ export type Settings = {
   reuseToolConfig: boolean;
   /** Pane widths as fractions of the terminal, set by dragging the borders or with < and >. Null means the default layout. */
   paneWidths: { tree: number; chat: number } | null;
+  /** Games added to the Games panel (from settings → Games). */
+  games: string[];
+  /** Where the Games panel sits (its top-left corner, in screen cells), once you've moved it. */
+  gamePanel: { x: number; y: number } | null;
   /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
   /**
@@ -69,6 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   mouse: true,
   reuseToolConfig: true,
   paneWidths: null,
+  games: [],
+  gamePanel: null,
   plugins: {},
   trustedPlugins: {},
 };
