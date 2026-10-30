@@ -233,7 +233,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     ];
     return (
       <Pane title={<> <Text color={C.accent2}>✦</Text> Welcome</>} width={width} height={height} focused={focused}>
-        <Box flexDirection="column" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" paddingX={2} paddingY={1} flexShrink={0}>
           {inner > 62 && artWork.split("\n").filter((l) => l.trim()).map((line, i) => (
             <Text key={i}>{gradient(line, i).map((g, j) => <Text key={j} color={g.color}>{g.ch}</Text>)}</Text>
           ))}

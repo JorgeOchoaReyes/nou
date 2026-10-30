@@ -40,6 +40,8 @@ import { Settings } from "./Settings.js";
 
 /** "game": the Games panel has the keyboard (it isn't one of the panes Tab moves between). */
 type Focus = "tree" | "code" | "chat" | "game";
+/** The panes the Games panel can dock under. */
+type Dock = Exclude<Focus, "game">;
 type DiffMode = "off" | "git" | "nou" | "session";
 const FOCUS_ORDER: Focus[] = ["tree", "code", "chat"];
 const MIN_TREE = 14;
@@ -124,16 +126,12 @@ export function App({ initialModel, permContext }: Props) {
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
-  /** The Games panel: whether it's open, where it is while being dragged, and the pane to go back to. */
+  /** The Games panel: whether it's open, the pane it's being dragged over, and the pane to go back to. */
   const [gamesOpen, setGamesOpen] = useState(false);
-  const [gameDrag, setGameDrag] = useState<{ x: number; y: number } | null>(null);
+  const [gameDrag, setGameDrag] = useState<Dock | null>(null);
   const beforeGame = useRef<Focus>("chat");
-  /** Keeps the Games panel on screen (it's dragged by its title; the header row stays clear). */
-  const placeGames = (x: number, y: number) => ({
-    x: Math.max(0, Math.min(columns - GAME_PANEL.width, x)),
-    y: Math.max(1, Math.min(rows - GAME_PANEL.height - 1, y)),
-  });
-  const gamePos = gameDrag ?? placeGames(settings.gamePanel?.x ?? columns - GAME_PANEL.width - 1, settings.gamePanel?.y ?? rows - GAME_PANEL.height - 2);
+  /** It docks under a pane, splitting that pane's column: under the one it's dragged over while moving. */
+  const gameDock: Dock = gameDrag ?? settings.gameDock ?? "chat";
   const [follow, setFollow] = useState(settings.followMode);
   // Follow mode replays what the agent reads a step at a time (it reads far faster than you can watch):
   // the steps waiting, and the timer that shows the next one.
@@ -229,7 +227,7 @@ export function App({ initialModel, permContext }: Props) {
   const [codeDefine, setCodeDefine] = useState<{ row: number; x: number; nonce: number } | null>(null);
   const [chatClick, setChatClick] = useState<{ row: number; col: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
-  const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
+  const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0, heights: { tree: 0, code: 0, chat: 0 } as Record<Dock, number>, game: null as { x: number; y: number; width: number; height: number } | null });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
   const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
   const paneWidthsRef = useRef(paneWidths);
@@ -238,7 +236,7 @@ export function App({ initialModel, permContext }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | { game: { dx: number; dy: number } } | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -649,7 +647,7 @@ export function App({ initialModel, permContext }: Props) {
 
   /** Scrolls a pane to where its scrollbar was clicked or dragged (rows start at y=3, under the border and title). */
   const scrollPane = (pane: Focus, y: number) => {
-    const { paneHeight } = layout.current;
+    const paneHeight = pane === "game" ? 0 : layout.current.heights[pane];
     const fraction = (y - 3) / Math.max(1, paneHeight - 4);
     setScrollTo((s) => ({ pane, fraction, nonce: (s?.nonce ?? 0) + 1 }));
   };
@@ -660,25 +658,33 @@ export function App({ initialModel, permContext }: Props) {
   // between panes to resize them.
   useMouse((event) => {
     if (view !== "main" || quickOpen !== null) return;
-    // The Games panel floats over the panes: it takes the clicks that land on it, and its title bar drags it.
-    if (gamesOpen) {
+    // The Games panel sits under a pane: it takes the clicks that land on it, × on its title closes it,
+    // and dragging its title docks it under the pane you let go over.
+    const game = layout.current.game;
+    if (gamesOpen && game) {
       const drag = dragging.current;
-      if (drag && typeof drag === "object" && "game" in drag) {
-        const at = placeGames(event.x - drag.game.dx, event.y - drag.game.dy);
+      if (drag === "game") {
+        const { treeWidth, codeWidth } = layout.current;
+        const over: Dock = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
         if (event.kind === "release") {
           dragging.current = null;
           setGameDrag(null);
-          updateSettings({ gamePanel: at });
-        } else setGameDrag(at);
+          updateSettings({ gameDock: over });
+        } else setGameDrag(over);
         return;
       }
-      const g = gamePos;
-      const inside = event.x >= g.x && event.x < g.x + GAME_PANEL.width && event.y >= g.y && event.y < g.y + GAME_PANEL.height;
+      const inside = event.x >= game.x && event.x < game.x + game.width && event.y >= game.y && event.y < game.y + game.height;
       if (inside) {
         if (event.kind !== "click") return;
+        if (event.y === game.y + 1 && event.x >= game.x + game.width - 5) {
+          // × closes it
+          setGamesOpen(false);
+          if (focus === "game") setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
+          return;
+        }
         if (focus !== "game") beforeGame.current = focus;
         setFocus("game");
-        if (event.y <= g.y + 1) dragging.current = { game: { dx: event.x - g.x, dy: event.y - g.y } };
+        if (event.y <= game.y + 1) dragging.current = "game";
         return;
       }
     }
@@ -691,7 +697,7 @@ export function App({ initialModel, permContext }: Props) {
       const drag = dragging.current;
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
-      else if (drag && "scroll" in drag) scrollPane(drag.scroll, event.y);
+      else if (drag && typeof drag === "object") scrollPane(drag.scroll, event.y);
       return;
     }
     if (event.kind === "release") {
@@ -1535,7 +1541,13 @@ ${snippet}
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
   const tabStrip = tabs.length && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
-  layout.current = { treeWidth, codeWidth, paneHeight: height };
+  // The Games panel takes the bottom of its pane's column: up to 19 rows, and never more than half.
+  const gameHeight = gamesOpen ? Math.min(GAME_PANEL.height, Math.floor(height / 2)) : 0;
+  const heights: Record<Dock, number> = { tree: height, code: height, chat: height };
+  heights[gameDock] -= gameHeight;
+  const dockLeft = gameDock === "tree" ? 0 : gameDock === "code" ? treeWidth : treeWidth + codeWidth;
+  const dockWidth = gameDock === "tree" ? treeWidth : gameDock === "code" ? codeWidth : chatWidth;
+  layout.current = { treeWidth, codeWidth, paneHeight: height, heights, game: gamesOpen ? { x: dockLeft, y: 1 + heights[gameDock], width: dockWidth, height: gameHeight } : null };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
   const totals = diagnostics.counts();
@@ -1701,7 +1713,7 @@ ${snippet}
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}
-          height={height}
+          height={heights.tree}
           focused={focus === "tree"}
           openFile={openFile}
           reveal={reveal}
@@ -1718,7 +1730,7 @@ ${snippet}
         {codePanel === "problems" && !pendingChange ? (
           <ProblemsView
             width={codeWidth}
-            height={height}
+            height={heights.code}
             focused={focus === "code"}
             problems={diagnostics.all()}
             checking={checking}
@@ -1731,7 +1743,7 @@ ${snippet}
             key={`${openFile}:${editorStart.nonce}`}
             {...(tabStrip ? { tabs: tabStrip } : {})}
             width={codeWidth}
-            height={height}
+            height={heights.code}
             focused={focus === "code"}
             filePath={openFile}
             initial={draft.current?.path === openFile ? draft.current.text : content}
@@ -1754,7 +1766,7 @@ ${snippet}
           <CodeView
             {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
-            height={height}
+            height={heights.code}
             focused={focus === "code"}
             filePath={openFile}
             content={content}
@@ -1777,7 +1789,7 @@ ${snippet}
         )}
         <Chat
           width={chatWidth}
-          height={height}
+          height={heights.chat}
           focused={focus === "chat"}
           entries={entries}
           streaming={streaming}
@@ -1812,8 +1824,11 @@ ${snippet}
             ))}
         </Text>
       </Box>
-      {gamesOpen && (
-        <GamePanel x={gamePos.x} y={gamePos.y} focused={focus === "game"} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+      {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}
+      {layout.current.game && (
+        <Box position="absolute" marginLeft={layout.current.game.x} marginTop={layout.current.game.y}>
+          <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+        </Box>
       )}
       {quickOpen !== null && (
         <QuickOpen
