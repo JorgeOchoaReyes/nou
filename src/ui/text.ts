@@ -332,3 +332,25 @@ export function sliceAnsi(line: string, from: number, width = Infinity): string 
   }
   return out;
 }
+
+/** Wraps visible columns `from`..`to` of a highlighted line in `open`/`close` codes (e.g. to mark a search match). */
+export function markAnsi(line: string, from: number, to: number, open = "\x1b[7m", close = "\x1b[27m"): string {
+  let out = "";
+  let column = 0;
+  for (let i = 0; i < line.length;) {
+    ESCAPE.lastIndex = i;
+    const code = ESCAPE.exec(line);
+    if (code) {
+      out += code[0];
+      i += code[0].length;
+      continue;
+    }
+    const ch = String.fromCodePoint(line.codePointAt(i)!);
+    if (column === from) out += open;
+    out += ch;
+    column++;
+    if (column === to) out += close;
+    i += ch.length;
+  }
+  return out;
+}

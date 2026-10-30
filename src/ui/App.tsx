@@ -72,6 +72,7 @@ Keys:
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
   e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
+  Ctrl+F  find in the open file (Enter/↓ next, ↑ previous)
   b  back to the previous file (Ctrl+P lists recent files first)   [ ]  previous/next tab · x close tab
   Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
@@ -176,6 +177,21 @@ export function App({ initialModel, permContext }: Props) {
   const [chatMenu, setChatMenu] = useState(false);
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
+  /** Whether the code view's find bar is open (it takes the keyboard). */
+  const codeFinding = useRef(false);
+  const onCodeFinding = useCallback((open: boolean) => {
+    codeFinding.current = open;
+  }, []);
+  /** Bumped to open the code view's find bar from outside it (the palette, the status bar). */
+  const [findRequest, setFindRequest] = useState(0);
+  const startFind = () => {
+    if (!openFile) return info("Open a file first (Ctrl+P), then Ctrl+F searches it.");
+    setDiffMode("off");
+    setEditing(false);
+    setCodePanel("code");
+    setFocus("code");
+    setFindRequest((n) => n + 1);
+  };
   const [codeDefine, setCodeDefine] = useState<{ row: number; x: number; nonce: number } | null>(null);
   const [chatClick, setChatClick] = useState<{ row: number; col: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
@@ -881,6 +897,7 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (showEditor && focus === "code") return; // the editor owns the keyboard
+    if (focus === "code" && codeFinding.current) return; // so does the find bar
     if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
@@ -1324,6 +1341,7 @@ ${snippet}
   // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
+    { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
     { title: "Next tab", keys: "]", run: () => cycleTab(1) },
@@ -1388,7 +1406,7 @@ ${snippet}
           ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
           : diff
             ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-            : [["double-click/e", "edit"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+            : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
@@ -1402,7 +1420,7 @@ ${snippet}
     y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
     "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
-    e: startEditing, "double-click/e": startEditing, b: goBack, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    e: startEditing, "double-click/e": startEditing, b: goBack, "Ctrl+F": showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
     Esc: busy ? stop : diff && !showEditor ? () => setDiffMode("off") : undefined,
   };
@@ -1503,6 +1521,8 @@ ${snippet}
             onViewport={onViewport}
             defineAt={codeDefine}
             onDefine={onCodeDefine}
+            onFinding={onCodeFinding}
+            findRequest={findRequest}
           />
         )}
         <Chat

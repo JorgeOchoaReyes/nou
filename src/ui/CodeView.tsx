@@ -4,7 +4,7 @@ import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
-import { highlightLines, sideBySide, sliceAnsi } from "./text.js";
+import { highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -43,17 +43,31 @@ type Props = {
   onDefine?(line: number, col: number): void;
   /** The open files as tabs, shown in the title row instead of the file's path. */
   tabs?: ReactNode;
+  /** Whether the find bar (Ctrl+F) is open, so the app leaves the keyboard to it. */
+  onFinding?(open: boolean): void;
+  /** Changes to open the find bar. */
+  findRequest?: number;
 };
+
+/** The current match: a yellow background; the others are shown inverted. */
+const CURRENT_MATCH = ["\x1b[43m\x1b[30m", "\x1b[49m\x1b[39m"] as const;
 
 /** Columns ←/→ and Shift+wheel move sideways. */
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs }: Props) {
+export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest }: Props) {
   const [top, setTop] = useState(0);
   // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
-  const rows = Math.max(1, height - 3);
+  // Ctrl+F: what's being looked for, and which match is current.
+  const [find, setFind] = useState<{ query: string; index: number } | null>(null);
+  useEffect(() => onFinding?.(!!find), [!!find]);
+  useEffect(() => setFind(null), [filePath]);
+  useEffect(() => {
+    if (findRequest) setFind({ query: "", index: 0 });
+  }, [findRequest]);
+  const rows = Math.max(1, height - 3 - (find ? 1 : 0));
   const inner = width - 3; // minus the borders and the scrollbar
 
   const lines = useMemo(() => (filePath ? highlightLines(filePath, content) : []), [filePath, content, syntaxVersion]);
@@ -80,6 +94,25 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
 
   const maxTop = Math.max(0, total - rows);
   const start = Math.min(top, maxTop);
+  const shownLines = useMemo(() => (find ? splitLines(content) : []), [content, !!find]);
+  const matches = useMemo(() => {
+    const out: { line: number; col: number }[] = [];
+    const q = find?.query.toLowerCase();
+    if (!q) return out;
+    shownLines.forEach((text, i) => {
+      const lower = text.toLowerCase();
+      for (let at = lower.indexOf(q); at >= 0 && out.length < 10_000; at = lower.indexOf(q, at + q.length)) out.push({ line: i, col: at });
+    });
+    return out;
+  }, [shownLines, find?.query]);
+  const current = find && matches.length ? matches[((find.index % matches.length) + matches.length) % matches.length]! : null;
+  // Bring the current match into view (a third of the way down, like a jump), sideways too.
+  useEffect(() => {
+    if (!current) return;
+    if (current.line < start || current.line >= start + rows) setTop(Math.max(0, current.line - Math.floor(rows / 3)));
+    const room = inner - String(lines.length).length - 2;
+    if (current.col < left || current.col + (find?.query.length ?? 0) > left + room) setLeft(Math.max(0, current.col - Math.floor(room / 3)));
+  }, [current?.line, current?.col]);
   const found = focusLine?.path && focusLine.path === filePath ? { from: focusLine.line, to: Math.max(focusLine.line, focusLine.to ?? focusLine.line) } : null;
 
   useEffect(() => {
@@ -109,6 +142,18 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   }, [defineAt?.nonce]);
 
   useInput((input, key) => {
+    if (!find) return;
+    if (key.escape) return setFind(null);
+    if (key.return || key.downArrow || (key.ctrl && input === "g")) return setFind((f) => f && { ...f, index: f.index + 1 });
+    if (key.upArrow) return setFind((f) => f && { ...f, index: f.index - 1 });
+    if (key.backspace || key.delete) return setFind((f) => f && { query: f.query.slice(0, -1), index: 0 });
+    if (key.ctrl && input === "f") return;
+    if (input && !key.ctrl && !key.meta && input >= " ") setFind((f) => f && { query: f.query + input, index: 0 });
+  }, { isActive: focused && !!find });
+
+  useInput((input, key) => {
+    if (find) return;
+    if (key.ctrl && input === "f" && !diff) return setFind({ query: "", index: 0 });
     if (key.upArrow || input === "k") setTop((t) => Math.max(0, Math.min(t, maxTop) - 1));
     else if (key.downArrow || input === "j") setTop((t) => Math.min(maxTop, t + 1));
     else if (key.pageUp) setTop((t) => Math.max(0, Math.min(t, maxTop) - rows));
@@ -230,7 +275,18 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
               <Text key={n} wrap="truncate-end">
                 <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
                 {style ? <Text color={style.color}>{style.icon}</Text> : isFound ? <Text color={C.cyan} bold>▌</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
-                {isFound ? <Text backgroundColor={C.panel}>{(left ? sliceAnsi(line, left) : line) || " "}</Text> : (left ? sliceAnsi(line, left) : line) || " "}
+                {(() => {
+                  let text = line;
+                  if (find?.query) {
+                    for (const m of matches) {
+                      if (m.line !== n - 1) continue;
+                      const now = m === current;
+                      text = markAnsi(text, m.col, m.col + find.query.length, ...(now ? CURRENT_MATCH : []));
+                    }
+                  }
+                  text = (left ? sliceAnsi(text, left) : text) || " ";
+                  return isFound ? <Text backgroundColor={C.panel}>{text}</Text> : text;
+                })()}
                 {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
               </Text>
             );
@@ -238,6 +294,16 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
         </Box>
         <Scrollbar total={total} top={start} rows={rows} focused={focused} />
       </Box>
+      {find ? (
+        <Text wrap="truncate-end">
+          <Text color={C.accent2} bold> ⌕ </Text>
+          <Text backgroundColor={C.panel}>{find.query}</Text><Text inverse> </Text>
+          <Text color={find.query && !matches.length ? C.red : C.dim}>
+            {"  "}{find.query ? (matches.length ? `${matches.indexOf(current!) + 1}/${matches.length}${matches.length >= 10_000 ? "+" : ""}` : "no matches") : "type to find"}
+            {"  "}Enter/↓ next · ↑ previous · Esc close
+          </Text>
+        </Text>
+      ) : null}
     </Pane>
   );
 });

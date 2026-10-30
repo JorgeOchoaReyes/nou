@@ -504,6 +504,26 @@ console.log("Queueing and interrupting");
   });
 }
 
+console.log("Find in the open file");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/open many.ts");
+  await press(KEY.enter, 400);
+  await press(KEY.tab, 100);
+  await press(KEY.tab, 100); // to the code
+  await press(CTRL_F, 200);
+  check("Ctrl+F in the code opens a find bar", frame().includes("⌕") && frame().includes("type to find"));
+  await type("line9");
+  check("it counts the matches as you type", frame().includes("1/11"));
+  await press(KEY.enter, 200);
+  await press(KEY.enter, 200);
+  check("Enter goes to the next match, scrolling to it", frame().includes("3/11") && frame().includes("1 = 91;"));
+  await press("\x1b[A", 200);
+  check("↑ goes back one", frame().includes("2/11"));
+  check("letters go to the find bar, not to shortcuts", !frame().includes("EDITING"));
+  await press(KEY.esc, 200);
+  check("Esc closes it and stays in the code", !frame().includes("⌕") && frame().split("\n").at(-1)!.includes("CODE"));
+});
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
