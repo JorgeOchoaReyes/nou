@@ -36,10 +36,16 @@ export function query({ prompt, options }) {
 const CODEX = `
 import { readFileSync, writeFileSync } from "fs";
 export class Codex {
+  resumeThread(id, options) {
+    const log = (globalThis.__engines ??= {}).codex ??= { threads: [], inputs: [] };
+    log.resumed = id;
+    return this.startThread(options);
+  }
   startThread(options) {
     const log = (globalThis.__engines ??= {}).codex ??= { threads: [], inputs: [] };
     log.threads.push(options);
     return {
+      id: "codex-thread-1",
       async runStreamed(input) {
         log.inputs.push(input);
         return { events: (async function* () {

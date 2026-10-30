@@ -36,6 +36,10 @@ export interface Engine {
   compact?(force?: boolean): Promise<boolean>;
   /** `context` (what the user is looking at) is sent to the model but not shown in the chat. */
   send(text: string, context?: string): Promise<void>;
+  /** What it needs to pick this conversation back up later (/resume); engines that can't leave it out. */
+  snapshot?(): unknown;
+  /** Picks a saved conversation back up; false when it couldn't (Nou then hands it the transcript). */
+  restore?(state: unknown): boolean;
   /** Frees processes and connections when switching to another engine. */
   dispose?(): void;
 }

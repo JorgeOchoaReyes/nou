@@ -669,6 +669,57 @@ console.log("Taking back a message");
   });
 }
 
+console.log("Terminal");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await press(KEY.tab, 100); // off the chat, so ` opens it
+  await press("`", 300);
+  check("` opens a terminal under the code", frame().includes("▸ Terminal") && frame().includes("$ "));
+  await type("echo hello-from-term");
+  await press(KEY.enter, 800);
+  check("Enter runs the command and shows its output", frame().split("\n").some((l) => /│\s*hello-from-term/.test(l)));
+  mkdirSync(path.join(dir, "sub"), { recursive: true });
+  await type("cd sub");
+  await press(KEY.enter, 300);
+  check("cd sticks for the next command", frame().includes("sub $ "));
+  await press(KEY.esc, 200);
+  check("Esc leaves it open and gives the keyboard back", frame().includes("▸ Terminal") && !frame().split("\n").at(-1)!.includes("TERMINAL"));
+  const rows = frame().split("\n");
+  const y = rows.findIndex((l) => l.includes("▸ Terminal"));
+  await press(click(rows[y]!.indexOf("×", rows[y]!.indexOf("▸ Terminal")), y), 300);
+  check("× closes it", !frame().includes("▸ Terminal"));
+});
+
+console.log("Resuming a conversation");
+{
+  let seen: any[] = [];
+  const model: any = { id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat(request: any) {
+      seen = request.messages;
+      return { text: `answer ${seen.filter((m: any) => m.role === "user").length}`, toolCalls: [] };
+    } };
+  await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
+    await type("remember the word pineapple");
+    await press(KEY.enter, 600);
+    await type("/clear");
+    await press(KEY.enter, 300);
+    await type("/resume");
+    await press(KEY.enter, 300);
+    check("/resume lists earlier conversations here", frame().includes("just now)"));
+    await type("/resume 1");
+    await press(KEY.enter, 400);
+    check("/resume 1 picks the latest back up", frame().includes("Resumed") && frame().includes("pineapple"));
+  });
+  // A new run of Nou in the same folder.
+  await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/resume last");
+    await press(KEY.enter, 400);
+    check("/resume last brings the chat back", frame().includes("pineapple") && frame().includes("Resumed"));
+    await type("what was the word?");
+    await press(KEY.enter, 600);
+    check("and the engine carries on with it", JSON.stringify(seen).includes("pineapple") && frame().includes("answer 2"));
+  });
+}
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");

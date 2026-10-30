@@ -164,6 +164,17 @@ export class Agent implements Engine {
   }
 
   /** Forgets the last message you sent and everything after it, as if it was never sent. */
+  snapshot() {
+    return { messages: this.messages };
+  }
+
+  restore(state: any): boolean {
+    if (!Array.isArray(state?.messages)) return false;
+    this.messages = state.messages;
+    this.forgetThinking(); // written in another run, maybe with another model
+    return true;
+  }
+
   retractLast(): boolean {
     const at = this.messages.findLastIndex((m) => m.role === "user");
     if (at < 0) return false;

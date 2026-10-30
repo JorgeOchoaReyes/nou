@@ -857,7 +857,7 @@ console.log("Engines");
   const engines = () => (globalThis as any).__engines;
 
   /** Runs one message through an engine in a fresh folder, approving everything unless `reject` says otherwise. */
-  const runEngine = async (id: any, spec: string, reject: Partial<Record<string, boolean>> = {}, problems: string | null = null) => {
+  const runEngine = async (id: any, spec: string, reject: Partial<Record<string, boolean>> = {}, problems: string | null = null, restore?: unknown) => {
     const dir = mkdtempSync(path.join(os.tmpdir(), `nou-engine-${id}-`));
     writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
     const home = process.cwd();
@@ -876,6 +876,7 @@ console.log("Engines");
       checkChange: async () => problems,
     });
     engine.configure({ extras: ["Project note: be brief."] });
+    if (restore) engine.restore?.(restore);
     try {
       await engine.send("Change the greeting");
       return { ...log, engine, file: readFileSync(path.join(dir, "greet.js"), "utf-8"), dir };
@@ -904,9 +905,15 @@ console.log("Engines");
   // Codex: no approval hook, so changes are shown and recorded afterwards.
   const codex = await runEngine("codex", "openai:gpt-5");
   check("Codex runs in its sandbox without asking", engines().codex.threads[0].sandboxMode === "workspace-write" && engines().codex.threads[0].approvalPolicy === "never" && codex.asked.length === 0);
+  check("Codex can reach the network (npm install, fetching tests)", engines().codex.threads[0].networkAccessEnabled === true);
   check("Codex's edit is recorded for undo with the file as it was", codex.changes.some((c) => c.path === "greet.js" && c.status === "applied" && c.before.includes("Hello") && c.after.includes("Howdy")));
   check("files Codex creates are recorded as new", codex.changes.some((c) => c.path === "notes.md" && c.before === "" && c.status === "applied"));
   check("Nou's project context goes with Codex's first message", engines().codex.inputs[0].includes("be brief") && codex.entries.some((e) => e.text === "Ran: ls"));
+  const saved = codex.engine.snapshot?.();
+  const later = await runEngine("codex", "openai:gpt-5", {}, null, saved);
+  check("a saved Codex conversation resumes its thread", (saved as any)?.codexThread === "codex-thread-1" && engines().codex.resumed === "codex-thread-1" && later.changes.length > 0);
+  const claudeSaved = claude.engine.snapshot?.();
+  check("a Claude Code conversation saves its session to resume", (claudeSaved as any)?.claudeSession === "claude-session-1");
 
   // pi: an extension routes its edits through Nou; local models go through Nou's endpoint for them.
   const pi = await runEngine("pi", "ollama:qwen3:8b");

@@ -48,6 +48,8 @@ export class CodexEngine extends ExternalEngine {
   readonly id = "codex" as const;
   private thread: any = null;
   private introduced = false;
+  /** A saved thread to pick back up (/resume): Codex keeps its threads on disk. */
+  private resumeId: string | undefined;
 
   constructor(choice: ModelChoice, hooks: AgentHooks) {
     super(choice, hooks, "Codex");
@@ -56,20 +58,39 @@ export class CodexEngine extends ExternalEngine {
   protected resetConversation() {
     this.thread = null;
     this.introduced = false;
+    this.resumeId = undefined;
+  }
+
+  snapshot() {
+    const id = this.thread?.id ?? this.resumeId;
+    return id ? { codexThread: id } : undefined;
+  }
+
+  restore(state: any): boolean {
+    if (typeof state?.codexThread !== "string") return false;
+    this.thread = null;
+    this.resumeId = state.codexThread;
+    this.introduced = true; // it already has the project context
+    return true;
   }
 
   protected async run(prompt: string, signal: AbortSignal) {
     const { Codex } = await loadPackage("@openai/codex-sdk");
     // Codex uses its own login (`codex login`); an OpenAI key from Nou's setup works too.
     const apiKey = process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY;
-    this.thread ??= new Codex(apiKey ? { apiKey } : {}).startThread({
+    const options = {
       workingDirectory: process.cwd(),
       skipGitRepoCheck: true,
       sandboxMode: "workspace-write",
+      // Its sandbox blocks the network by default, so npm/pip installs and tests that fetch fail ("can't
+      // resolve registry.npmjs.org"); Nou's other engines can reach it, so Codex can too.
+      networkAccessEnabled: true,
       approvalPolicy: "never",
       ...(this.choice.provider.id === "openai" ? { model: this.choice.model } : {}),
       ...(this.effort && EFFORTS.has(this.effort) ? { modelReasoningEffort: this.effort } : {}),
-    });
+    };
+    const codex = new Codex(apiKey ? { apiKey } : {});
+    this.thread ??= this.resumeId ? codex.resumeThread(this.resumeId, options) : codex.startThread(options);
     // Codex has no system prompt option; Nou's project context goes with the first message.
     const input = !this.introduced && this.extras.length ? `${this.extras.join("\n\n")}\n\n${prompt}` : prompt;
     this.introduced = true;

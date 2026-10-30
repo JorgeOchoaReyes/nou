@@ -28,6 +28,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "copy", args: "[code|file]", description: "copy the last reply, its last code block, or the open file" },
   { name: "compact", description: "summarize the conversation to free up context" },
   { name: "clear", description: "start a fresh conversation" },
+  { name: "terminal", description: "a terminal under the code, like VS Code's (or press `)" },
+  { name: "resume", args: "[number|last]", description: "pick up an earlier conversation in this folder (any engine)" },
   { name: "pull", args: "<model>", description: "download an Ollama model" },
   { name: "plugins", args: "[add|new <name>]", description: "your plugins and the starter ones" },
   { name: "mcp", args: "[add|remove|import]", description: "MCP servers: tools from other programs (/mcp add browser for a browser)" },

@@ -98,7 +98,8 @@ Every change is reviewed like a code review:
 | <kbd>c</kbd> | in the file tree: show only changed files |
 | <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
-| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal |
+| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
 | <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
@@ -119,7 +120,9 @@ In the editor:
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/help`
+
+Conversations are saved per folder after each reply. `/resume` lists them and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far.
 
 ## 🧠 Models
 
