@@ -14,3 +14,7 @@ This project uses TypeScript as its primary programming language. The tech stack
  * Jest (via Jiti) for testing
  * Chalk, CLI Highlight, Ollama, ShellJS, and Zod libraries for various functionalities
  * Typescript-EsLint for enforcing typescript best practices
+
+## Releasing
+
+Always bump `version` before publishing (npm rejects a version that is already published): `npm version patch --no-git-tag-version` in a PR, merge it, then run Actions → Publish to npm and approve the `production` environment. See README → Releasing.

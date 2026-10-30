@@ -231,7 +231,17 @@ npm run screenshot   # regenerate docs/screenshot.svg
 npm run eval         # how well the agent does real tasks with a real model (see evals/)
 ```
 
-Releasing: bump `version` in `package.json`, merge to `master`, then run **Actions → Publish to npm**. It tests, publishes with provenance, and creates the git tag and GitHub Release. (Or publish a GitHub release tagged `vX.Y.Z`.) The token lives in the `production` environment as `NPM_TOKEN`.
+### Releasing
+
+**Always bump the version first.** npm never accepts the same version twice, so publishing without a bump fails with *"nou-cli@X.Y.Z is already published. Bump "version" in package.json first."* Every release goes:
+
+1. **Bump the version** in a PR: `npm version patch --no-git-tag-version` (or `minor` / `major`), which updates `package.json` and `package-lock.json` together. Patch (0.5.1 → 0.5.2) for fixes and small features, minor (0.5 → 0.6) for bigger ones.
+2. **Merge it** to `master` once CI is green.
+3. **Run Actions → Publish to npm** (Run workflow on `master`), then **approve** the `production` environment when GitHub asks. It tests, publishes with provenance, and creates the `vX.Y.Z` git tag and GitHub Release. (Publishing a GitHub release tagged `vX.Y.Z` does the same, taking the version from the tag.)
+
+The npm token lives in the `production` environment as `NPM_TOKEN`. Check what's live with `npm view nou-cli version`.
+
+The workflows run on the actions' Node 24 versions (`actions/checkout@v5`, `actions/setup-node@v5`, `codeql-action@v4`), so GitHub's Node 20 deprecation warning no longer applies; Dependabot keeps them current. Jobs run on `ubuntu-latest`, which GitHub moves to Ubuntu 26 from October 19, 2026: nothing to change for that.
 
 Upkeep runs on its own:
 - **CI** on every PR: type-check, lint, build, unit and end-to-end tests on Linux, macOS and Windows (Node 22.12 and 24 too), plus installing the packed tarball to check the package works.
