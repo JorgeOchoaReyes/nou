@@ -40,8 +40,8 @@ export function codexServers(toml: string): Record<string, McpServerConfig> {
   const value = (v: string): any => {
     v = v.trim();
     if (v.startsWith("\"") || v.startsWith("'")) return v.slice(1, v.lastIndexOf(v[0]!)).replace(/\\"/g, "\"");
-    if (v.startsWith("[")) return [...v.matchAll(/"((?:\\.|[^"])*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]);
-    if (v.startsWith("{")) return Object.fromEntries([...v.matchAll(/([\w-]+)\s*=\s*"((?:\\.|[^"])*)"/g)].map((m) => [m[1], m[2]]));
+    if (v.startsWith("[")) return [...v.matchAll(/"((?:\\.|[^"\\])*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]);
+    if (v.startsWith("{")) return Object.fromEntries([...v.matchAll(/([\w-]+)\s*=\s*"((?:\\.|[^"\\])*)"/g)].map((m) => [m[1], m[2]]));
     if (v === "true" || v === "false") return v === "true";
     return v;
   };
