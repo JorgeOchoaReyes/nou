@@ -530,6 +530,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("/engine nou");
   await press(KEY.enter, 400);
   check("switching back to Nou's engine", frame().includes("Now using the Nou engine"));
+  check("switching engines hands over the conversation so far", frame().includes("It has the conversation so"));
 });
 
 console.log("Connecting a provider");

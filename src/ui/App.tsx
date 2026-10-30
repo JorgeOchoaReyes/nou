@@ -45,6 +45,20 @@ const DOUBLE_CLICK_MS = 500;
 const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 16);
 
 type Props = { initialModel: ModelChoice; permContext: string };
+
+/** How much of the conversation a newly switched-to engine is given (the latest part when it's longer). */
+const HANDOFF_CHARS = 24_000;
+
+/** The conversation so far as text, for an engine taking over from another one; null when there's none. */
+export function conversationSoFar(entries: ChatEntry[]): string | null {
+  const said = entries
+    .filter((e) => e.kind === "user" || e.kind === "assistant" || e.kind === "tool")
+    .map((e) => (e.kind === "user" ? `User: ${e.text}` : e.kind === "assistant" ? `Assistant: ${e.text}` : `(${e.text})`));
+  if (!said.some((line) => line.startsWith("User:"))) return null;
+  let text = said.join("\n\n");
+  if (text.length > HANDOFF_CHARS) text = `[earlier messages left out]\n${text.slice(-HANDOFF_CHARS)}`;
+  return `You are taking over a conversation the user was having with another assistant in this project. Here it is, so you can carry on from where it left off (the files may have changed since; check before relying on them):\n<conversation>\n${text}\n</conversation>`;
+}
 /** A clickable stretch of the status bar, in columns. */
 type StatusZone = { from: number; to: number; run(): void };
 
@@ -370,7 +384,9 @@ export function App({ initialModel, permContext }: Props) {
     engine.configure(engineConfig.current);
     agentRef.current = engine;
     updateSettings({ engine: id });
-    info(`Now using the ${target.label} engine (model: ${target.model(choice)}). This starts a new conversation.${target.approvals === "after" ? " It edits without asking first; review its changes in the diff view and press u to undo." : ""}`);
+    const handoff = conversationSoFar(entries);
+    if (handoff) engine.note(handoff);
+    info(`Now using the ${target.label} engine (model: ${target.model(choice)}). ${handoff ? "It has the conversation so far." : "This starts a new conversation."}${target.approvals === "after" ? " It edits without asking first; review its changes in the diff view and press u to undo." : ""}`);
   };
 
   /** Downloads an Ollama model, showing progress in the status line. Esc stops it. */

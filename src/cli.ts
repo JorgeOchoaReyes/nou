@@ -93,7 +93,8 @@ async function main() {
   choice = ready;
   p.log.info(`Model: ${chalk.yellow(describe(choice))}  (change it any time with /model)`);
 
-  await ensureProjectContext(choice);
+  // NOU.md is for Nou's own engine; the others read their own files (CLAUDE.md, AGENTS.md).
+  if ((settings.engine ?? "nou") === "nou") await ensureProjectContext(choice);
 
   const permContext = await loadPermanentContext();
 

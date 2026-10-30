@@ -94,6 +94,16 @@ console.log("Go to definition and file links");
   check("the text around them is kept", spans.map((s) => s.text).join("") === "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2.");
 }
 
+console.log("Handing a conversation to another engine");
+{
+  const { conversationSoFar } = await import("../src/ui/App.js");
+  check("nothing to hand over before you've said anything", conversationSoFar([{ kind: "info", text: "hi" }]) === null);
+  const handoff = conversationSoFar([{ kind: "user", text: "where is auth?" }, { kind: "tool", text: "Searched for auth" }, { kind: "assistant", text: "In src/auth.ts" }])!;
+  check("the new engine gets what was said, in order", /User: where is auth\?[\s\S]*Searched for auth[\s\S]*Assistant: In src\/auth.ts/.test(handoff));
+  const long = conversationSoFar(Array.from({ length: 400 }, (_, i) => ({ kind: "user" as const, text: `message ${i} ${"x".repeat(100)}` })))!;
+  check("a long one is cut to its latest part", long.length < 26_000 && long.includes("message 399") && !long.includes("message 0 "));
+}
+
 console.log("write_file content");
 check("keeps \\n inside string literals", cleanContent('log("a\\nb");\n') === 'log("a\\nb");\n');
 check("keeps leading indentation", cleanContent("    x()\n") === "    x()\n");
