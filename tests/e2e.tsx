@@ -689,6 +689,19 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("× closes it", !frame().includes("▸ Terminal"));
 });
 
+console.log("New lines in a message");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  const inputLines = () => frame().split("\n").filter((l) => /line (one|two|three|four)/.test(l));
+  await type("line one");
+  await press("\x1b[13;5u", 150); // Ctrl+Enter (kitty keyboard protocol)
+  await type("line two");
+  await press("\x1b[13;9u", 150); // Cmd+Enter
+  await type("line three\\");
+  await press(KEY.enter, 150); // \ then Enter, in any terminal
+  await type("line four");
+  check("Ctrl+Enter, Cmd+Enter and \\+Enter add lines instead of sending", inputLines().length === 4 && !frame().includes("◆ nou") && !frame().includes("line three\\"));
+});
+
 console.log("Resuming a conversation");
 {
   let seen: any[] = [];

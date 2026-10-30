@@ -93,6 +93,9 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
     if (key.tab || key.escape || key.pageUp || key.pageDown || (key.shift && (key.upArrow || key.downArrow))) return;
     if (arrowsTaken && (key.upArrow || key.downArrow)) return;
     if (key.return) {
+      // Ctrl/Cmd/Shift+Enter add a line (in terminals that report them); so does \ then Enter, everywhere.
+      if (key.ctrl || key.super || key.shift) return insert("\n");
+      if (value[pos - 1] === "\\") return set(`${value.slice(0, pos - 1)}\n${value.slice(pos)}`, pos);
       setRecall(null);
       onSubmit(value, key.meta);
       return;
