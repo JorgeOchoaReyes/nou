@@ -459,7 +459,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
     await press(KEY.enter, 300);
   }
   const title = () => frame().split("\n")[2]!;
-  check("open files show as tabs over the code, the current one with ×", title().includes("◆ a.ts │") && title().includes("◆ b.ts × │"));
+  check("open files show as tabs over the code, each with a ×", title().includes("◆ a.ts × │") && title().includes("◆ b.ts × │"));
   const at = title().indexOf("◆ a.ts");
   await press(click(at, 2), 300);
   check("clicking a tab switches to it", title().includes("◆ a.ts × │") && frame().includes("const a = 1;"));
@@ -467,8 +467,18 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.tab, 100); // to the code
   await press("]", 300);
   check("] goes to the next tab", title().includes("◆ b.ts ×"));
-  await press(click(title().indexOf("×"), 2), 300);
+  await press(click(title().indexOf("×", title().indexOf("b.ts")), 2), 300);
   check("clicking × closes the tab", !title().includes("b.ts") && frame().includes("const a = 1;"));
+  await type("/open b.ts");
+  await press(KEY.enter, 300);
+  await press(click(title().indexOf("×", title().indexOf("a.ts")), 2), 300);
+  check("any tab's × closes it, not just the current one's", !title().includes("a.ts") && title().includes("b.ts ×"));
+  await press("\x17", 300); // Ctrl+W
+  check("Ctrl+W closes the current tab", frame().includes("Welcome"));
+  await type("/open a.ts");
+  await press(KEY.enter, 300);
+  check("a single open file has its tab too", title().includes("◆ a.ts ×"));
+  await press(click(title().indexOf("a.ts"), 2), 200); // a click on a tab puts the keyboard in the code
   await press("x", 300);
   check("x closes the last one, back to the welcome screen", frame().includes("Welcome"));
 });

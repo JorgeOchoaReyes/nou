@@ -260,6 +260,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
       {tabs ?? <>{" "}<Text color={color}>{icon}</Text> {filePath}</>}
       {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
+      {/* After the tabs, as room allows (the row is cut, not wrapped, when they fill it). */}
       <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused && titleRoom >= EDIT_HINT.length ? EDIT_HINT : ""}</Text>
     </>
   );

@@ -3,8 +3,8 @@ import path from "path";
 import { Text } from "ink";
 import { C, fileIcon } from "./theme.js";
 
-/** Where each tab sits in the title row, in columns from the row's start, for clicks. */
-export type TabZone = { file: string; from: number; to: number; close: number | null };
+/** Where each tab sits in the title row, in columns from the row's start, for clicks: its × too. */
+export type TabZone = { file: string; from: number; to: number; close: number };
 
 /** Tab labels: file names, with the folder added when two open files share a name. */
 function labels(tabs: string[]): string[] {
@@ -19,9 +19,9 @@ function labels(tabs: string[]): string[] {
  * Lays out the tabs that fit in `width` columns, keeping the active one in view: the ones that don't fit
  * are left out at the ends, marked with ‹ ›.
  */
-export function layoutTabs(tabs: string[], active: string | null, width: number): { shown: { file: string; label: string }[]; before: boolean; after: boolean; zones: TabZone[] } {
-  const all = labels(tabs).map((label, i) => ({ file: tabs[i]!, label }));
-  const size = (t: { file: string; label: string }) => t.label.length + 4 + (t.file === active ? 2 : 0) + 1; // " ◆ name × " and "│"
+export function layoutTabs(tabs: string[], active: string | null, width: number): { shown: { file: string; label: string }[]; before: boolean; after: boolean; zones: TabZone[]; prev: number | null; next: number | null } {
+  const all = labels(tabs).map((label, i) => ({ file: tabs[i]!, label: label.length > 24 ? `${label.slice(0, 23)}…` : label }));
+  const size = (t: { file: string; label: string }) => t.label.length + 6 + 1; // " ◆ name × " and "│"
   const at = Math.max(0, all.findIndex((t) => t.file === active));
   let from = at;
   let to = at + 1;
@@ -43,10 +43,11 @@ export function layoutTabs(tabs: string[], active: string | null, width: number)
   let x = from > 0 ? 1 : 0;
   for (const t of shown) {
     const w = size(t) - 1;
-    zones.push({ file: t.file, from: x, to: x + w, close: t.file === active ? x + w - 2 : null });
+    zones.push({ file: t.file, from: x, to: x + w, close: x + w - 2 });
     x += w + 1;
   }
-  return { shown, before: from > 0, after: to < all.length, zones };
+  // ‹ and › (tabs that don't fit) are clickable too: they go to the previous / next tab.
+  return { shown, before: from > 0, after: to < all.length, zones, prev: from > 0 ? 0 : null, next: to < all.length ? x : null };
 }
 
 /** The open files as tabs, for a pane's title row: the active one highlighted, with × to close it. */
@@ -64,7 +65,7 @@ export function Tabs({ tabs, active, width, dirty }: { tabs: string[]; active: s
               <Text> </Text>
               <Text color={color}>{icon}</Text>
               <Text color={on ? C.text : C.dim} bold={on}> {t.label}</Text>
-              {on ? <Text color={dirty ? C.yellow : C.dim}> {dirty ? "●" : "×"}</Text> : null}
+              <Text color={on && dirty ? C.yellow : on ? C.text : C.dim}> {on && dirty ? "●" : "×"}</Text>
               <Text> </Text>
             </Text>
             <Text color={C.dim}>│</Text>

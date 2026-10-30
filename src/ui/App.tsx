@@ -54,7 +54,7 @@ const FOLLOW_STEP_MS: Record<string, number> = { slow: 2500, normal: 1200, fast:
 /** Steps follow mode may fall behind before it skips ahead. */
 const MAX_FOLLOW_LAG = 12;
 /** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
-const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 16);
+const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 3);
 
 type Props = { initialModel: ModelChoice; permContext: string };
 
@@ -729,10 +729,15 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     // The code view's title row holds the tabs: a click switches, the × closes.
-    if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length >= 2 && !diff) {
-      const zone = layoutTabs(tabs, openFile, tabsWidth(codeWidth)).zones.find((z) => event.x - codeLeft - 1 >= z.from && event.x - codeLeft - 1 < z.to);
+    if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length && !diff) {
+      const at = event.x - codeLeft - 1;
+      const layout = layoutTabs(tabs, openFile, tabsWidth(codeWidth));
+      setFocus("code"); // so x, Ctrl+W and [ ] work next
+      if (layout.prev !== null && at === layout.prev) return cycleTab(-1);
+      if (layout.next !== null && at === layout.next) return cycleTab(1);
+      const zone = layout.zones.find((z) => at >= z.from && at < z.to);
       if (!zone) return;
-      if (zone.close !== null && Math.abs(event.x - codeLeft - 1 - zone.close) <= 1) closeTab(zone.file);
+      if (Math.abs(at - zone.close) <= 1) closeTab(zone.file);
       else switchTab(zone.file);
       return;
     }
@@ -1071,7 +1076,7 @@ export function App({ initialModel, permContext }: Props) {
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
-    else if (input === "x") closeTab();
+    else if (input === "x" || (key.ctrl && input === "w")) closeTab();
     else if (input === "e") startEditing();
     else if (input === "b") goBack();
     else if (input === "s" || input === ",") setView("settings");
@@ -1529,7 +1534,7 @@ ${snippet}
   const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
-  const tabStrip = tabs.length >= 2 && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
+  const tabStrip = tabs.length && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
   layout.current = { treeWidth, codeWidth, paneHeight: height };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
