@@ -600,21 +600,30 @@ export function App({ initialModel, permContext }: Props) {
     if (!horizontal) lastVerticalWheel.current = Date.now();
     else if (Date.now() - lastVerticalWheel.current < 300) return;
     const q = pendingWheel.current;
-    if (q.timer && q.pane !== pane) flushWheel();
+    if (q.timer && q.pane !== pane) flushWheel(true);
     q.pane = pane;
     if (horizontal) q.columns += dir * WHEEL_STEP;
     else q.lines += dir * WHEEL_STEP;
     q.timer ??= setTimeout(flushWheel, 16);
   };
-  const flushWheel = () => {
+  /**
+   * Scrolls by what the wheel added up, spread over a few frames: half of what's left each frame, so a
+   * notch glides over 2-3 frames and a fast flick eases out instead of jumping dozens of lines at once.
+   * `all` sends the rest at once (the pointer moved to another pane).
+   */
+  const flushWheel = (all = false) => {
     const q = pendingWheel.current;
     if (q.timer) clearTimeout(q.timer);
     q.timer = null;
     if (!q.lines && !q.columns) return;
-    const { pane, lines, columns } = q;
-    q.lines = 0;
-    q.columns = 0;
+    const part = (n: number) => (all || Math.abs(n) <= 1 ? n : Math.sign(n) * Math.ceil(Math.abs(n) / 2));
+    const lines = part(q.lines);
+    const columns = part(q.columns);
+    const { pane } = q;
+    q.lines -= lines;
+    q.columns -= columns;
     setWheel((w) => ({ pane, lines, columns, nonce: (w?.nonce ?? 0) + 1 }));
+    if (q.lines || q.columns) q.timer = setTimeout(flushWheel, 16);
   };
 
   /** Scrolls a pane to where its scrollbar was clicked or dragged (rows start at y=3, under the border and title). */
