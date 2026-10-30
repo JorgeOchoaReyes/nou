@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
+import { nouRulesOnly } from "../context/index.js";
 import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
@@ -365,7 +366,8 @@ export function App({ initialModel, permContext }: Props) {
   // Keep the agent's system prompt and tools in sync with settings and plugins.
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, permContext].filter(Boolean), extraTools, effort: settings.effort };
+    // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools, effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins]);
 
@@ -888,6 +890,7 @@ export function App({ initialModel, permContext }: Props) {
   /** Switches to another open file's tab. */
   const switchTab = (file: string) => {
     if (file === openFile || !settleDraft(file)) return;
+    clearFollow();
     open(file);
     setReveal(file);
   };
@@ -955,12 +958,14 @@ export function App({ initialModel, permContext }: Props) {
   openAtRef.current = openAt;
   /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
   const openRef = useEvent((ref: FileRef) => {
+    clearFollow();
     const file = path.relative(process.cwd(), path.resolve(ref.path)).replace(/\\/g, "/");
     openAt(file, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined);
   });
 
   const startEditing = () => {
     if (!openFile || !settleDraft(openFile)) return;
+    clearFollow();
     setDiffMode("off");
     setCodePanel("code");
     setEditorStart((s) => ({ line: viewport?.top ?? 1, nonce: s.nonce + 1 }));
@@ -1250,7 +1255,8 @@ ${snippet}
   };
   // A request that failed because of the provider's setup (not the request) opens the fix for it.
   const setupCheck = (error: string) => {
-    if (agentRef.current?.id !== "nou") return;
+    // Only a failed request to the model ("provider:model: ..."), never a tool's error or a problem report.
+    if (agentRef.current?.id !== "nou" || !error.startsWith(`${describe(choice)}: `)) return;
     const provider = choice.provider;
     const problem = setupProblem(provider, error);
     if (!problem) return;
@@ -1328,6 +1334,7 @@ ${snippet}
 
   // Stable callbacks for the memoized panes.
   const onTreeOpen = useEvent((filePath: string) => {
+    clearFollow(); // you went somewhere yourself: follow mode stops replaying what Nou read
     open(filePath);
     setFocus("code");
   });
@@ -1446,6 +1453,7 @@ ${snippet}
   };
   /** Back to the file that was open before this one. */
   const goBack = () => {
+    clearFollow();
     const previous = recent.find((f) => f !== openFile);
     if (!previous) return info("No earlier file to go back to yet: Ctrl+P lists the files you've opened.");
     open(previous);
@@ -1700,6 +1708,7 @@ ${snippet}
           initialQuery={quickOpen}
           onPick={(file) => {
             setQuickOpen(null);
+            clearFollow();
             open(file);
             setReveal(file);
             setFocus("code");

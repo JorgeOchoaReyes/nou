@@ -66,3 +66,12 @@ export async function loadPermanentContext(): Promise<string> {
   }
   return parts.length ? `\n\nPROJECT SPECIFIC RULES:\n${parts.join("\n\n")}` : "";
 }
+
+/**
+ * Just the NOU.md parts of the project rules, for engines that read AGENTS.md / CLAUDE.md themselves
+ * (Claude Code, Codex): giving them those again would only repeat them.
+ */
+export function nouRulesOnly(rules: string): string {
+  const parts = rules.replace(/^\s*PROJECT SPECIFIC RULES:\n/, "").split(/\n\n(?=From )/).filter((p) => /^From (\S*[\\/])?NOU\.md:|^From ~\/\.nou\/NOU\.md:/.test(p.trim()));
+  return parts.length ? `\n\nPROJECT SPECIFIC RULES:\n${parts.join("\n\n")}` : "";
+}

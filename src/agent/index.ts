@@ -197,6 +197,7 @@ export class Agent implements Engine {
         trimmed++;
       }
     }
+    if (trimmed) this.forgetThinking();
     if (!force && this.requestSize() <= budget * 0.8) {
       this.hooks.onEntry({ kind: "info", text: `Trimmed ${trimmed} old tool outputs to fit the model's context.` });
       return true;
@@ -212,6 +213,7 @@ export class Agent implements Engine {
       if (signal?.aborted) throw error;
       summary = `(The earlier conversation was dropped to fit the context; summarizing it failed: ${error.message})`;
     }
+    this.forgetThinking();
     const intro = `[Summary of the conversation so far]\n${summary}`;
     const rest = this.messages.slice(split);
     const first = rest[0];
@@ -223,6 +225,24 @@ export class Agent implements Engine {
       text: `Summarized ${split} earlier messages to fit the model's context (${Math.round(startSize / 1000)}k → ${Math.round(this.requestSize() / 1000)}k characters).`,
     });
     return true;
+  }
+
+  /**
+   * Drops Claude's thinking blocks from the history. Newer Claude models reject a conversation whose
+   * earlier turns were edited while it still carries their thinking blocks (they're tied to the exact
+   * history they were written in), and trimming or summarizing is such an edit. Without them the model
+   * carries on from the visible text and tool calls, which is what the trimmed history holds anyway.
+   */
+  private forgetThinking() {
+    this.messages = this.messages.map((m) => {
+      if (m.role !== "assistant" || m.raw?.provider !== "anthropic" || !Array.isArray(m.raw.data)) return m;
+      const kept = (m.raw.data as { type: string }[]).filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking");
+      if (kept.length === m.raw.data.length) return m;
+      if (kept.length) return { ...m, raw: { ...m.raw, data: kept } };
+      const plain = { ...m };
+      delete plain.raw;
+      return plain;
+    });
   }
 
   /**
@@ -270,6 +290,7 @@ export class Agent implements Engine {
     this.controller = new AbortController();
     const { signal } = this.controller;
     try {
+      let cutOff = 0;
       for (let step = 0; step < MAX_STEPS; step++) {
         if (this.requestSize() > this.contextBudget()) await this.compact(false, signal);
         this.hooks.onBusy(`Pondering with ${describe(this.choice)}...`);
@@ -316,9 +337,18 @@ export class Agent implements Engine {
           return;
         }
         if (result.stop === "max_tokens") {
-          this.hooks.onEntry({ kind: "error", text: "The response was cut off before its tool call finished. Try asking for a smaller change." });
-          this.dropUnansweredCalls();
-          return;
+          // The reply ran out of room mid tool call (usually a whole file in one write): tell the model and
+          // let it try in smaller pieces, a couple of times, before giving up.
+          if (++cutOff > 2) {
+            this.hooks.onEntry({ kind: "error", text: "The response was cut off before its tool call finished, again. Try asking for a smaller change." });
+            this.dropUnansweredCalls();
+            return;
+          }
+          for (const call of result.toolCalls) {
+            this.messages.push({ role: "tool", callId: call.id, name: call.name, isError: true,
+              content: "Not run: your response hit the output limit before this call was complete. Make the change in smaller steps (edit_file or multi_edit with only the lines that change, not the whole file)." });
+          }
+          continue;
         }
         if (result.toolCalls.length === 0) return;
 
@@ -479,7 +509,9 @@ export class Agent implements Engine {
           return "User denied permission to run this command.";
         }
         this.hooks.onEntry({ kind: "tool", text: `Ran: ${args.command}` });
-        const output = await runCommand(args.command, Number(args.timeout) > 0 ? Number(args.timeout) * 1000 : undefined);
+        // Timeouts are in seconds; a model that sends milliseconds still gets a sensible limit.
+        const seconds = Number(args.timeout) > 0 ? Number(args.timeout) : 0;
+        const output = await runCommand(args.command, seconds ? (seconds > 3600 ? seconds : seconds * 1000) : undefined, this.controller?.signal);
         return output.trim() || "(no output)";
       }
       default: {
@@ -508,9 +540,12 @@ export class Agent implements Engine {
       return "User rejected this change. Ask them what they would like instead.";
     }
     const result = await applyChange(change);
-    this.hooks.onChange(change, "applied", this.turnId);
     this.hooks.onEntry({ kind: "tool", text: result });
-    if (result.startsWith("Failed")) return result;
+    if (result.startsWith("Failed")) {
+      this.hooks.onChange(change, "rejected", this.turnId);
+      return result;
+    }
+    this.hooks.onChange(change, "applied", this.turnId);
     this.hooks.onBusy(`Checking ${change.path} for problems...`);
     const problems = await this.hooks.checkChange?.(change).catch(() => null);
     if (problems) this.hooks.onEntry({ kind: "error", text: `New problems in ${change.path}:\n${problems}` });

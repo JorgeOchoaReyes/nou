@@ -69,7 +69,7 @@ export function openAICompatibleProvider(preset: Preset): Provider {
   const getClient = () => {
     const url = baseURL();
     const key = apiKey();
-    if (client?.url !== url || client.key !== key) client = { url, key, api: new OpenAI({ baseURL: url, apiKey: key }) };
+    if (client?.url !== url || client.key !== key) client = { url, key, api: new OpenAI({ baseURL: url, apiKey: key, maxRetries: 0 }) };
     return client.api;
   };
   const connect: ConnectField[] = [
@@ -94,7 +94,7 @@ export function openAICompatibleProvider(preset: Preset): Provider {
     async chat({ model, system, messages, tools, onText, signal, effort }: ChatRequest): Promise<ChatResult> {
       // OpenAI's reasoning models take an effort too (named in the model id, through a gateway too). Nou's
       // default, high, is their default, medium; xhigh and max are their high.
-      const reasoning = effort && /(^|\/)(gpt-5|o\d)/.test(model) ? ({ low: "low", medium: "low", high: "medium" } as Record<string, "low" | "medium" | "high">)[effort] ?? "high" : null;
+      const reasoning = effort && /(^|\/)(gpt-5|o\d)/.test(model) && !/-chat|o1-(preview|mini)/.test(model) ? ({ low: "low", medium: "low", high: "medium" } as Record<string, "low" | "medium" | "high">)[effort] ?? "high" : null;
       const stream = await getClient().chat.completions.create(
         {
           model,

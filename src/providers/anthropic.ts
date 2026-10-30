@@ -65,7 +65,8 @@ export function anthropicProvider(): Provider {
   let client: { auth: string; api: Anthropic } | null = null;
   const getClient = () => {
     const auth = `${process.env.ANTHROPIC_API_KEY}|${process.env.ANTHROPIC_AUTH_TOKEN}|${process.env.ANTHROPIC_BASE_URL}`;
-    if (client?.auth !== auth) client = { auth, api: new Anthropic() };
+    // No retries here: the agent retries failed requests itself (with backoff), and both would multiply.
+    if (client?.auth !== auth) client = { auth, api: new Anthropic({ maxRetries: 0 }) };
     return client.api;
   };
 
@@ -100,6 +101,8 @@ export function anthropicProvider(): Provider {
           eager_input_streaming: true,
         })),
         stream: true,
+        // Current models think between tool calls; summarized, that shows what they're doing instead of a silence.
+        ...(EFFORT_MODELS.test(model) ? { thinking: { type: "adaptive", display: "summarized" } as unknown as Anthropic.Beta.Messages.BetaThinkingConfigParam } : {}),
         ...(effort ? { output_config: { effort: effort as "low" | "medium" | "high" | "xhigh" | "max" } } : {}),
         ...(fallbacks ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
       };
@@ -108,7 +111,20 @@ export function anthropicProvider(): Provider {
         let text = "";
         try {
           const stream = getClient().beta.messages.stream(body, signal ? { signal } : {});
+          // Thinking streams as a quote above the reply (the chat shows quotes dimmed); only the reply is kept.
+          let thinking = false;
+          stream.on("thinking", (delta) => {
+            const piece = `${thinking ? "" : "> "}${delta.replace(/\n/g, "\n> ")}`;
+            thinking = true;
+            text += piece;
+            onText(piece);
+          });
           stream.on("text", (delta) => {
+            if (thinking) {
+              thinking = false;
+              text += "\n\n";
+              onText("\n\n");
+            }
             text += delta;
             onText(delta);
           });

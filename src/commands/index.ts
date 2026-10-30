@@ -63,8 +63,14 @@ export async function readForModel(filePath: string, offset = 1, limit = READ_LI
   for (let n = start; n <= end; n++) {
     const line = `${String(n).padStart(width)}\t${lines[n - 1]}\n`;
     if (body.length + line.length > READ_CHARS) {
-      end = n - 1;
-      body += `[... stopped at line ${end} to keep this short]\n`;
+      if (n === start) {
+        // A single huge line (minified code, one-line JSON): show its start rather than nothing.
+        body += `${line.slice(0, READ_CHARS)}\n[... line ${n} cut off: it is ${lines[n - 1]!.length} characters long]\n`;
+        end = n;
+      } else {
+        end = n - 1;
+        body += `[... stopped at line ${end} to keep this short]\n`;
+      }
       break;
     }
     body += line;
@@ -92,16 +98,47 @@ const OUTPUT_KEEP = 200_000;
  * Runs a shell command and returns its output (stdout and stderr together, in the order written) and,
  * when it failed, its exit code. Async so the UI keeps rendering while it runs.
  */
-export function runCommand(command: string, timeout = COMMAND_TIMEOUT): Promise<string> {
+/** Commands still running, so they can be stopped when Nou exits instead of being left behind. */
+const running = new Set<ReturnType<typeof spawn>>();
+let exitHooked = false;
+
+/** Stops a command and everything it started. */
+function stopProcess(child: ReturnType<typeof spawn>) {
+  try {
+    if (process.platform === "win32") {
+      if (child.pid) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      else child.kill("SIGKILL");
+    } else if (child.pid) process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+}
+
+/**
+ * Runs a shell command and returns its output (stdout and stderr together, in the order written) and,
+ * when it failed, its exit code. Async so the UI keeps rendering while it runs. `signal` (Esc) stops it.
+ */
+export function runCommand(command: string, timeout = COMMAND_TIMEOUT, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve) => {
     const posix = process.platform !== "win32";
-    // Its own process group on macOS and Linux, so a timeout stops everything it started.
+    // Its own process group on macOS and Linux, so stopping it stops everything it started.
     const child = spawn(command, { cwd: process.cwd(), shell: true, stdio: ["ignore", "pipe", "pipe"], detached: posix });
+    running.add(child);
+    if (!exitHooked) {
+      exitHooked = true;
+      process.on("exit", () => running.forEach(stopProcess));
+      // Closing the terminal ends Nou with SIGHUP, which skips "exit": stop the commands then too.
+      if (process.platform !== "win32") {
+        process.once("SIGHUP", () => {
+          running.forEach(stopProcess);
+          process.exit(129);
+        });
+      }
+    }
     let head = "";
     let tail = "";
     let dropped = 0;
-    const take = (chunk: Buffer) => {
-      const text = chunk.toString("utf-8");
+    const take = (text: string) => {
       if (head.length < OUTPUT_KEEP / 2) {
         head += text;
         return;
@@ -112,27 +149,36 @@ export function runCommand(command: string, timeout = COMMAND_TIMEOUT): Promise<
         tail = tail.slice(-OUTPUT_KEEP / 2);
       }
     };
-    child.stdout.on("data", take);
-    child.stderr.on("data", take);
-    let timedOut = false;
+    // Decoded as a stream, so a character split across two chunks isn't garbled.
+    child.stdout.setEncoding("utf8").on("data", take);
+    child.stderr.setEncoding("utf8").on("data", take);
+    const limit = Math.min(Math.max(1000, timeout), MAX_COMMAND_TIMEOUT);
+    let stopped: "timeout" | "cancelled" | null = null;
     const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        if (posix && child.pid) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }, Math.min(Math.max(1000, timeout), MAX_COMMAND_TIMEOUT));
+      stopped = "timeout";
+      stopProcess(child);
+    }, limit);
+    const onAbort = () => {
+      stopped = "cancelled";
+      stopProcess(child);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    let done = false;
     const finish = (code: number | null, error?: Error) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      running.delete(child);
       const output = (dropped ? `${head}\n[... ${dropped} characters cut ...]\n${tail}` : head + tail).trimEnd();
       if (error) return resolve(`Error: ${error.message}`);
-      if (timedOut) return resolve(`Error (timed out after ${Math.round(timeout / 1000)}s; pass a longer timeout if it needs one):\n${output}`);
+      if (stopped === "cancelled") return resolve(`Stopped: the user cancelled it.\n${output}`);
+      if (stopped === "timeout") return resolve(`Error (timed out after ${Math.round(limit / 1000)}s; pass a longer timeout if it needs one):\n${output}`);
       resolve(code === 0 ? output || "(no output)" : `Error (exit code ${code ?? "?"}):\n${output || "(no output)"}`);
     };
     child.on("error", (error) => finish(null, error));
     child.on("close", (code) => finish(code));
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -203,7 +249,7 @@ const plainChars = (s: string) => s.replace(/[\u2018\u2019\u201c\u201d\u2013\u20
  * Where `target` is in `text`, matching whole lines loosely: ignoring trailing spaces, then indentation,
  * then typographic quotes and dashes. Only a unique match counts: a wrong edit is worse than none.
  */
-function looseMatch(text: string, target: string): { start: number; end: number } | null {
+function looseMatch(text: string, target: string): { start: number; end: number; fileIndent: string; targetIndent: string } | null {
   const lines = text.split("\n");
   const want = target.replace(/\n$/, "").split("\n");
   const offsets: number[] = [];
@@ -220,7 +266,10 @@ function looseMatch(text: string, target: string): { start: number; end: number 
     if (hits.length === 1) {
       const first = hits[0]!;
       const last = first + wanted.length - 1;
-      return { start: offsets[first]!, end: offsets[last]! + lines[last]!.length };
+      // How the file indents the match versus how old_string did, so new_string can be shifted to match.
+      const k = Math.max(0, want.findIndex((l) => l.trim()));
+      const lead = (l: string) => l.match(/^\s*/)![0];
+      return { start: offsets[first]!, end: offsets[last]! + lines[last]!.length, fileIndent: lead(lines[first + k]!), targetIndent: lead(want[k]!) };
     }
     if (hits.length > 1) return null;
   }
@@ -275,7 +324,19 @@ export function editText(before: string, oldString: string, newString: string, r
   }
   if (count === 0) {
     const loose = looseMatch(normalized, target);
-    if (loose) return (normalized.slice(0, loose.start) + replacement.replace(/\n$/, "") + normalized.slice(loose.end)).replace(/\n/g, eol);
+    if (loose) {
+      let text = replacement.replace(/\n$/, "");
+      // old_string was indented differently from the file: shift new_string the same way, so the code stays in its block.
+      // (Only when new_string is indented like old_string; if it already has the file's indentation, it stays.)
+      const newIndent = text.split("\n").find((l) => l.trim())?.match(/^\s*/)![0] ?? "";
+      if (loose.fileIndent !== loose.targetIndent && newIndent === loose.targetIndent) {
+        const { fileIndent: to, targetIndent: from } = loose;
+        text = text.split("\n").map((l) => (!l.trim() ? l : l.startsWith(from) ? to + l.slice(from.length) : l)).join("\n");
+      }
+      // Deleting whole lines takes their line break too, rather than leaving a blank line.
+      const end = !text && normalized[loose.end] === "\n" ? loose.end + 1 : loose.end;
+      return (normalized.slice(0, loose.start) + text + normalized.slice(end)).replace(/\n/g, eol);
+    }
     const near = nearest(normalized, target);
     throw new Error(`old_string was not found in the file. Copy it exactly from read_file (without the line numbers).${near ? ` The closest lines are:\n${near}` : " Read the file again first."}`);
   }
@@ -304,6 +365,12 @@ export async function proposeEdits(filePath: string, edits: { old_string: string
 export async function applyChange(change: FileChange): Promise<string> {
   try {
     const fullPath = resolveInProject(change.path);
+    // The edit was worked out from the file as it was then; if it has changed since (you edited it while
+    // the edit waited for approval), writing it would throw your changes away.
+    const now = await readOrEmpty(fullPath);
+    if (change.isNew ? now !== null : now !== change.before) {
+      return `Failed: ${change.path} changed after the edit was worked out (it was edited meanwhile), so it wasn't written. Read it again and redo the edit.`;
+    }
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.writeFile(fullPath, change.after, "utf-8");
     return `Successfully ${change.isNew ? "created" : "updated"} ${change.path}`;

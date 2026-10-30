@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
@@ -64,8 +64,11 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   const [find, setFind] = useState<{ query: string; index: number } | null>(null);
   useEffect(() => onFinding?.(!!find), [!!find]);
   useEffect(() => setFind(null), [filePath]);
+  // Only a new request opens it: not the old one seen again when the view comes back (after the editor, settings...).
+  const lastFindRequest = useRef(findRequest);
   useEffect(() => {
-    if (findRequest) setFind({ query: "", index: 0 });
+    if (findRequest && findRequest !== lastFindRequest.current) setFind({ query: "", index: 0 });
+    lastFindRequest.current = findRequest;
   }, [findRequest]);
   const rows = Math.max(1, height - 3 - (find ? 1 : 0));
   const inner = width - 3; // minus the borders and the scrollbar

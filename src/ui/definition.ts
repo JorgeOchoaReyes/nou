@@ -126,9 +126,14 @@ export function findDefinition(file: string, text: string, line: number, col: nu
 
   // Declared somewhere else in the project.
   const ext = path.extname(file);
+  // A click waits on this, so it reads at most a few megabytes before giving up.
   const files = projectFiles().filter((f) => f !== file && path.extname(f) === ext).slice(0, 3000);
+  let budget = 8_000_000;
   for (const other of files) {
-    if (!existsSync(other)) continue;
+    if (!existsSync(other) || budget <= 0) continue;
+    const size = statSync(other).size;
+    if (size > 1_000_000) continue;
+    budget -= size;
     const theirs = readLines(other);
     if (!theirs) continue;
     const index = declarationIn(theirs, word);

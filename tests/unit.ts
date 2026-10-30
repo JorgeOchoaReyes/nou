@@ -131,6 +131,9 @@ console.log("Nou's engine: commands, edits, parallel tools");
   const file = "function f() {\n    const a = 1;  \n    return a;\n}\n";
   check("line numbers copied from read_file are ignored", editText(file, "2\t    const a = 1;  \n3\t    return a;", "2\t    const a = 2;\n3\t    return a;").includes("const a = 2;\n    return a;"));
   check("trailing spaces and indentation don't stop an edit", editText(file, "const a = 1;\nreturn a;", "    const a = 3;\n    return a;").includes("    const a = 3;\n    return a;\n}"));
+  const py = "def f():\n    if x:\n        a()\n";
+  check("an edit written without the file's indentation is shifted to match it", editText(py, "if x:\n    a()", "if x:\n    b()") === "def f():\n    if x:\n        b()\n");
+  check("deleting lines on a loose match doesn't leave a blank line", editText("a\n  b\n  c\nd\n", "b\nc", "") === "a\nd\n");
   let hint = "";
   try {
     editText(file, "const b = 1;", "x");
@@ -217,6 +220,54 @@ console.log("Retrying a model that's busy");
     onEntry: (e: any) => said2.push(e.kind), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true,
   }).send("hi");
   check("a rejected key isn't retried", keyTries === 1 && said2.includes("error"));
+}
+
+console.log("Review fixes");
+{
+  const { readForModel, runCommand, applyChange, proposeEdit } = await import("../src/commands/index.js");
+  writeFileSync("minified.js", "x".repeat(60_000) + "\nsecond\n");
+  const page = await readForModel("minified.js");
+  check("a line too long to read whole still comes back (its start), and reading moves on", page.includes("xxxx") && page.includes("line 1 cut off") && page.includes("offset=2"));
+  const controller = new AbortController();
+  const t0 = Date.now();
+  const pending = runCommand(`node -e "setTimeout(() => {}, 20000)"`, 30_000, controller.signal);
+  setTimeout(() => controller.abort(), 300);
+  const stopped = await pending;
+  check("Esc stops a running command right away", stopped.startsWith("Stopped") && Date.now() - t0 < 5000);
+  writeFileSync("stale.ts", "one\n");
+  const change = await proposeEdit("stale.ts", "one", "two");
+  writeFileSync("stale.ts", "one\nmine\n"); // edited while the change waited for approval
+  const result = await applyChange(change);
+  check("an edit isn't written over changes made while it waited", result.startsWith("Failed") && readFileSync("stale.ts", "utf-8") === "one\nmine\n");
+  const { nouRulesOnly } = await import("../src/context/index.js");
+  const rules = "\n\nPROJECT SPECIFIC RULES:\nFrom NOU.md:\nUse tabs.\n\nFrom CLAUDE.md:\nUse pnpm.\n\nFrom ~/.nou/NOU.md:\nBe brief.";
+  const nou = nouRulesOnly(rules);
+  check("other engines get only the NOU.md rules (they read CLAUDE.md / AGENTS.md themselves)", nou.includes("Use tabs.") && nou.includes("Be brief.") && !nou.includes("Use pnpm."));
+
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  const thinkingTurn = (id: string) => ({ role: "assistant", content: "", toolCalls: [{ id, name: "read_file", args: { path: "a" } }],
+    raw: { provider: "anthropic", data: [{ type: "thinking", thinking: "", signature: "s" }, { type: "tool_use", id, name: "read_file", input: { path: "a" } }] } });
+  const engine = new Engine({ provider: { id: "anthropic", local: false } as any, model: "m" }, "sys", { onEntry() {}, onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true });
+  (engine as any).messages = [
+    { role: "user", content: "go" }, thinkingTurn("t1"), { role: "tool", callId: "t1", name: "read_file", content: "x".repeat(5000) },
+    thinkingTurn("t2"), { role: "tool", callId: "t2", name: "read_file", content: "y" },
+  ];
+  process.env.NOU_CONTEXT_CHARS = "100000";
+  await engine.compact();
+  delete process.env.NOU_CONTEXT_CHARS;
+  const history = (engine as any).messages as any[];
+  check("trimming old tool output drops Claude's thinking blocks, so the edited history isn't rejected",
+    history[2].content.length < 1000 && history.every((m) => !m.raw || m.raw.data.every((b: any) => b.type !== "thinking")) && history[3].raw.data[0].type === "tool_use");
+
+  let calls = 0;
+  const cutOff: any = { id: "fake", local: true, unavailable: () => null, async chat({ messages }: any) {
+    calls++;
+    if (calls === 1) return { text: "", toolCalls: [{ id: "w1", name: "write_file", args: { path: "big.txt" } }], stop: "max_tokens" };
+    return { text: messages.at(-1).isError ? "smaller steps then" : "?", toolCalls: [] };
+  } };
+  const said: string[] = [];
+  await new Engine({ provider: cutOff, model: "f" }, "sys", { onEntry: (e: any) => said.push(e.text), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true }).send("write it");
+  check("a reply cut off mid tool call is told so and carries on", calls === 2 && said.includes("smaller steps then"));
 }
 
 console.log("Games");

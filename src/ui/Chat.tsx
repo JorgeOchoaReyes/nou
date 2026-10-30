@@ -57,13 +57,15 @@ function isProjectFile(file: string): boolean {
   let known = knownFiles.get(file);
   if (known === undefined) {
     const full = path.resolve(file);
+    const rel = path.relative(process.cwd(), full);
     try {
-      known = !path.relative(process.cwd(), full).startsWith("..") && statSync(full).isFile();
+      known = !rel.startsWith("..") && !path.isAbsolute(rel) && statSync(full).isFile();
     } catch {
       known = false;
     }
     if (knownFiles.size > 5000) knownFiles.clear();
-    knownFiles.set(file, known);
+    // Only files that exist are remembered: one Nou is about to create becomes a link once it's there.
+    if (known) knownFiles.set(file, known);
   }
   return known;
 }
