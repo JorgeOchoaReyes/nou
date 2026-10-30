@@ -5,7 +5,8 @@ import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { nouRulesOnly } from "../context/index.js";
 import { MCP_PRESETS, McpManager, loadMcpServers, removeUserServer, saveUserServers, USER_MCP_FILE } from "../mcp/index.js";
 import { findOtherMcpServers } from "../mcp/import.js";
-import { ago, listConversations, loadConversation, saveConversation } from "../conversations/index.js";
+import { ago, listConversations, loadConversation, saveConversation, type ConversationSummary } from "../conversations/index.js";
+import { externalEntries, externalSessions, type ExternalSession } from "../conversations/external.js";
 import { buildSystemPrompt, newSessionId, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
@@ -367,7 +368,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     saveConversation({ id: conversationId, title: first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: engine.id, entries, state: engine.snapshot?.() });
   }, [!busy, entries.length, conversationId]);
   /** Earlier conversations for the palette, read from disk when it opens. */
-  const recentChats = useMemo(() => (quickOpen !== null ? listConversations() : []), [quickOpen !== null]);
+  const recentChats = useMemo(() => (quickOpen !== null ? resumable() : []), [quickOpen !== null]);
   useEffect(() => {
     if (resume) void resumeConversation(resume === "last" ? "last" : "");
   }, []);
@@ -507,25 +508,18 @@ export function App({ initialModel, permContext, resume }: Props) {
    */
   const resumeConversation = async (arg: string) => {
     if (busy) return info("Wait for the current reply to finish (or press Esc) before resuming another conversation.", "error");
-    const list = listConversations().filter((c) => c.id !== conversationId);
-    if (!list.length) return info("No earlier conversations in this folder yet. They're saved after each reply.");
+    const list = resumable();
+    if (!list.length) return info("No earlier conversations in this folder yet: Nou's are saved after each reply, and Claude Code's and Codex's own sessions here show up too.");
     if (!arg) {
-      const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${engineInfo(isEngineId(c.engine) ? c.engine : "nou").label} · ${ago(c.updated)})`);
+      const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${"file" in c ? `${engineInfo(c.engine).label} CLI` : engineInfo(isEngineId(c.engine) ? c.engine : "nou").label} · ${ago(c.updated)})`);
       return info(`Earlier conversations here. /resume <number> picks one up (or /resume last):\n${rows.join("\n")}`);
     }
     const pick = arg === "last" ? list[0] : list[Number(arg) - 1] ?? list.find((c) => c.id === arg);
-    const saved = pick && loadConversation(pick.id);
-    if (!saved) return info(`There's no conversation ${arg}: /resume lists them.`, "error");
-    let engine = agentRef.current!;
-    // Back to the engine it was with, when that's installed (its own state picks up best).
-    if (saved.engine !== engine.id && isEngineId(saved.engine) && isInstalled(engineInfo(saved.engine))) {
-      engine.dispose?.();
-      engine = createEngine(saved.engine, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
-      engine.configure(engineConfig.current);
-      agentRef.current = engine;
-      updateSettings({ engine: saved.engine });
-    }
-    engine.clear();
+    if (!pick) return info(`There's no conversation ${arg}: /resume lists them.`, "error");
+    if ("file" in pick) return resumeExternal(pick);
+    const saved = loadConversation(pick.id);
+    if (!saved) return info(`Couldn't read conversation ${arg}.`, "error");
+    const engine = engineFor(isEngineId(saved.engine) ? saved.engine : null);
     const restored = saved.engine === engine.id && !!saved.state && !!engine.restore?.(saved.state);
     if (!restored) {
       const handoff = conversationSoFar(saved.entries);
@@ -534,6 +528,47 @@ export function App({ initialModel, permContext, resume }: Props) {
     setConversationId(saved.id);
     setQueued([]);
     setEntries([...saved.entries, { kind: "info", text: `Resumed "${saved.title}" from ${ago(saved.updated)} with ${engineInfo(engine.id).label}. ${restored ? "It picks up right where it left off." : "It has the conversation so far."}` }]);
+    setFocus("chat");
+  };
+
+  /** Nou's saved conversations and Claude Code's and Codex's own sessions here, latest first, without doubles. */
+  function resumable(): (ConversationSummary | ExternalSession)[] {
+    const own = listConversations().filter((c) => c.id !== conversationId);
+    const current = agentRef.current!.snapshot?.() as any;
+    const known = new Set([...own.map((c) => c.ref), current?.claudeSession, current?.codexThread].filter(Boolean));
+    return [...own, ...externalSessions().filter((s) => !known.has(s.id))].sort((a, b) => b.updated - a.updated);
+  }
+
+  /** The engine to resume with: back to `id` when it's installed (it picks up best), else the current one, cleared. */
+  const engineFor = (id: EngineId | null): Engine => {
+    let engine = agentRef.current!;
+    if (id && id !== engine.id && isInstalled(engineInfo(id))) {
+      engine.dispose?.();
+      engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+      engine.configure(engineConfig.current);
+      agentRef.current = engine;
+      updateSettings({ engine: id });
+    }
+    engine.clear();
+    return engine;
+  };
+
+  /** A session from Claude Code's or Codex's own CLI: that engine resumes it, so it carries on with all of it. */
+  const resumeExternal = (session: ExternalSession) => {
+    const label = engineInfo(session.engine).label;
+    if (!isInstalled(engineInfo(session.engine))) {
+      return info(`That's a ${label} session: switch to its engine first (/engine ${session.engine}, which installs it), then /resume it again.`, "error");
+    }
+    const engine = engineFor(session.engine);
+    const restored = !!engine.restore?.(session.engine === "claude-code" ? { claudeSession: session.id } : { codexThread: session.id });
+    const entries = externalEntries(session);
+    if (!restored) {
+      const handoff = conversationSoFar(entries);
+      if (handoff) engine.note(handoff);
+    }
+    setConversationId(newSessionId());
+    setQueued([]);
+    setEntries([...entries, { kind: "info", text: `Resumed "${session.title}" from ${label}'s CLI (${ago(session.updated)}). ${label} picks up right where it left off, with Nou's diffs and undo from here on.` }]);
     setFocus("chat");
   };
 
@@ -1714,7 +1749,7 @@ ${snippet}
     { title: "Cancel your last message (edit it and resend)", keys: "/cancel", run: cancelLast },
     { title: "Resume an earlier conversation", keys: "/resume", run: () => void resumeConversation("") },
     { title: termOpen ? "Close the terminal" : "Open a terminal under the code", keys: "`", run: () => toggleTerminal() },
-    ...recentChats.filter((c) => c.id !== conversationId).slice(0, 5).map((c) => ({ title: `Resume: ${c.title}`, keys: ago(c.updated), run: () => void resumeConversation(c.id) })),
+    ...recentChats.slice(0, 5).map((c) => ({ title: `Resume: ${c.title}${"file" in c ? ` (${engineInfo(c.engine).label} CLI)` : ""}`, keys: ago(c.updated), run: () => void resumeConversation(c.id) })),
     { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
     { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
     { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },
