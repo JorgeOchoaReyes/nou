@@ -8,7 +8,7 @@ import { harness, problemsIntroduced } from "../agent/harness.js";
 import { describe, providers, resolveModel, saveModel, setupProblem, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
-import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
+import { FOLLOW_SPEEDS, loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, sameStatus, status as gitStatus, statusAsync as gitStatusAsync, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch, trustState, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
@@ -42,6 +42,12 @@ const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
 const DOUBLE_CLICK_MS = 500;
+/** A step follow mode shows: a file the agent read, and the lines when it read part of it. */
+type FollowStep = { file: string; line?: number; to?: number };
+/** How long each follow step stays on screen before the next. */
+const FOLLOW_STEP_MS: Record<string, number> = { slow: 2500, normal: 1200, fast: 450, instant: 0 };
+/** Steps follow mode may fall behind before it skips ahead. */
+const MAX_FOLLOW_LAG = 12;
 /** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
 const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 16);
 
@@ -114,6 +120,17 @@ export function App({ initialModel, permContext }: Props) {
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
   const [follow, setFollow] = useState(settings.followMode);
+  // Follow mode replays what the agent reads a step at a time (it reads far faster than you can watch):
+  // the steps waiting, and the timer that shows the next one.
+  const followQueue = useRef<FollowStep[]>([]);
+  const followTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [followLag, setFollowLag] = useState(0);
+  const clearFollow = () => {
+    followQueue.current = [];
+    if (followTimer.current) clearTimeout(followTimer.current);
+    followTimer.current = null;
+    setFollowLag(0);
+  };
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [streaming, setStreaming] = useState("");
   // Streamed text arrives a token at a time; redrawing the whole screen for each one is wasted work.
@@ -252,12 +269,11 @@ export function App({ initialModel, permContext }: Props) {
       },
       onStream: showStream,
       onBusy: setBusy,
-      onOpen: (filePath, line, to) => openAtRef.current(filePath, line ?? 1, false, to),
-      onRead: (filePath) => {
-        if (!followRef.current) return;
-        open(filePath);
-        setReveal(filePath);
+      onOpen: (filePath, line, to) => {
+        clearFollow(); // what was asked for wins over reads still waiting to be shown
+        openAtRef.current(filePath, line ?? 1, false, to);
       },
+      onRead: (filePath, line, to) => followStepRef.current({ file: filePath, ...(line ? { line } : {}), ...(to ? { to } : {}) }),
       onChange: (change, status, turn) => {
         if (status === "applied") {
           timelineRef.current!.record({ path: change.path, before: change.isNew ? null : change.before, after: change.after, source: "nou", turn });
@@ -266,6 +282,7 @@ export function App({ initialModel, permContext }: Props) {
         setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
         // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
         if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
+          clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
           setOpenFile(change.path);
           setContent(status === "applied" ? change.after : readText(change.path));
           setDiffMode("off");
@@ -865,6 +882,41 @@ export function App({ initialModel, permContext }: Props) {
       setDiffMode("off");
     }
   };
+  const showFollowStep = (step: FollowStep) => {
+    if (step.line) openAt(step.file, step.line, false, step.to ?? step.line);
+    else if (step.file !== openFile) {
+      if (!settleDraft(step.file)) return;
+      open(step.file);
+      setReveal(step.file);
+    }
+  };
+  const showFollowRef = useRef(showFollowStep);
+  showFollowRef.current = showFollowStep;
+  /** Shows the next waiting step, then waits as long as the follow speed says before the one after. */
+  const playFollow = () => {
+    const step = followQueue.current.shift();
+    setFollowLag(followQueue.current.length);
+    if (!step) {
+      followTimer.current = null;
+      return;
+    }
+    showFollowRef.current(step);
+    followTimer.current = setTimeout(playFollow, FOLLOW_STEP_MS[settingsRef.current.followSpeed] ?? FOLLOW_STEP_MS.normal);
+  };
+  const followStep = (step: FollowStep) => {
+    if (!followRef.current) return;
+    if (!FOLLOW_STEP_MS[settings.followSpeed]) return showFollowStep(step);
+    followQueue.current.push(step);
+    // Never fall too far behind: past that, the oldest steps are skipped.
+    if (followQueue.current.length > MAX_FOLLOW_LAG) followQueue.current.splice(0, followQueue.current.length - MAX_FOLLOW_LAG);
+    setFollowLag(followQueue.current.length);
+    if (!followTimer.current) playFollow();
+  };
+  const followStepRef = useRef(followStep);
+  followStepRef.current = followStep;
+  useEffect(() => {
+    if (!follow) clearFollow();
+  }, [follow]);
   const openAtRef = useRef(openAt);
   openAtRef.current = openAt;
   /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
@@ -1377,6 +1429,7 @@ ${snippet}
     { title: "Auto-edit: apply edits without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto-edit") },
     { title: "Auto: edits and commands without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto") },
     { title: `Follow mode ${follow ? "off" : "on"}: jump to files Nou works on`, keys: "f", run: () => setFollow((f) => !f) },
+    { title: `Replay speed for follow mode: ${settings.followSpeed} (next: ${FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + 1) % FOLLOW_SPEEDS.length]})`, keys: "settings", run: () => updateSettings({ followSpeed: FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + 1) % FOLLOW_SPEEDS.length]! }) },
     { title: `Mouse ${settings.mouse ? "off (select text in the terminal)" : "on"}`, keys: "m", run: toggleMouse },
     { title: "Copy the last reply", keys: "/copy", run: () => void runCommand("/copy") },
     { title: "Copy the last code block", keys: "/copy code", run: () => void runCommand("/copy code") },
@@ -1426,7 +1479,8 @@ ${snippet}
             : diff
               ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
               : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
-  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
+  const followChip = follow ? ` ◉ follow${followLag ? ` ·${followLag}` : ""} ` : " ○ follow ";
+  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
     used += hints[i]![0].length + hints[i]![1].length + 4;
@@ -1451,7 +1505,7 @@ ${snippet}
       x += width;
     };
     add(` ${autoMode} `.length, () => cycleAutoMode());
-    add(10, () => setFollow((f) => !f));
+    add(followChip.length, () => setFollow((f) => !f));
     add(` ✖ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
     if (checking.length) add(3 + checking.join(", ").length);
     if (!exitArmed) {
@@ -1570,7 +1624,7 @@ ${snippet}
         <Text wrap="truncate-end">
           <Text backgroundColor={mode.color} color="black" bold>{` ${mode.label} `}</Text>
           <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
-          <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{follow ? " ◉ follow " : " ○ follow "}</Text>
+          <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{followChip}</Text>
           <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
           <Text backgroundColor={C.panel} color={totals.warnings ? C.yellow : C.dim}>{` ▲ ${totals.warnings} `}</Text>
           {checking.length > 0 && <Text color={C.accent2}> ⟳ {checking.join(", ")}</Text>}

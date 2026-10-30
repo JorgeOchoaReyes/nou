@@ -94,7 +94,7 @@ Every change is reviewed like a code review:
 | <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD`, Nou's last edit, or this session · <kbd>n</kbd>/<kbd>N</kbd> jump between changes · <kbd>[</kbd>/<kbd>]</kbd> previous/next file in a session diff |
 | <kbd>c</kbd> | in the file tree: show only changed files |
-| <kbd>f</kbd> | follow mode (off by default): jump to files as Nou reads and edits them |
+| <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal |
 | <kbd>s</kbd> | settings: model, preferences, plugins |

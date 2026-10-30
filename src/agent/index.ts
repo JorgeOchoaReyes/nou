@@ -50,7 +50,8 @@ export interface AgentHooks {
   onEntry(entry: ChatEntry): void;
   onStream(partial: string): void;
   onBusy(label: string | null): void;
-  onRead(path: string): void;
+  /** A file the agent read; `line`..`to` when it read only part of it. */
+  onRead(path: string, line?: number, to?: number): void;
   /** Shows a file in the user's code view, scrolled to `line` with `line`..`to` highlighted. */
   onOpen?(path: string, line?: number, to?: number): void;
   /** `turn` is unique across sessions (session id + turn number), so undo can target one turn exactly. */
@@ -355,7 +356,9 @@ export class Agent implements Engine {
             return "User denied reading this file: it is outside the project folder.";
           }
         } else {
-          this.hooks.onRead(toRelative(args.path));
+          const from = Number(args.offset) > 1 ? Math.floor(Number(args.offset)) : undefined;
+          const count = Number(args.limit) > 0 ? Math.floor(Number(args.limit)) : undefined;
+          this.hooks.onRead(toRelative(args.path), from ?? (count ? 1 : undefined), count ? (from ?? 1) + count - 1 : undefined);
         }
         this.hooks.onEntry({ kind: "tool", text: `Read ${args.path}` });
         return await readForModel(args.path, args.offset, args.limit);

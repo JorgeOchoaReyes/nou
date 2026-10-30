@@ -11,6 +11,10 @@ export type Effort = (typeof EFFORTS)[number];
 export const AUTO_SAVE = ["delay", "focus", "off"] as const;
 export type AutoSave = (typeof AUTO_SAVE)[number];
 
+/** How fast follow mode replays what the agent does: a step every so often, or as it happens. */
+export const FOLLOW_SPEEDS = ["slow", "normal", "fast", "instant"] as const;
+export type FollowSpeed = (typeof FOLLOW_SPEEDS)[number];
+
 /** Color themes for code (see src/syntax/themes.ts). */
 export const CODE_THEMES = ["one-dark", "tokyo-night", "github-dark", "dracula", "high-contrast", "github-light"] as const;
 export type CodeTheme = (typeof CODE_THEMES)[number];
@@ -24,6 +28,8 @@ export type Settings = {
   effort: Effort;
   /** Start with follow mode on (code view jumps to files the agent touches). */
   followMode: boolean;
+  /** How fast follow mode shows each step. */
+  followSpeed: FollowSpeed;
   /** Apply file edits without asking (the diff is still shown). */
   autoApproveEdits: boolean;
   /** Run shell commands without asking. */
@@ -54,6 +60,7 @@ export const DEFAULT_SETTINGS: Settings = {
   engine: "nou",
   effort: "high",
   followMode: false,
+  followSpeed: "normal",
   autoApproveEdits: false,
   autoApproveCommands: false,
   gitContext: true,

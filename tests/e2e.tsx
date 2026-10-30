@@ -528,6 +528,37 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("Esc closes it and stays in the code", !frame().includes("⌕") && frame().split("\n").at(-1)!.includes("CODE"));
 });
 
+console.log("Follow along");
+{
+  let step = 0;
+  const reader: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      step++;
+      if (step === 1) return { text: "", toolCalls: [
+        { id: "r1", name: "read_file", args: { path: "a.ts" } },
+        { id: "r2", name: "read_file", args: { path: "many.ts", offset: 50, limit: 3 } },
+        { id: "r3", name: "read_file", args: { path: "b.ts" } },
+      ] };
+      return { text: "Read them.", toolCalls: [] };
+    },
+  };
+  await session({ provider: reader, model: "fake" }, async ({ press, type, frame }) => {
+    await press(KEY.tab, 100); // files
+    await press("f", 100);
+    await press(KEY.tab, 100);
+    await press(KEY.tab, 100); // back to the chat
+    await type("read things");
+    await press(KEY.enter, 500);
+    const title = () => frame().split("\n")[2]!;
+    check("follow mode shows what Nou reads a step at a time, saying how far behind it is", title().includes("a.ts") && /◉ follow ·2/.test(frame()));
+    await delay(1300);
+    check("the next step shows the lines it read, highlighted", title().includes("many.ts") && /50▌.*const line50/.test(frame().replace(/\x1b\[[\d;]*m/g, "")));
+    await delay(1300);
+    check("and so on, until it has caught up", title().includes("b.ts") && !/follow ·\d/.test(frame()));
+  });
+}
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
