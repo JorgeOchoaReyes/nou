@@ -40,6 +40,7 @@ console.log("Mouse input");
   check("click press is reported once, then its release", events.filter((e) => e.kind === "click").length === 1 && events[4]?.kind === "release");
   check("moving with the button held is a drag", parseMouse("[<32;30;8M")[0]?.kind === "drag");
   check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);
+  check("Ctrl+click, Alt+click and right-click ask for a definition", ["\x1b[<16;3;4M", "\x1b[<8;3;4M", "\x1b[<2;3;4M"].every((c) => { const e = parseMouse(c)[0]; return e?.kind === "click" && e.define === true; }) && !(parseMouse("\x1b[<0;3;4M")[0] as any).define);
   check("ordinary keys are not mouse events", parseMouse("hello\x1b[A").length === 0);
   const { ENABLE } = await import("../src/ui/mouse.js");
   check("the terminal is asked to report drags (mode 1002), not just clicks", ENABLE.includes("?1002h") && ENABLE.includes("?1000h") && ENABLE.includes("?1006h"));
@@ -60,6 +61,28 @@ console.log("Fast text widths");
   const samples = ["", "plain ascii", "│ box ┃ ─ ▸ ✓ ✖ ☁ ⎇", "wide 中文 text", "emoji 🌞 and ✔️", "e\u0301 combining", "\x1b[31mred\x1b[39m", "tab\there", "👩‍💻 zwj", "☀\ufe0f"];
   check("same widths as string-width, fast path or not", samples.every((t) => fast(t) === real(t) && fast(t) === real(t)));
   check("options still reach string-width", fast("±", { ambiguousIsNarrow: false }) === real("±", { ambiguousIsNarrow: false }));
+}
+
+console.log("Go to definition and file links");
+{
+  const { findDefinition } = await import("../src/ui/definition.js");
+  const { linkFileRefs } = await import("../src/ui/text.js");
+  mkdirSync("def/lib", { recursive: true });
+  const a = 'import { helper, other } from "./lib/util.js";\n\nexport function main() {\n  return helper(1) + local() + new Room();\n}\n\nconst local = () => 2;\n';
+  writeFileSync("def/a.ts", a);
+  writeFileSync("def/lib/util.ts", "export function other() {}\n\nexport function helper(n: number) {\n  return n;\n}\n");
+  writeFileSync("def/room.ts", "export class Room {}\n");
+  const at = (line: number, col: number) => findDefinition("def/a.ts", a, line, col);
+  check("an imported name goes to its import line", at(4, 11)?.file === "def/a.ts" && at(4, 11)?.line === 1);
+  check("the path in an import opens that file", at(1, 38)?.file === "def/lib/util.ts" && at(1, 38)?.line === 1);
+  check("a name in an import goes to where that file declares it", at(1, 12)?.file === "def/lib/util.ts" && at(1, 12)?.line === 3);
+  check("a name declared in the file goes to its declaration", at(4, 22)?.line === 7);
+  check("otherwise it's found in the project", at(4, 38)?.file === "def/room.ts");
+  check("nothing to go to on punctuation", at(4, 9) === null);
+  const spans = linkFileRefs([{ text: "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2." }], (f) => f === "def/a.ts" || f === "def/room.ts");
+  const links = spans.filter((s) => s.link);
+  check("file references in a reply become links, with their lines", links.length === 2 && links[0]!.link!.path === "def/a.ts" && links[0]!.link!.line === 4 && links[0]!.link!.to === 5);
+  check("the text around them is kept", spans.map((s) => s.text).join("") === "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2.");
 }
 
 console.log("write_file content");

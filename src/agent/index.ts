@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { existsSync, statSync } from "fs";
 import { toolDefs } from "../tools/index.js";
 import {
   applyChange,
@@ -50,6 +51,8 @@ export interface AgentHooks {
   onStream(partial: string): void;
   onBusy(label: string | null): void;
   onRead(path: string): void;
+  /** Shows a file in the user's code view, scrolled to `line` with `line`..`to` highlighted. */
+  onOpen?(path: string, line?: number, to?: number): void;
   /** `turn` is unique across sessions (session id + turn number), so undo can target one turn exactly. */
   onChange(change: FileChange, status: ChangeStatus, turn: string): void;
   approve(request: ApprovalRequest): Promise<boolean>;
@@ -74,6 +77,7 @@ How to work:
 4. Keep going until the task is done. The user approves each edit and command as it happens, so don't stop to ask permission between steps; ask only when the request is unclear or you need a decision.
 5. End with a short summary of what you changed and why. When the user only asks a question, answer it without editing anything.
 
+- When the user asks where something is, or to show, open or find something, search for it (grep, glob), read enough to be sure, then call open_file on the exact place (with line and end_line) so it opens in their code view, and answer in a sentence or two with path:line.
 - If the user rejects an edit or command, don't retry it: ask what they would like instead.
 - Keep replies short. Refer to code as path:line.
 
@@ -355,6 +359,16 @@ export class Agent implements Engine {
         }
         this.hooks.onEntry({ kind: "tool", text: `Read ${args.path}` });
         return await readForModel(args.path, args.offset, args.limit);
+      }
+      case "open_file": {
+        const file = toRelative(String(args.path));
+        if (!isInProject(file)) return "Error: only files in the project can be shown.";
+        if (!existsSync(file) || !statSync(file).isFile()) return `Error: ${file} is not a file. Find it with glob first.`;
+        const line = Number(args.line) > 0 ? Math.floor(Number(args.line)) : undefined;
+        const to = line && Number(args.end_line) >= line ? Math.floor(Number(args.end_line)) : line;
+        this.hooks.onOpen?.(file, line, to);
+        this.hooks.onEntry({ kind: "tool", text: `Opened ${file}${line ? `:${line}${to && to !== line ? `-${to}` : ""}` : ""}` });
+        return this.hooks.onOpen ? "It is now open in the user's code view." : "This interface can't show files; give the user the path instead.";
       }
       case "list_files":
       case "get_file_tree": {

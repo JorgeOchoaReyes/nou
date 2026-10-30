@@ -7,7 +7,8 @@ import { useStdin } from "ink";
  */
 export type MouseEvent =
   | { kind: "wheel"; dir: -1 | 1; x: number; y: number; horizontal: boolean }
-  | { kind: "click"; x: number; y: number }
+  /** `define`: Ctrl+click, Alt/Option+click or a right-click, which go to a definition. */
+  | { kind: "click"; x: number; y: number; define?: boolean }
   | { kind: "drag"; x: number; y: number }
   | { kind: "release"; x: number; y: number };
 
@@ -27,10 +28,12 @@ export function parseMouse(chunk: string): MouseEvent[] {
     const y = Number(m[3]) - 1;
     const button = code & 0b11000011; // drop the shift/alt/ctrl bits
     const shift = (code & 4) !== 0;
+    const modified = (code & (8 | 16)) !== 0; // Alt (Option) or Ctrl
     if (button === 64 || button === 65) events.push({ kind: "wheel", dir: button === 64 ? -1 : 1, x, y, horizontal: shift });
     else if (button === 66 || button === 67) events.push({ kind: "wheel", dir: button === 66 ? -1 : 1, x, y, horizontal: true });
     else if (button === 0 && code & 32) events.push({ kind: "drag", x, y }); // 32: moved with the left button held
-    else if (button === 0) events.push({ kind: m[4] === "M" ? "click" : "release", x, y });
+    else if (button === 0) events.push(m[4] === "M" ? { kind: "click", x, y, ...(modified ? { define: true } : {}) } : { kind: "release", x, y });
+    else if (button === 2 && m[4] === "M") events.push({ kind: "click", x, y, define: true }); // right-click
   }
   return events;
 }

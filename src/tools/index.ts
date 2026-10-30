@@ -104,6 +104,31 @@ export const tools = [
   {
     type: "function",
     function: {
+      name: "open_file",
+      description: "Show a file in the user's code view (the middle panel), scrolled to a line with the given lines highlighted. Use it when the user asks where something is or to show/open/find something: find the exact place first, then open it.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Path to the file, relative to the project root",
+          },
+          line: {
+            type: "number",
+            description: "First line to show and highlight (1-based)",
+          },
+          end_line: {
+            type: "number",
+            description: "Last line to highlight, e.g. the end of the function. Defaults to line.",
+          }
+        },
+        required: ["path"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "list_files",
       description: "List the files and folders of the project (or a sub folder) as a tree",
       parameters: {

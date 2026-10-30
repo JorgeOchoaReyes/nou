@@ -24,8 +24,11 @@ type Props = {
   marked: Set<number>;
   /** Problems in this file, shown in the gutter and at the end of their line. */
   problems: Diagnostic[];
-  /** Scroll so this line is in view (nonce lets the same line be requested twice). */
-  focusLine: { line: number; nonce: number } | null;
+  /**
+   * Scroll so this line is in view (nonce lets the same line be requested twice). With `path`, lines
+   * `line` to `to` of that file are highlighted too: what Nou was asked to find.
+   */
+  focusLine: { line: number; to?: number; path?: string; nonce: number } | null;
   /** Bumped when a syntax grammar finishes loading, to re-highlight. */
   syntaxVersion: number;
   /** A one-line note for the problems count, e.g. "+2 problems" on a proposed edit. */
@@ -34,13 +37,17 @@ type Props = {
   /** A click or drag on the scrollbar. */
   scrollTo?: ScrollTo | null;
   onViewport(top: number, bottom: number): void;
+  /** A Ctrl/Alt+click or right-click on the code: `row` from the top of the code, `x` from its left edge. */
+  defineAt?: { row: number; x: number; nonce: number } | null;
+  /** Go to the definition of what's at `line`:`col` (1-based, in the file's own text). */
+  onDefine?(line: number, col: number): void;
 };
 
 /** Columns ←/→ and Shift+wheel move sideways. */
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport }: Props) {
+export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine }: Props) {
   const [top, setTop] = useState(0);
   // Columns scrolled sideways. Scrolled lines show without colors (slicing colored text could cut a color code in half).
   const [left, setLeft] = useState(0);
@@ -72,6 +79,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
 
   const maxTop = Math.max(0, total - rows);
   const start = Math.min(top, maxTop);
+  const found = focusLine?.path && focusLine.path === filePath ? { from: focusLine.line, to: Math.max(focusLine.line, focusLine.to ?? focusLine.line) } : null;
 
   useEffect(() => {
     if (!wheel) return;
@@ -85,6 +93,19 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   useEffect(() => {
     if (filePath && !diff) onViewport(start + 1, Math.min(total, start + rows));
   }, [filePath, diff, start, rows, total]);
+
+  useEffect(() => {
+    if (!defineAt || diff || !filePath) return;
+    const n = start + defineAt.row + 1;
+    const raw = content.replace(/\r\n/g, "\n").split("\n")[n - 1];
+    if (raw === undefined) return;
+    // Screen column to the file's own column: tabs are shown as two spaces.
+    const want = defineAt.x - (String(lines.length).length + 1) + left;
+    let shown = 0;
+    let col = 0;
+    while (col < raw.length && shown + (raw[col] === "\t" ? 2 : 1) <= want) shown += raw[col++] === "\t" ? 2 : 1;
+    onDefine?.(n, col + 1);
+  }, [defineAt?.nonce]);
 
   useInput((input, key) => {
     if (key.upArrow || input === "k") setTop((t) => Math.max(0, Math.min(t, maxTop) - 1));
@@ -199,6 +220,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
         <Box flexDirection="column" width={inner} flexShrink={0}>
           {lines.slice(start, start + rows).map((line, i) => {
             const n = start + i + 1;
+            const isFound = !!found && n >= found.from && n <= found.to;
             const isMarked = marked.has(n);
             const here = problemsByLine.get(n);
             const worst = here?.[0];
@@ -206,8 +228,8 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
             return (
               <Text key={n} wrap="truncate-end">
                 <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
-                {style ? <Text color={style.color}>{style.icon}</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
-                {(left ? plain[start + i]?.slice(left) : line) || " "}
+                {style ? <Text color={style.color}>{style.icon}</Text> : isFound ? <Text color={C.cyan} bold>▌</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
+                {isFound ? <Text backgroundColor={C.panel}>{(left ? plain[start + i]?.slice(left) : line) || " "}</Text> : (left ? plain[start + i]?.slice(left) : line) || " "}
                 {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
               </Text>
             );

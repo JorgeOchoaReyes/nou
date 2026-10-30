@@ -1,7 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
-import { renderMarkdown, wrap, type Span } from "./text.js";
+import { statSync } from "fs";
+import path from "path";
+import { linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
@@ -32,6 +34,10 @@ type Props = {
   onSubmit(text: string): void;
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
+  /** A click in the conversation: `row` from the top of the messages, `col` from where their text starts. */
+  click?: { row: number; col: number; nonce: number } | null;
+  /** A file reference in a message was clicked. */
+  onOpenRef?(ref: FileRef): void;
 };
 
 /**
@@ -42,9 +48,26 @@ type Props = {
 type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[] };
 const BAR = "▌ ";
 
+// Whether a path in a message is a file in the project, remembered so each one is checked once.
+const knownFiles = new Map<string, boolean>();
+function isProjectFile(file: string): boolean {
+  let known = knownFiles.get(file);
+  if (known === undefined) {
+    const full = path.resolve(file);
+    try {
+      known = !path.relative(process.cwd(), full).startsWith("..") && statSync(full).isFile();
+    } catch {
+      known = false;
+    }
+    if (knownFiles.size > 5000) knownFiles.clear();
+    knownFiles.set(file, known);
+  }
+  return known;
+}
+
 
 /** Display lines for one message, wrapped to `inner` columns. */
-function entryLines(entry: ChatEntry, inner: number): Line[] {
+function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
   const out: Line[] = [];
   if (entry.kind === "user") {
     out.push({ text: "you", color: C.cyan, bold: true, lead: BAR, leadColor: C.cyan });
@@ -54,15 +77,18 @@ function entryLines(entry: ChatEntry, inner: number): Line[] {
     out.push({ text: "◆ nou", color: C.accent2, bold: true, lead: BAR, leadColor: C.accent2 });
     for (const line of renderMarkdown(entry.text, inner - 3)) {
       const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
-      out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), lead: BAR, leadColor: C.accent2 });
+      const spans = links && line.kind !== "code" ? linkFileRefs(line.spans, isProjectFile) : line.spans;
+      out.push({ text: "", spans, ...(color ? { color } : {}), lead: BAR, leadColor: C.accent2 });
     }
     out.push({ text: "" });
   } else {
     const style = entry.kind === "tool"
       ? { icon: "⚙", color: C.dim }
       : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
-    wrap(entry.text, inner - 4).forEach((line, i) =>
-      out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color }));
+    wrap(entry.text, inner - 4).forEach((line, i) => {
+      const spans = links && entry.kind === "tool" ? linkFileRefs([{ text: ` ${line}` }], isProjectFile) : [];
+      out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color, ...(spans.some((sp) => sp.link) ? { spans } : {}) });
+    });
   }
   return out;
 }
@@ -78,7 +104,7 @@ function cachedLines(entry: ChatEntry, inner: number): Line[] {
   return lines;
 }
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef }: Props) {
   const [input, setInput] = useState("");
   useEffect(() => {
     if (prefill) setInput(prefill.text);
@@ -89,7 +115,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
 
   const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
   const lines = useMemo(
-    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: streaming }, inner)] : history),
+    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: streaming }, inner, false)] : history),
     [history, streaming, inner],
   );
 
@@ -160,6 +186,14 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     if (scrollTo) setScrollBack(maxBack - topFor(scrollTo.fraction, lines.length, rows));
   }, [scrollTo?.nonce]);
 
+  // Clicking a file named in a message opens it in the code view.
+  useEffect(() => {
+    if (!click) return;
+    const line = visible[click.row];
+    const ref = line?.spans ? linkAt(line.spans, click.col) : null;
+    if (ref) onOpenRef?.(ref);
+  }, [click?.nonce]);
+
   // While something waits for approval, y/n into an empty input answer it; any other key starts a message.
   useInput((typed) => {
     if (/^[yYnN]$/.test(typed)) onAnswer(/[yY]/.test(typed));
@@ -197,7 +231,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
       {withLead && line.lead ? <Text color={line.leadColor ?? C.dim}>{line.lead}</Text> : null}
       {line.spans?.length
         ? line.spans.map((span, i) => (
-          <Text key={i} bold={!!span.bold || !!line.bold} italic={!!span.italic} dimColor={!!span.dim} {...(span.code ? { color: C.yellow } : line.color ? { color: line.color } : { color: C.text })}>{span.text}</Text>
+          <Text key={i} bold={!!span.bold || !!line.bold} italic={!!span.italic} dimColor={!!span.dim && !span.link} underline={!!span.link} {...(span.link ? { color: C.cyan } : span.code ? { color: C.yellow } : line.color ? { color: line.color } : { color: C.text })}>{span.text}</Text>
         ))
         : <Text bold={!!line.bold} dimColor={!!line.dim} {...(line.color ? { color: line.color } : {})}>{line.text || " "}</Text>}
     </Text>

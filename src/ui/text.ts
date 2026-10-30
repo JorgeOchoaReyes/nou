@@ -128,7 +128,9 @@ export function lineCounts(before: string, after: string): { added: number; remo
   return { added, removed };
 }
 
-export type Span = { text: string; bold?: boolean; italic?: boolean; code?: boolean; dim?: boolean };
+/** A file the text refers to, e.g. src/a.ts:12-20, which a click opens. */
+export type FileRef = { path: string; line?: number; to?: number };
+export type Span = { text: string; bold?: boolean; italic?: boolean; code?: boolean; dim?: boolean; link?: FileRef };
 export type MdLine = { spans: Span[]; kind: "text" | "heading" | "code" | "quote" | "rule" };
 
 const INLINE = /(`+)([^`]+?)\1|\*\*(.+?)\*\*|__(.+?)__|(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])|(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)/g;
@@ -268,4 +270,37 @@ export function renderMarkdown(text: string, width: number): MdLine[] {
     for (const line of wrapSpans(inlineSpans(raw), width)) out.push({ kind: "text", spans: line });
   }
   return out;
+}
+
+/** path, path:line or path:line-line; a path has a dot in its last part, so plain words don't match. */
+const FILE_REF = /(?<![\w/.@-])((?:\.{0,2}\/)?(?:[\w@.-]+\/)*[\w@-][\w@.-]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?:[-–](\d+))?)?(?![\w/])/g;
+
+/** Splits out the references to files that exist (per `isFile`) as link spans, keeping each span's style. */
+export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): Span[] {
+  const out: Span[] = [];
+  for (const span of spans) {
+    let pos = 0;
+    for (const m of span.text.matchAll(FILE_REF)) {
+      const file = m[1]!.replace(/^\.\//, "");
+      if (!isFile(file)) continue;
+      if (m.index > pos) out.push({ ...span, text: span.text.slice(pos, m.index) });
+      const link: FileRef = { path: file };
+      if (m[2]) link.line = Number(m[2]);
+      if (m[3]) link.to = Number(m[3]);
+      out.push({ ...span, text: m[0], link });
+      pos = m.index + m[0].length;
+    }
+    if (pos < span.text.length) out.push(pos ? { ...span, text: span.text.slice(pos) } : span);
+  }
+  return out;
+}
+
+/** The link at column `col` of a line of spans, if any. */
+export function linkAt(spans: Span[], col: number): FileRef | null {
+  let x = 0;
+  for (const span of spans) {
+    if (col >= x && col < x + span.text.length) return span.link ?? null;
+    x += span.text.length;
+  }
+  return null;
 }

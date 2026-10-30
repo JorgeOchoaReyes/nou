@@ -49,6 +49,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🗂️ **File explorer** | Browse your project with file icons and git status (`M` modified, `?` new). Press <kbd>c</kbd> to see only changed files. |
 | 🔀 **Live diffs** | Every edit Nou proposes shows up side by side. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
 | ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself, with undo/redo and **auto-save**. |
+| 📍 **Shows you where things are** | Ask "where is the LiveKit integration?" and Nou finds it and opens it in the middle panel, jumped to the exact lines and highlighted. Any file a reply mentions (`src/a.ts:12`) is a link: click it. `/open name[:line]` opens a file yourself. |
 | 🔎 **Finds its way around** | The agent searches your code (`grep`, `glob`) without asking, reads only what it needs, runs your tests to check its work, and summarizes long conversations to stay within the model's context (`/compact` does it on demand). |
 | ↶ **Undo anything** | Every change, Nou's or yours, is recorded. <kbd>u</kbd> undoes Nou's last edit, `/rewind` undoes its whole last turn, and your own later edits are kept. |
 | 🧾 **Session diffs** | `/diff` shows everything that changed this session, file by file (<kbd>[</kbd> <kbd>]</kbd> to step through). `/sessions` lists earlier sessions and `/diff 2` shows one. |

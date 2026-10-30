@@ -14,6 +14,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "model", args: "[provider:model]", description: "show or switch the model" },
   { name: "models", args: "[provider]", description: "list the models a provider offers" },
   { name: "connect", args: "<provider>", description: "enter an API key (and URL) for a provider" },
+  { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },
   { name: "engine", args: "[name]", description: "which agent answers: nou, claude-code, codex or pi" },

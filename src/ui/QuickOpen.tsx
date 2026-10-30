@@ -28,7 +28,7 @@ export function listAllFiles(limit = 5000): string[] {
 }
 
 /** Subsequence fuzzy match; higher is better, null if no match. Returns matched indexes for highlighting. */
-function score(file: string, query: string): { score: number; hits: number[] } | null {
+export function score(file: string, query: string): { score: number; hits: number[] } | null {
   if (!query) return { score: 0, hits: [] };
   const lower = file.toLowerCase();
   const q = query.toLowerCase();

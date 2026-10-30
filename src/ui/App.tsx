@@ -16,7 +16,8 @@ import { Timeline, type SessionSummary } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
-import { changedLines, lineCounts, loadFallbackHighlighter } from "./text.js";
+import { changedLines, lineCounts, loadFallbackHighlighter, type FileRef } from "./text.js";
+import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
@@ -28,7 +29,7 @@ import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
-import { QuickOpen, listAllFiles, type PaletteAction } from "./QuickOpen.js";
+import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
 type Focus = "tree" | "code" | "chat";
@@ -138,7 +139,7 @@ export function App({ initialModel, permContext }: Props) {
   const [codePanel, setCodePanel] = useState<"code" | "problems">("code");
   const [diagnosticsVersion, setDiagVersion] = useState(0);
   const [syntaxVersion, setSyntaxVersion] = useState(0);
-  const [focusLine, setFocusLine] = useState<{ line: number; nonce: number } | null>(null);
+  const [focusLine, setFocusLine] = useState<{ line: number; to?: number; path?: string; nonce: number } | null>(null);
   const [editorStart, setEditorStart] = useState<{ line: number; col?: number; nonce: number }>({ line: 1, nonce: 0 });
   const [pendingNote, setPendingNote] = useState<{ short: string; detail: string | null } | null>(null);
   const [exitArmed, setExitArmed] = useState(false);
@@ -153,6 +154,8 @@ export function App({ initialModel, permContext }: Props) {
   const [chatMenu, setChatMenu] = useState(false);
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
+  const [codeDefine, setCodeDefine] = useState<{ row: number; x: number; nonce: number } | null>(null);
+  const [chatClick, setChatClick] = useState<{ row: number; col: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
@@ -204,6 +207,7 @@ export function App({ initialModel, permContext }: Props) {
       onEntry: (entry) => setEntries((prev) => [...prev, entry]),
       onStream: showStream,
       onBusy: setBusy,
+      onOpen: (filePath, line, to) => openAtRef.current(filePath, line ?? 1, false, to),
       onRead: (filePath) => {
         if (!followRef.current) return;
         open(filePath);
@@ -579,10 +583,20 @@ export function App({ initialModel, permContext }: Props) {
       scrollPane(pane, event.y);
       return;
     }
+    // Ctrl/Alt+click or right-click on code: go to the definition of what's under the pointer.
+    if (event.kind === "click" && event.define && pane === "code" && event.y >= 3 && codePanel === "code") {
+      lastClick.current = null;
+      setFocus("code");
+      if (showEditor) editorAt(event.x, event.y, "define");
+      else if (openFile && !diff) setCodeDefine((d) => ({ row: event.y - 3, x: event.x - codeLeft - 1, nonce: (d?.nonce ?? 0) + 1 }));
+      return;
+    }
     if (approval) return;
     setFocus(pane);
     // Rows start under the pane's top border (y=1) and title (y=2).
     if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
+    // Messages start after the chat's border and the two-column bar in front of each line.
+    if (pane === "chat" && event.y >= 3) setChatClick((c) => ({ row: event.y - 3, col: event.x - treeWidth - codeWidth - 3, nonce: (c?.nonce ?? 0) + 1 }));
     // Two clicks in the same spot within half a second are a double-click.
     const last = lastClick.current;
     const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
@@ -730,8 +744,11 @@ export function App({ initialModel, permContext }: Props) {
     return false;
   };
 
-  /** Opens a file at a line, in the editor if `edit` (used by the Problems list and go-to-definition). */
-  const openAt = (file: string, line: number, edit = false) => {
+  /**
+   * Opens a file at a line, in the editor if `edit` (used by the Problems list and go-to-definition).
+   * With `to`, lines `line` to `to` are highlighted: something the user asked Nou to find.
+   */
+  const openAt = (file: string, line: number, edit = false, to?: number) => {
     if (!settleDraft(file)) return;
     if (file !== openFile) open(file);
     setReveal(file);
@@ -741,9 +758,13 @@ export function App({ initialModel, permContext }: Props) {
       setEditing(true);
       setFocus("code");
     } else {
-      setFocusLine((f) => ({ line, nonce: (f?.nonce ?? 0) + 1 }));
+      setFocusLine((f) => ({ line, ...(to !== undefined ? { to, path: file } : {}), nonce: (f?.nonce ?? 0) + 1 }));
     }
   };
+  const openAtRef = useRef(openAt);
+  openAtRef.current = openAt;
+  /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
+  const openRef = useEvent((ref: FileRef) => openAt(ref.path, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined));
 
   const startEditing = () => {
     if (!openFile || !settleDraft(openFile)) return;
@@ -902,6 +923,19 @@ ${snippet}
       return showSessionDiff(arg);
     case "sessions":
       return showSessions();
+    case "open": {
+      // A path (with :line or :line-line), or part of a file's name.
+      const m = arg.match(/^(.*?)(?::(\d+)(?:-(\d+))?)?$/)!;
+      const wanted = m[1]!.replace(/^\.\//, "");
+      if (!wanted) return info("Usage: /open <file>[:line] (part of the name is enough), or ask in the chat where something is.", "error");
+      const files = listAllFiles();
+      const file = files.includes(wanted) ? wanted : files
+        .map((f) => ({ f, m: score(f, wanted) }))
+        .filter((r) => r.m)
+        .sort((a, b) => b.m!.score - a.m!.score)[0]?.f;
+      if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
+      return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
+    }
     case "problems":
       setCodePanel("problems");
       setFocus("code");
@@ -1055,16 +1089,25 @@ ${snippet}
   });
   const onAnswer = useEvent(answer);
   const onEditorHover = useEvent((text: string, line: number, col: number) => (lspEnabled && openFile ? lsp.hover(openFile, text, line, col) : Promise.resolve(null)));
-  const onEditorDefinition = useEvent((text: string, line: number, col: number) => {
+  /**
+   * Go to definition (Ctrl+G, Ctrl/Alt+click, right-click): the language server's answer when there is one,
+   * otherwise Nou's own (an imported name goes to its import line; a click on an import's path opens it).
+   */
+  const goToDefinition = async (text: string, line: number, col: number, inEditor: boolean) => {
     if (!openFile) return;
-    if (!lspEnabled) return info("Go to definition needs a language server (see /settings → Plugins).", "error");
-    void lsp.definition(openFile, text, line, col).then((target) => {
-      if (!target) return info("No definition found here.");
-      // Keep unsaved text when jumping within the same file.
-      if (target.file === openFile && draft.current) draft.current = { ...draft.current, text };
-      openAt(target.file, target.line, true);
-    });
-  });
+    const file = openFile;
+    const target = (lspEnabled ? await lsp.definition(file, text, line, col).catch(() => null) : null) ?? findDefinition(file, text, line, col);
+    if (!target) {
+      const word = wordAt(text.split(/\r?\n/)[line - 1] ?? "", col)?.word;
+      return info(word ? `No definition found for ${word}.` : "Ctrl+click (or Option+click, or right-click) a name to go to its definition.");
+    }
+    // Keep unsaved text when jumping within the same file.
+    if (inEditor && target.file === file && draft.current) draft.current = { ...draft.current, text };
+    if (inEditor) openAt(target.file, target.line, true);
+    else openAt(target.file, target.line, false, target.line);
+  };
+  const onEditorDefinition = useEvent((text: string, line: number, col: number) => void goToDefinition(text, line, col, true));
+  const onCodeDefine = useEvent((line: number, col: number) => void goToDefinition(content, line, col, false));
   const onEditorSave = useEvent((text: string) => saveFromEditor(text));
   const onEditorExit = useEvent(() => {
     draft.current = null;
@@ -1146,6 +1189,7 @@ ${snippet}
   // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
+    { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
     { title: "Edit the open file", keys: "e · double-click", run: startEditing },
     { title: "Diff the open file (vs git, Nou's edit, this session)", keys: "v", run: cycleDiff },
@@ -1320,6 +1364,8 @@ ${snippet}
             wheel={wheelFor("code")}
             scrollTo={scrollFor("code")}
             onViewport={onViewport}
+            defineAt={codeDefine}
+            onDefine={onCodeDefine}
           />
         )}
         <Chat
@@ -1339,6 +1385,8 @@ ${snippet}
           onMenu={onChatMenu}
           onSubmit={onSend}
           onAnswer={onAnswer}
+          click={chatClick}
+          onOpenRef={openRef}
         />
       </Box>
       <Box>

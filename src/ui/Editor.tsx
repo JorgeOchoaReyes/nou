@@ -17,7 +17,8 @@ export type EditorState = { line: number; col: number; dirty: boolean; lines: st
  * included). `seq` counts up: a quick click's press and release often arrive together, so the editor
  * gets the recent events as a list and handles each one it hasn't seen yet.
  */
-export type EditorMouse = { x: number; y: number; kind: "press" | "double" | "drag" | "release"; seq: number };
+/** "define": Ctrl/Alt+click or right-click, go to the definition of what's under the pointer. */
+export type EditorMouse = { x: number; y: number; kind: "press" | "double" | "drag" | "release" | "define"; seq: number };
 
 type Props = {
   width: number;
@@ -367,6 +368,11 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
     const col = bufferCol(buf.lines[row]!, Math.max(0, mouse.x - gutter) + v.left);
     setHover(null);
     setPrompt((p) => (p?.kind === "line" ? null : p));
+    if (mouse.kind === "define") {
+      dragFrom.current = null;
+      setBuf((b) => ({ ...b, row, col, anchor: null }));
+      return onDefinition(buf.lines.join("\n"), row + 1, col + 1);
+    }
     setBuf((b) => {
       if (mouse.kind === "press") {
         dragFrom.current = { row, col };

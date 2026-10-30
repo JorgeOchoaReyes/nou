@@ -402,6 +402,47 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("the header stays on one line", frame().split("\n")[1]!.startsWith("┌") || frame().split("\n")[1]!.startsWith("╭"));
 });
 
+console.log("Finding things for you: open_file and clickable paths");
+{
+  let asked = 0;
+  const finder: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      asked++;
+      const last = messages[messages.length - 1];
+      if (last.role === "user") return { text: "", toolCalls: [{ id: `o${asked}`, name: "open_file", args: { path: "many.ts", line: 40, end_line: 42 } }] };
+      return { text: "It's in many.ts:40-42, and a.ts has the other one.", toolCalls: [] };
+    },
+  };
+  await session({ provider: finder, model: "fake" }, async ({ press, type, frame }) => {
+    await type("where is line40 defined?");
+    await press(KEY.enter, 1500);
+    check("Nou opens what it found in the code view, at the line", frame().includes("many.ts  ") && frame().includes("const line40 = 40;"));
+    const found = frame().split("\n").filter((l) => /▌.*const line4[012] =/.test(l));
+    check("and highlights the lines it found", found.length === 3);
+    check("the chat says what it opened", frame().includes("Opened many.ts:40-42"));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes("a.ts has"));
+    const x = rows[y]!.indexOf("a.ts has");
+    await press(click(x + 1, y), 500);
+    check("clicking a file named in a reply opens it", frame().split("\n")[2]!.includes(" a.ts"));
+    await type("/open long");
+    await press(KEY.enter, 400);
+    check("/open opens a file from part of its name", frame().split("\n")[2]!.includes("long.ts"));
+    writeFileSync(path.join(dir, "imp.ts"), 'import { a } from "./a.js";\nconsole.log(a);\n');
+    await type("/open imp.ts");
+    await press(KEY.enter, 400);
+    // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
+    const ctrlClick = (x: number, y: number) => `\x1b[<16;${x + 1};${y + 1}M`;
+    await press(ctrlClick(27 + 12, 4), 400); // the "a" in console.log(a)
+    check("Ctrl+click on an imported name jumps to its import line", /1▌import \{ a \}/.test(frame()));
+    await press(ctrlClick(27 + 20, 3), 400); // the path in the import
+    check("Ctrl+click on the import's path opens that file", frame().split("\n")[2]!.includes(" a.ts"));
+    await press(`\x1b[<2;${27 + 6 + 1};${3 + 1}M`, 400); // right-click the "a" of const a = 1
+    check("right-click goes to definitions too", frame().includes("1▌const a = 1;"));
+  });
+}
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
