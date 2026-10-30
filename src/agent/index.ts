@@ -21,6 +21,18 @@ import { globFiles, grep } from "../search/index.js";
 
 /** Model requests per user message before stopping; real tasks (explore, edit, test, fix) take a few dozen. */
 const MAX_STEPS = 60;
+/** Tries per model request when it fails for a passing reason (see withRetries). */
+const RETRIES = 6;
+/** Errors worth retrying: overloaded, rate limited, a server error, a dropped or timed-out connection. */
+function transient(error: any): boolean {
+  const status = Number(error?.status ?? error?.statusCode);
+  if (status === 408 || status === 409 || status === 429 || status >= 500) return true;
+  if (status >= 400) return false;
+  const text = String(error?.message ?? error);
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Invalid URL|api key|unauthori[sz]ed/i.test(text)) return false;
+  return /overloaded|rate.?limit|too many requests|ECONNRESET|socket hang up|ETIMEDOUT|timed? ?out|EPIPE|network|premature close|terminated|\b(429|5\d\d)\b/i.test(text);
+}
+
 /** Messages kept word for word when older ones are summarized. */
 const KEEP_RECENT = 8;
 const TRIMMED_OUTPUT = "\n[... trimmed to save context; run the tool again if you need it]";
@@ -262,17 +274,20 @@ export class Agent implements Engine {
         if (this.requestSize() > this.contextBudget()) await this.compact(false, signal);
         this.hooks.onBusy(`Pondering with ${describe(this.choice)}...`);
         let streamed = "";
-        const result = await this.choice.provider.chat({
-          model: this.choice.model,
-          system: this.system,
-          messages: this.messages,
-          tools: this.tools,
-          signal,
-          ...(this.effort ? { effort: this.effort } : {}),
-          onText: (delta) => {
-            streamed += delta;
-            this.hooks.onStream(streamed);
-          },
+        const result = await this.withRetries(signal, () => {
+          streamed = "";
+          return this.choice.provider.chat({
+            model: this.choice.model,
+            system: this.system,
+            messages: this.messages,
+            tools: this.tools,
+            signal,
+            ...(this.effort ? { effort: this.effort } : {}),
+            onText: (delta) => {
+              streamed += delta;
+              this.hooks.onStream(streamed);
+            },
+          });
         });
         this.hooks.onStream("");
 
@@ -333,7 +348,7 @@ export class Agent implements Engine {
         }
         if (signal.aborted) throw new Error("aborted");
       }
-      this.hooks.onEntry({ kind: "error", text: `Stopped after ${MAX_STEPS} steps.` });
+      this.hooks.onEntry({ kind: "error", text: `Paused after ${MAX_STEPS} steps so it doesn't run away. Say "continue" to let it carry on.` });
     } catch (error: any) {
       this.hooks.onStream("");
       if (signal.aborted) {
@@ -358,6 +373,30 @@ export class Agent implements Engine {
         if (answered.has(call.id)) continue;
         this.messages.push({ role: "tool", callId: call.id, name: call.name, content: "Not run: the turn was interrupted.", isError: true });
         answered.add(call.id);
+      }
+    }
+  }
+
+  /**
+   * Runs a model request again when it failed for a passing reason (overloaded, rate limited, a server
+   * error, a dropped connection), waiting longer each time. Setup problems (a bad key, a URL that doesn't
+   * answer) fail straight away: waiting won't fix them, and the app shows where to.
+   */
+  private async withRetries<T>(signal: AbortSignal, request: () => Promise<T>): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await request();
+      } catch (error: any) {
+        if (signal.aborted || attempt >= RETRIES || !transient(error)) throw error;
+        const after = Number(error?.headers?.get?.("retry-after") ?? error?.headers?.["retry-after"]);
+        const wait = Math.min(30_000, after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1) + Math.random() * 500);
+        this.hooks.onStream("");
+        this.hooks.onBusy(`${describe(this.choice)}: ${String(error?.message ?? error).slice(0, 60)}. Retrying in ${Math.ceil(wait / 1000)}s (${attempt}/${RETRIES - 1})...`);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, wait);
+          signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+        });
+        if (signal.aborted) throw error;
       }
     }
   }

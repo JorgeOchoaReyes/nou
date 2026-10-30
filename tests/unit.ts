@@ -2,7 +2,7 @@
  * Unit tests for logic that's easy to get subtly wrong. Run: npm test
  */
 import { execFileSync } from "child_process";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
@@ -184,6 +184,59 @@ console.log("Nou's engine: commands, edits, parallel tools");
   const results = ((engine as any).messages as any[]).filter((m) => m.role === "tool").map((m) => m.callId);
   check("their results stay in the calls' order", results.join(",") === "s1,s2,p1");
   check("update_plan shows the plan in the chat", entries.some((e) => e.includes("✓ Look") && e.includes("▸ Fix")));
+}
+
+console.log("Retrying a model that's busy");
+{
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  let tries = 0;
+  const busy: string[] = [];
+  const shaky: any = {
+    id: "fake", label: "Fake", local: false, defaultModel: "f", unavailable: () => null,
+    async chat() {
+      tries++;
+      if (tries === 1) throw Object.assign(new Error("Overloaded"), { status: 529 });
+      return { text: "fine", toolCalls: [] };
+    },
+  };
+  const said: string[] = [];
+  const engine = new Engine({ provider: shaky, model: "f" }, "sys", {
+    onEntry: (e: any) => said.push(`${e.kind}:${e.text}`), onStream() {}, onBusy: (b: any) => b && busy.push(b), onRead() {}, onChange() {}, approve: async () => true,
+  });
+  await engine.send("hi");
+  check("an overloaded model is retried after a wait, saying so", tries === 2 && said.includes("assistant:fine") && busy.some((b) => b.includes("Retrying in")));
+  let keyTries = 0;
+  const badKey: any = { ...shaky, async chat() {
+    keyTries++;
+    throw Object.assign(new Error("401 invalid x-api-key"), { status: 401 });
+  } };
+  const said2: string[] = [];
+  await new Engine({ provider: badKey, model: "f" }, "sys", {
+    onEntry: (e: any) => said2.push(e.kind), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true,
+  }).send("hi");
+  check("a rejected key isn't retried", keyTries === 1 && said2.includes("error"));
+}
+
+console.log("Project instructions");
+{
+  const { loadPermanentContext } = await import("../src/context/index.js");
+  const { NOU_HOME } = await import("../src/config/index.js");
+  const repo = mkdtempSync(path.join(os.tmpdir(), "nou-rules-"));
+  mkdirSync(path.join(repo, ".git"));
+  mkdirSync(path.join(repo, "pkg"));
+  writeFileSync(path.join(repo, "AGENTS.md"), "Use pnpm.");
+  writeFileSync(path.join(repo, "pkg", "CLAUDE.md"), "Tests: pnpm test --filter pkg");
+  writeFileSync(path.join(repo, "pkg", "NOU.md"), "Use pnpm.");
+  mkdirSync(NOU_HOME, { recursive: true });
+  writeFileSync(path.join(NOU_HOME, "NOU.md"), "Answer in English.");
+  const here = process.cwd();
+  process.chdir(path.join(repo, "pkg"));
+  const rules = await loadPermanentContext();
+  process.chdir(here);
+  check("AGENTS.md and CLAUDE.md count as instructions, from here up to the repo root", rules.includes("Use pnpm.") && rules.includes("pnpm test --filter pkg"));
+  check("the same text in two files is given once", rules.split("Use pnpm.").length === 2);
+  check("~/.nou/NOU.md applies everywhere, and comes first", rules.indexOf("Answer in English.") < rules.indexOf("Use pnpm."));
+  rmSync(path.join(NOU_HOME, "NOU.md"));
 }
 
 console.log("write_file content");

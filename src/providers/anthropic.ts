@@ -41,6 +41,20 @@ function toAnthropic(messages: ChatMessage[]): Params[] {
   return out;
 }
 
+/**
+ * Marks the end of the conversation for prompt caching, so the next request (every tool step of a turn)
+ * reads all of it from the cache instead of paying for it again: cached input costs a tenth or less.
+ */
+function withCacheBreakpoint(params: Params[]): Params[] {
+  const last = params[params.length - 1];
+  if (!last) return params;
+  const content: Block[] = typeof last.content === "string" ? [{ type: "text", text: last.content }] : [...(last.content as Block[])];
+  const end = content[content.length - 1];
+  if (!end || end.type === "thinking" || end.type === "redacted_thinking") return params;
+  content[content.length - 1] = { ...end, cache_control: { type: "ephemeral" } } as Block;
+  return [...params.slice(0, -1), { ...last, content }];
+}
+
 function hasCredentials(): boolean {
   return !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_PROFILE)
     || existsSync(path.join(os.homedir(), ".config", "anthropic"));
@@ -78,7 +92,7 @@ export function anthropicProvider(): Provider {
         model,
         max_tokens: 64000,
         system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-        messages: toAnthropic(messages),
+        messages: withCacheBreakpoint(toAnthropic(messages)),
         tools: tools.map((t) => ({
           name: t.name,
           description: t.description,
