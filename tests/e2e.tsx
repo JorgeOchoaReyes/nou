@@ -257,8 +257,10 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 200);
   await press(KEY.tab, 100); // files
   await press(click(5, 3 + 3), 800); // many.ts
-  await press(wheel("down", 40, 10).repeat(5) + wheel("down", 40, 10, true), 300);
-  check("a burst of wheel events scrolls by all of them, in one go", frame().includes("16-") && frame().includes("const line16 = 16;") && !frame().includes("const line15 = 15;"));
+  await press(wheel("down", 40, 10).repeat(5) + wheel("down", 40, 10, true), 100);
+  // The scroll glides over a few frames: wait for it to land (slow machines take longer).
+  for (let waited = 0; waited < 2000 && !frame().includes("16-"); waited += 50) await delay(50);
+  check("a burst of wheel events scrolls by all of them, landing in the right place", frame().includes("16-") && frame().includes("const line16 = 16;") && !frame().includes("const line15 = 15;"));
   check("stray sideways steps while scrolling down are ignored (trackpads send them)", !/→\d/.test(frame()));
   await delay(200);
   await press(wheel("down", 40, 10, true), 200);
