@@ -279,7 +279,7 @@ export function renderMarkdown(text: string, width: number, isFile?: (file: stri
  * path, path:line or path:line-line; a path has a dot in its last part, so plain words don't match.
  * Windows paths (C:\\dir\\file.ts, dir\\file.ts) count too.
  */
-const FILE_REF = /(?<![\w/\\.@-])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w@.-]+[\\/])*[\w@-][\w@.-]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?:[-–](\d+))?)?(?![\w/\\])/g;
+const FILE_REF = /(?<![\w/\\.@~-])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w@.~+-]+[\\/])*[\w@-][\w@.~+-]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?:[-–](\d+))?)?(?![\w/\\])/g;
 
 /** Splits out the references to files that exist (per `isFile`) as link spans, keeping each span's style. */
 export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): Span[] {

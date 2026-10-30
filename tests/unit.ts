@@ -91,8 +91,8 @@ console.log("Go to definition and file links");
   const { sliceAnsi } = await import("../src/ui/text.js");
   const colored = "\x1b[31mconst\x1b[39m x = \x1b[32m'hi'\x1b[39m;";
   check("scrolled sideways, a line keeps its colors", sliceAnsi(colored, 2) === "\x1b[31mnst\x1b[39m x = \x1b[32m'hi'\x1b[39m;" && sliceAnsi(colored, 6, 3) === "\x1b[31m\x1b[39mx =\x1b[32m\x1b[39m");
-  const win = linkFileRefs([{ text: "see C:\\proj\\src\\a.ts:7 and src\\b.ts" }], (f) => f === "C:\\proj\\src\\a.ts" || f === "src\\b.ts").filter((sp) => sp.link);
-  check("Windows paths are links too", win.length === 2 && win[0]!.link!.line === 7 && win[1]!.link!.path === "src\\b.ts");
+  const win = linkFileRefs([{ text: "see C:\\Users\\RUNNER~1\\src\\a.ts:7 and src\\b.ts" }], (f) => f === "C:\\Users\\RUNNER~1\\src\\a.ts" || f === "src\\b.ts").filter((sp) => sp.link);
+  check("Windows paths are links too, short names (RUNNER~1) and all", win.length === 2 && win[0]!.link!.line === 7 && win[1]!.link!.path === "src\\b.ts");
   check("the text around them is kept", spans.map((s) => s.text).join("") === "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2.");
 }
 

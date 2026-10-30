@@ -489,7 +489,8 @@ console.log("Queueing and interrupting");
     await type("first");
     await press(KEY.enter, 200);
     await type("second");
-    await press(KEY.enter, 200);
+    await press(KEY.enter, 100);
+    for (let waited = 0; waited < 1500 && !frame().includes("⏳ next: second"); waited += 50) await delay(50);
     check("a message sent while Nou works waits its turn, shown as next", frame().includes("⏳ next: second"));
     await delay(1800);
     check("and goes when Nou finishes", heard.includes("second") && !frame().includes("⏳ next"));
@@ -498,12 +499,15 @@ console.log("Queueing and interrupting");
     await type("urgent");
     await press("\x1b\r", 1200);
     check("Alt+Enter stops Nou and sends right away", heard.at(-1) === "urgent" && frame().includes("Cancelled"));
-    await delay(800);
+    // Let the urgent reply finish (slow machines take longer), so "later" starts a fresh turn.
+    for (let waited = 0; waited < 5000 && frame().includes("Esc stops"); waited += 100) await delay(100);
+    await delay(200);
     await type("later");
     await press(KEY.enter, 200);
     await type("never");
     await press(KEY.enter, 200);
-    await press(KEY.esc, 600);
+    await press(KEY.esc, 300);
+    for (let waited = 0; waited < 2000 && !frame().includes("❯ never"); waited += 50) await delay(50);
     check("Esc stops Nou and puts what was queued back in the input", !heard.includes("never") && frame().includes("❯ never"));
   });
 }
