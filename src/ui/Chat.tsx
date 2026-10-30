@@ -3,7 +3,7 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
 import { statSync } from "fs";
 import path from "path";
-import { linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
+import { closeOpenMarkdown, linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { C, SPINNER } from "./theme.js";
 import { Pane } from "./Pane.js";
@@ -119,7 +119,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
 
   const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
   const lines = useMemo(
-    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: streaming }, inner, false)] : history),
+    () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: closeOpenMarkdown(streaming) }, inner, false)] : history),
     [history, streaming, inner],
   );
 

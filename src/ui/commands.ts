@@ -18,6 +18,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },
   { name: "engine", args: "[name]", description: "which agent answers: nou, claude-code, codex or pi" },
+  { name: "cancel", description: "take back your last message (stops Nou; edit it and resend)" },
   { name: "undo", description: "undo Nou's last change" },
   { name: "rewind", description: "undo everything from Nou's last turn" },
   { name: "diff", args: "[file|n]", description: "everything changed this session (or session n)" },

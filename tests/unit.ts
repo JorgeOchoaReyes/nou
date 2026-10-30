@@ -306,6 +306,20 @@ console.log("MCP servers");
   check("Codex's TOML tables are read", JSON.stringify(codexServers('[mcp_servers.x]\ncommand = "a"\nargs = ["b"]\n').x) === JSON.stringify({ command: "a", args: ["b"] }));
 }
 
+console.log("Taking back a message, steady streaming");
+{
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  const { closeOpenMarkdown } = await import("../src/ui/text.js");
+  const said: any = { id: "fake", local: true, unavailable: () => null, async chat() { return { text: "ok", toolCalls: [] }; } };
+  const engine = new Engine({ provider: said, model: "f" }, "sys", { onEntry() {}, onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true });
+  await engine.send("first");
+  await engine.send("second");
+  check("taking back the last message removes it and its reply", engine.retractLast() && JSON.stringify((engine as any).messages.map((m: any) => m.content)) === JSON.stringify(["first", "ok"]));
+  check("a streaming code block is closed for now", closeOpenMarkdown("see:\n```ts\nconst a = 1;").endsWith("\n```"));
+  check("so are **bold** and `code` on the last line", closeOpenMarkdown("it is **very") === "it is **very**" && closeOpenMarkdown("run `npm") === "run `npm`");
+  check("finished markdown is left alone", closeOpenMarkdown("**done** and `x`") === "**done** and `x`");
+}
+
 console.log("Games");
 {
   const { pong, snake, breakout, GAMES } = await import("../src/games/index.js");

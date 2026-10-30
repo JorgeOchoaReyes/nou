@@ -86,7 +86,7 @@ export function anthropicProvider(): Provider {
       api: "anthropic-messages" as const,
     }),
 
-    async chat({ model, system, messages, tools, onText, signal, effort: requested }: ChatRequest): Promise<ChatResult> {
+    async chat({ model, system, messages, tools, onText, onThinking, signal, effort: requested }: ChatRequest): Promise<ChatResult> {
       const fallbacks = FALLBACK_MODELS.test(model);
       const effort = EFFORT_MODELS.test(model) ? process.env.NOU_EFFORT ?? requested ?? "high" : undefined;
       const body: Anthropic.Beta.Messages.MessageCreateParamsStreaming = {
@@ -111,20 +111,9 @@ export function anthropicProvider(): Provider {
         let text = "";
         try {
           const stream = getClient().beta.messages.stream(body, signal ? { signal } : {});
-          // Thinking streams as a quote above the reply (the chat shows quotes dimmed); only the reply is kept.
-          let thinking = false;
-          stream.on("thinking", (delta) => {
-            const piece = `${thinking ? "" : "> "}${delta.replace(/\n/g, "\n> ")}`;
-            thinking = true;
-            text += piece;
-            onText(piece);
-          });
+          // Thinking goes to the progress line, not the reply: it isn't kept, so it mustn't reflow the chat.
+          stream.on("thinking", (delta) => onThinking?.(delta));
           stream.on("text", (delta) => {
-            if (thinking) {
-              thinking = false;
-              text += "\n\n";
-              onText("\n\n");
-            }
             text += delta;
             onText(delta);
           });

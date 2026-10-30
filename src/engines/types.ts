@@ -27,6 +27,8 @@ export interface Engine {
   configure(options: EngineOptions): void;
   setModel(choice: ModelChoice): void;
   clear(): void;
+  /** Takes back the last message you sent and everything after it (engines that keep their own history leave this out). */
+  retractLast?(): boolean;
   /** Something the model should know before the next message (e.g. the user undid its edit). */
   note(text: string): void;
   cancel(): void;

@@ -358,3 +358,17 @@ export function markAnsi(line: string, from: number, to: number, open = "\x1b[7m
   }
   return out;
 }
+
+/**
+ * A reply still streaming, with its open markdown closed for now (a code block, **bold**, `code`), so it
+ * renders the way it will once finished instead of reflowing when the closing marker arrives.
+ */
+export function closeOpenMarkdown(text: string): string {
+  const fences = text.match(/^\s*(`{3,}|~{3,})/gm)?.length ?? 0;
+  if (fences % 2) return `${text}\n\`\`\``;
+  const last = text.slice(text.lastIndexOf("\n") + 1);
+  let out = text;
+  if ((last.match(/`/g)?.length ?? 0) % 2) out += "`";
+  else if ((last.match(/\*\*/g)?.length ?? 0) % 2) out += "**";
+  return out;
+}

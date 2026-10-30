@@ -29,6 +29,8 @@ export type ChatRequest = {
   messages: ChatMessage[];
   tools: ToolDef[];
   onText(delta: string): void;
+  /** What the model is thinking, as it streams (models that share it): shown as progress, not kept. */
+  onThinking?(delta: string): void;
   signal?: AbortSignal;
   /** Reasoning effort, for models that support it. */
   effort?: string;

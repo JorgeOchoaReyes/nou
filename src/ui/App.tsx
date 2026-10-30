@@ -1213,6 +1213,8 @@ ${snippet}
     }
     case "games":
       return toggleGames();
+    case "cancel":
+      return cancelLast();
     case "mcp":
       return mcpCommand(rest);
     case "problems":
@@ -1344,6 +1346,34 @@ ${snippet}
   };
   const setupCheckRef = useRef(setupCheck);
   setupCheckRef.current = setupCheck;
+  /**
+   * Takes back your last message: stops Nou if it's still on it, removes the message and its reply from the
+   * conversation (yours on screen and the model's), and puts the text back in the input to edit and resend.
+   * Files it changed stay changed: /rewind undoes those.
+   */
+  // What was queued behind it comes back into the input too, rather than being sent.
+  const [retract, setRetract] = useState<{ queued: string[] } | null>(null);
+  const cancelLast = () => {
+    setRetract({ queued });
+    setQueued([]);
+    if (busy) stop();
+  };
+  useEffect(() => {
+    if (!retract || busy) return;
+    const later = retract.queued;
+    setRetract(null);
+    const engine = agentRef.current!;
+    const at = entries.findLastIndex((e) => e.kind === "user");
+    if (at < 0) return info("There's no message to take back.");
+    if (!engine.retractLast) return info(`${engineInfo(engine.id).label} keeps its own history, so a message can't be taken back there: /clear starts over.`, "error");
+    engine.retractLast();
+    const text = [entries[at]!.text, ...later].join("\n");
+    stopped.current = false;
+    setEntries((prev) => [...prev.slice(0, at), { kind: "info", text: "Took back your last message; it's in the input to edit and resend. (Any files it changed stay changed: /rewind undoes them.)" }]);
+    setChatPrefill((p) => ({ text, nonce: (p?.nonce ?? 0) + 1 }));
+    setFocus("chat");
+  }, [retract, busy]);
+
   /** Messages sent while Nou works: each goes when it finishes, in order. */
   const [queued, setQueued] = useState<string[]>([]);
   /** Set when you stop Nou: what was queued goes back into the input instead of being sent. */
@@ -1548,6 +1578,7 @@ ${snippet}
     { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
+    { title: "Cancel your last message (edit it and resend)", keys: "/cancel", run: cancelLast },
     { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
     { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
     { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },

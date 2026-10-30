@@ -159,6 +159,14 @@ export class Agent implements Engine {
     this.notes = [];
   }
 
+  /** Forgets the last message you sent and everything after it, as if it was never sent. */
+  retractLast(): boolean {
+    const at = this.messages.findLastIndex((m) => m.role === "user");
+    if (at < 0) return false;
+    this.messages = this.messages.slice(0, at);
+    return true;
+  }
+
   /** Something the model should know before the next message (e.g. the user undid its edit). */
   note(text: string) {
     this.notes.push(text);
@@ -299,8 +307,10 @@ export class Agent implements Engine {
         if (this.requestSize() > this.contextBudget()) await this.compact(false, signal);
         this.hooks.onBusy(`Pondering with ${describe(this.choice)}...`);
         let streamed = "";
+        let thought = "";
         const result = await this.withRetries(signal, () => {
           streamed = "";
+          thought = "";
           return this.choice.provider.chat({
             model: this.choice.model,
             system: this.system,
@@ -311,6 +321,12 @@ export class Agent implements Engine {
             onText: (delta) => {
               streamed += delta;
               this.hooks.onStream(streamed);
+            },
+            // Its thinking shows on the one-line progress (the latest of it), so the chat doesn't jump.
+            onThinking: (delta) => {
+              thought = (thought + delta).slice(-400);
+              const latest = thought.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+              if (latest) this.hooks.onBusy(`Thinking: ${latest.length > 90 ? `…${latest.slice(-89)}` : latest}`);
             },
           });
         });

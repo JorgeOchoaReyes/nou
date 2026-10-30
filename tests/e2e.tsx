@@ -624,6 +624,24 @@ console.log("MCP servers");
   rmSync(path.join(home, ".nou", "mcp.json"), { force: true });
 }
 
+console.log("Taking back a message");
+{
+  let replies = 0;
+  const model: any = { id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      replies++;
+      return { text: `reply ${replies}`, toolCalls: [] };
+    } };
+  await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
+    await type("make it blue");
+    await press(KEY.enter, 600);
+    check("(the reply arrives)", frame().includes("reply 1"));
+    await type("/cancel");
+    await press(KEY.enter, 600);
+    check("/cancel takes back the last message and its reply, putting it in the input to edit", !frame().includes("reply 1") && frame().includes("❯ make it blue") && frame().includes("Took back"));
+  });
+}
+
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
