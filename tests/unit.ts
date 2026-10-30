@@ -2,7 +2,7 @@
  * Unit tests for logic that's easy to get subtly wrong. Run: npm test
  */
 import { execFileSync } from "child_process";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
@@ -40,6 +40,7 @@ console.log("Mouse input");
   check("click press is reported once, then its release", events.filter((e) => e.kind === "click").length === 1 && events[4]?.kind === "release");
   check("moving with the button held is a drag", parseMouse("[<32;30;8M")[0]?.kind === "drag");
   check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);
+  check("Ctrl+click, Alt+click and right-click ask for a definition", ["\x1b[<16;3;4M", "\x1b[<8;3;4M", "\x1b[<2;3;4M"].every((c) => { const e = parseMouse(c)[0]; return e?.kind === "click" && e.define === true; }) && !(parseMouse("\x1b[<0;3;4M")[0] as any).define);
   check("ordinary keys are not mouse events", parseMouse("hello\x1b[A").length === 0);
   const { ENABLE } = await import("../src/ui/mouse.js");
   check("the terminal is asked to report drags (mode 1002), not just clicks", ENABLE.includes("?1002h") && ENABLE.includes("?1000h") && ENABLE.includes("?1006h"));
@@ -62,6 +63,300 @@ console.log("Fast text widths");
   check("options still reach string-width", fast("±", { ambiguousIsNarrow: false }) === real("±", { ambiguousIsNarrow: false }));
 }
 
+console.log("Go to definition and file links");
+{
+  const { findDefinition } = await import("../src/ui/definition.js");
+  const { linkFileRefs } = await import("../src/ui/text.js");
+  mkdirSync("def/lib", { recursive: true });
+  const a = 'import { helper, other } from "./lib/util.js";\n\nexport function main() {\n  return helper(1) + local() + new Room();\n}\n\nconst local = () => 2;\n';
+  writeFileSync("def/a.ts", a);
+  writeFileSync("def/lib/util.ts", "export function other() {}\n\nexport function helper(n: number) {\n  return n;\n}\n");
+  writeFileSync("def/room.ts", "export class Room {}\n");
+  const at = (line: number, col: number) => findDefinition("def/a.ts", a, line, col);
+  check("an imported name goes to its import line", at(4, 11)?.file === "def/a.ts" && at(4, 11)?.line === 1);
+  check("the path in an import opens that file", at(1, 38)?.file === "def/lib/util.ts" && at(1, 38)?.line === 1);
+  check("a name in an import goes to where that file declares it", at(1, 12)?.file === "def/lib/util.ts" && at(1, 12)?.line === 3);
+  check("a name declared in the file goes to its declaration", at(4, 22)?.line === 7);
+  check("otherwise it's found in the project", at(4, 38)?.file === "def/room.ts");
+  check("nothing to go to on punctuation", at(4, 9) === null);
+  const spans = linkFileRefs([{ text: "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2." }], (f) => f === "def/a.ts" || f === "def/room.ts");
+  const links = spans.filter((s) => s.link);
+  check("file references in a reply become links, with their lines", links.length === 2 && links[0]!.link!.path === "def/a.ts" && links[0]!.link!.line === 4 && links[0]!.link!.to === 5);
+  const { renderMarkdown } = await import("../src/ui/text.js");
+  const abs = path.join(process.cwd(), "def/lib/util.ts");
+  const md = renderMarkdown(`- **Helper:** ${abs}\n  ([details](${abs}:3))`, 20, (f) => path.resolve(f) === abs);
+  const pieces = md.flatMap((l) => l.spans).filter((sp) => sp.link);
+  check("a long path that wraps over several lines is a link on every line", new Set(md.filter((l) => l.spans.some((sp) => sp.link)).map((l) => l)).size >= 3 && pieces.every((sp) => path.resolve(sp.link!.path) === abs));
+  check("including the target of a markdown link, with its line", pieces.some((sp) => sp.link!.line === 3));
+  const { sliceAnsi } = await import("../src/ui/text.js");
+  const colored = "\x1b[31mconst\x1b[39m x = \x1b[32m'hi'\x1b[39m;";
+  check("scrolled sideways, a line keeps its colors", sliceAnsi(colored, 2) === "\x1b[31mnst\x1b[39m x = \x1b[32m'hi'\x1b[39m;" && sliceAnsi(colored, 6, 3) === "\x1b[31m\x1b[39mx =\x1b[32m\x1b[39m");
+  const win = linkFileRefs([{ text: "see C:\\Users\\RUNNER~1\\src\\a.ts:7 and src\\b.ts" }], (f) => f === "C:\\Users\\RUNNER~1\\src\\a.ts" || f === "src\\b.ts").filter((sp) => sp.link);
+  check("Windows paths are links too, short names (RUNNER~1) and all", win.length === 2 && win[0]!.link!.line === 7 && win[1]!.link!.path === "src\\b.ts");
+  check("the text around them is kept", spans.map((s) => s.text).join("") === "See def/a.ts:4-5 and def/room.ts, not nope.ts or v1.2.");
+}
+
+console.log("Handing a conversation to another engine");
+{
+  const { conversationSoFar } = await import("../src/ui/App.js");
+  check("nothing to hand over before you've said anything", conversationSoFar([{ kind: "info", text: "hi" }]) === null);
+  const handoff = conversationSoFar([{ kind: "user", text: "where is auth?" }, { kind: "tool", text: "Searched for auth" }, { kind: "assistant", text: "In src/auth.ts" }])!;
+  check("the new engine gets what was said, in order", /User: where is auth\?[\s\S]*Searched for auth[\s\S]*Assistant: In src\/auth.ts/.test(handoff));
+  const long = conversationSoFar(Array.from({ length: 400 }, (_, i) => ({ kind: "user" as const, text: `message ${i} ${"x".repeat(100)}` })))!;
+  check("a long one is cut to its latest part", long.length < 26_000 && long.includes("message 399") && !long.includes("message 0 "));
+}
+
+console.log("Code themes");
+{
+  const { setCodeTheme, themeColors, highlightJsTheme } = await import("../src/syntax/themes.js");
+  const { CODE_THEMES, DEFAULT_SETTINGS: defaults } = await import("../src/config/index.js");
+  check("the default code theme is one of the themes", (CODE_THEMES as readonly string[]).includes(defaults.codeTheme));
+  const before = themeColors().keyword("x");
+  setCodeTheme("github-light");
+  const after = themeColors().keyword("x");
+  check("switching themes changes the colors", before !== after || !process.stdout.isTTY);
+  check("highlight.js gets the same colors", highlightJsTheme().keyword === themeColors().keyword);
+  setCodeTheme(defaults.codeTheme);
+}
+
+console.log("Nou's engine: commands, edits, parallel tools");
+{
+  const { runCommand, editText, proposeEdits } = await import("../src/commands/index.js");
+  const both = await runCommand(`node -e "console.log('out'); console.error('warn')"`);
+  check("a command that works still shows what it wrote to stderr", both.includes("out") && both.includes("warn") && !both.startsWith("Error"));
+  const failed = await runCommand(`node -e "console.error('boom'); process.exit(3)"`);
+  check("a failing command says its exit code", failed.startsWith("Error (exit code 3)") && failed.includes("boom"));
+  const slow = await runCommand(`node -e "setTimeout(() => {}, 5000)"`, 1000);
+  check("a command can be given a timeout, and says when it ran out", slow.includes("timed out after 1s"));
+  const file = "function f() {\n    const a = 1;  \n    return a;\n}\n";
+  check("line numbers copied from read_file are ignored", editText(file, "2\t    const a = 1;  \n3\t    return a;", "2\t    const a = 2;\n3\t    return a;").includes("const a = 2;\n    return a;"));
+  check("trailing spaces and indentation don't stop an edit", editText(file, "const a = 1;\nreturn a;", "    const a = 3;\n    return a;").includes("    const a = 3;\n    return a;\n}"));
+  const py = "def f():\n    if x:\n        a()\n";
+  check("an edit written without the file's indentation is shifted to match it", editText(py, "if x:\n    a()", "if x:\n    b()") === "def f():\n    if x:\n        b()\n");
+  check("deleting lines on a loose match doesn't leave a blank line", editText("a\n  b\n  c\nd\n", "b\nc", "") === "a\nd\n");
+  let hint = "";
+  try {
+    editText(file, "const b = 1;", "x");
+  } catch (error: any) {
+    hint = error.message;
+  }
+  check("an edit that doesn't match shows the closest lines, numbered", hint.includes("not found") && hint.includes("2\t    const a = 1;"));
+  let twice = "";
+  try {
+    editText("x = 1\n  x = 1\n", " x = 1 ", "y");
+  } catch (error: any) {
+    twice = error.message;
+  }
+  check("a loose match that isn't unique is refused", twice.includes("not found"));
+  writeFileSync("multi.ts", "a\nb\nc\n");
+  const multi = await proposeEdits("multi.ts", [{ old_string: "a", new_string: "A" }, { old_string: "c", new_string: "C" }]);
+  check("multi_edit makes several edits as one change", multi.after === "A\nb\nC\n");
+  let atomic = "";
+  try {
+    await proposeEdits("multi.ts", [{ old_string: "a", new_string: "A" }, { old_string: "zzz", new_string: "Z" }]);
+  } catch (error: any) {
+    atomic = error.message;
+  }
+  check("if one fails, none are made, and it says which", atomic.includes("Edit 2 of 2") && readFileSync("multi.ts", "utf-8") === "a\nb\nc\n");
+
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  let calls = 0;
+  const started: number[] = [];
+  const entries: string[] = [];
+  const looker: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "f", unavailable: () => null,
+    async chat() {
+      calls++;
+      if (calls === 1) return { text: "", toolCalls: [
+        { id: "s1", name: "slow_look", args: {} }, { id: "s2", name: "slow_look", args: {} },
+        { id: "p1", name: "update_plan", args: { steps: [{ step: "Look", status: "done" }, { step: "Fix", status: "in_progress" }] } },
+      ] };
+      return { text: "ok", toolCalls: [] };
+    },
+  };
+  const engine = new Engine({ provider: looker, model: "f" }, "sys", {
+    onEntry: (e: any) => entries.push(e.text), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true,
+  });
+  engine.configure({ extraTools: [{ definition: { name: "slow_look", description: "", parameters: { type: "object", properties: {}, required: [] } }, readOnly: true, source: "test",
+    run: async () => {
+      started.push(Date.now());
+      await new Promise((r) => setTimeout(r, 300));
+      return "seen";
+    } }] });
+  const t0 = Date.now();
+  await engine.send("look");
+  check("read-only tools in one response run at the same time", started.length === 2 && Math.abs(started[0]! - started[1]!) < 100 && Date.now() - t0 < 550);
+  const results = ((engine as any).messages as any[]).filter((m) => m.role === "tool").map((m) => m.callId);
+  check("their results stay in the calls' order", results.join(",") === "s1,s2,p1");
+  check("update_plan shows the plan in the chat", entries.some((e) => e.includes("✓ Look") && e.includes("▸ Fix")));
+}
+
+console.log("Retrying a model that's busy");
+{
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  let tries = 0;
+  const busy: string[] = [];
+  const shaky: any = {
+    id: "fake", label: "Fake", local: false, defaultModel: "f", unavailable: () => null,
+    async chat() {
+      tries++;
+      if (tries === 1) throw Object.assign(new Error("Overloaded"), { status: 529 });
+      return { text: "fine", toolCalls: [] };
+    },
+  };
+  const said: string[] = [];
+  const engine = new Engine({ provider: shaky, model: "f" }, "sys", {
+    onEntry: (e: any) => said.push(`${e.kind}:${e.text}`), onStream() {}, onBusy: (b: any) => b && busy.push(b), onRead() {}, onChange() {}, approve: async () => true,
+  });
+  await engine.send("hi");
+  check("an overloaded model is retried after a wait, saying so", tries === 2 && said.includes("assistant:fine") && busy.some((b) => b.includes("Retrying in")));
+  let keyTries = 0;
+  const badKey: any = { ...shaky, async chat() {
+    keyTries++;
+    throw Object.assign(new Error("401 invalid x-api-key"), { status: 401 });
+  } };
+  const said2: string[] = [];
+  await new Engine({ provider: badKey, model: "f" }, "sys", {
+    onEntry: (e: any) => said2.push(e.kind), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true,
+  }).send("hi");
+  check("a rejected key isn't retried", keyTries === 1 && said2.includes("error"));
+}
+
+console.log("Review fixes");
+{
+  const { readForModel, runCommand, applyChange, proposeEdit } = await import("../src/commands/index.js");
+  writeFileSync("minified.js", "x".repeat(60_000) + "\nsecond\n");
+  const page = await readForModel("minified.js");
+  check("a line too long to read whole still comes back (its start), and reading moves on", page.includes("xxxx") && page.includes("line 1 cut off") && page.includes("offset=2"));
+  const controller = new AbortController();
+  const t0 = Date.now();
+  const pending = runCommand(`node -e "setTimeout(() => {}, 20000)"`, 30_000, controller.signal);
+  setTimeout(() => controller.abort(), 300);
+  const stopped = await pending;
+  check("Esc stops a running command right away", stopped.startsWith("Stopped") && Date.now() - t0 < 5000);
+  writeFileSync("stale.ts", "one\n");
+  const change = await proposeEdit("stale.ts", "one", "two");
+  writeFileSync("stale.ts", "one\nmine\n"); // edited while the change waited for approval
+  const result = await applyChange(change);
+  check("an edit isn't written over changes made while it waited", result.startsWith("Failed") && readFileSync("stale.ts", "utf-8") === "one\nmine\n");
+  const { nouRulesOnly } = await import("../src/context/index.js");
+  const rules = "\n\nPROJECT SPECIFIC RULES:\nFrom NOU.md:\nUse tabs.\n\nFrom CLAUDE.md:\nUse pnpm.\n\nFrom ~/.nou/NOU.md:\nBe brief.";
+  const nou = nouRulesOnly(rules);
+  check("other engines get only the NOU.md rules (they read CLAUDE.md / AGENTS.md themselves)", nou.includes("Use tabs.") && nou.includes("Be brief.") && !nou.includes("Use pnpm."));
+
+  const { Agent: Engine } = await import("../src/agent/index.js");
+  const thinkingTurn = (id: string) => ({ role: "assistant", content: "", toolCalls: [{ id, name: "read_file", args: { path: "a" } }],
+    raw: { provider: "anthropic", data: [{ type: "thinking", thinking: "", signature: "s" }, { type: "tool_use", id, name: "read_file", input: { path: "a" } }] } });
+  const engine = new Engine({ provider: { id: "anthropic", local: false } as any, model: "m" }, "sys", { onEntry() {}, onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true });
+  (engine as any).messages = [
+    { role: "user", content: "go" }, thinkingTurn("t1"), { role: "tool", callId: "t1", name: "read_file", content: "x".repeat(5000) },
+    thinkingTurn("t2"), { role: "tool", callId: "t2", name: "read_file", content: "y" },
+  ];
+  process.env.NOU_CONTEXT_CHARS = "100000";
+  await engine.compact();
+  delete process.env.NOU_CONTEXT_CHARS;
+  const history = (engine as any).messages as any[];
+  check("trimming old tool output drops Claude's thinking blocks, so the edited history isn't rejected",
+    history[2].content.length < 1000 && history.every((m) => !m.raw || m.raw.data.every((b: any) => b.type !== "thinking")) && history[3].raw.data[0].type === "tool_use");
+
+  let calls = 0;
+  const cutOff: any = { id: "fake", local: true, unavailable: () => null, async chat({ messages }: any) {
+    calls++;
+    if (calls === 1) return { text: "", toolCalls: [{ id: "w1", name: "write_file", args: { path: "big.txt" } }], stop: "max_tokens" };
+    return { text: messages.at(-1).isError ? "smaller steps then" : "?", toolCalls: [] };
+  } };
+  const said: string[] = [];
+  await new Engine({ provider: cutOff, model: "f" }, "sys", { onEntry: (e: any) => said.push(e.text), onStream() {}, onBusy() {}, onRead() {}, onChange() {}, approve: async () => true }).send("write it");
+  check("a reply cut off mid tool call is told so and carries on", calls === 2 && said.includes("smaller steps then"));
+}
+
+console.log("MCP servers");
+{
+  const { McpManager, loadMcpServers, saveUserServers } = await import("../src/mcp/index.js");
+  const { findOtherMcpServers, codexServers } = await import("../src/mcp/import.js");
+  saveUserServers({ test: { command: process.execPath, args: [path.join(root, "tests", "fixtures", "mcp-server.mjs")], cwd: root } });
+  const entries = loadMcpServers(false);
+  check("servers in ~/.nou/mcp.json are loaded", entries.some((e) => e.name === "test" && e.scope === "user"));
+  let changes = 0;
+  const mcp = new McpManager(() => changes++);
+  await mcp.connect(entries);
+  const st = mcp.status().find((x) => x.name === "test");
+  check("Nou connects to an MCP server and lists its tools", st?.state === "ready" && st.tools === 2 && changes > 0);
+  const tools = mcp.tools();
+  const echo = tools.find((t) => t.definition.name === "mcp__test__echo");
+  const flag = tools.find((t) => t.definition.name === "mcp__test__set_flag");
+  check("its tools are named for the server and keep their schema", !!echo && echo.definition.parameters.required.includes("text") && echo.definition.description.startsWith("[test]"));
+  check("tools that say they only read run without asking; the rest ask first", echo?.readOnly === true && flag?.readOnly === false);
+  check("calling a tool returns its text", (await echo!.run({ text: "hi" })) === "echo: hi");
+  mcp.close();
+  const broken = new McpManager(() => {});
+  await broken.connect([{ name: "nope", scope: "user", file: "", config: { command: process.execPath, args: ["-e", "console.error('bad config'); process.exit(1)"] } }]);
+  const failed = broken.status()[0];
+  check("a server that fails says why (its stderr, kept off the screen)", failed?.state === "failed" && (failed.error ?? "").includes("bad config"));
+
+  const home = mkdtempSync(path.join(os.tmpdir(), "nou-mcp-home-"));
+  mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ mcpServers: { github: { type: "http", url: "https://example.com/mcp", headers: { Authorization: "Bearer x" } } } }));
+  writeFileSync(path.join(home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { db: { command: "npx", args: ["db-mcp"], env: { DB: "x" } }, github: { command: "ignored" } } }));
+  writeFileSync(path.join(home, ".codex", "config.toml"), 'model = "gpt-5"\n\n[mcp_servers.docs]\ncommand = "uvx"\nargs = ["docs-mcp", "--fast"]\n\n[mcp_servers.docs.env]\nTOKEN = "abc"\n');
+  const found = findOtherMcpServers(home, home);
+  check("MCP servers set up in Claude Code, Cursor and Codex are found", ["github", "db", "docs"].every((n) => found.some((f) => f.name === n)));
+  check("with their settings, the first tool's wins on a name", found.find((f) => f.name === "github")?.config.url === "https://example.com/mcp" && found.find((f) => f.name === "docs")?.config.env?.TOKEN === "abc");
+  check("Codex's TOML tables are read", JSON.stringify(codexServers('[mcp_servers.x]\ncommand = "a"\nargs = ["b"]\n').x) === JSON.stringify({ command: "a", args: ["b"] }));
+}
+
+console.log("Games");
+{
+  const { pong, snake, breakout, GAMES } = await import("../src/games/index.js");
+  for (const g of GAMES) {
+    let st = g.create(36, 13, 7);
+    for (let i = 0; i < 400; i++) st = g.tick(st, i % 7 === 0 ? ["up"] : i % 5 === 0 ? ["left"] : []);
+    const v = g.view(st);
+    check(`${g.title} runs 400 ticks and draws a 36×13 field`, v.lines.length === 13 && v.lines.every((l) => [...l].length === 36));
+  }
+  let s1 = snake.create(20, 10, 3);
+  const len = s1.body.length;
+  s1 = { ...s1, food: { x: s1.body[0]!.x + 1, y: s1.body[0]!.y } };
+  s1 = snake.tick(s1, []);
+  check("the snake grows when it eats", s1.body.length === len + 1 && s1.score === 1);
+  s1 = snake.tick(s1, ["left"]);
+  check("the snake can't turn straight back on itself", s1.dir === "right" && !s1.dead);
+  let s2 = snake.create(20, 10, 3);
+  for (let i = 0; i < 40; i++) s2 = snake.tick(s2, []);
+  check("running into the wall ends the game", s2.dead && !!snake.view(s2).over);
+  let p = pong.create(36, 13, 1);
+  const top = p.you;
+  p = pong.tick(p, ["up", "up"]);
+  check("Pong: the paddle moves with the keys", p.you === top - 2);
+  let b = breakout.create(36, 13, 2);
+  const paddle = b.paddle;
+  b = breakout.tick(b, ["right"]);
+  check("Breakout: the paddle moves with the keys", b.paddle === paddle + 2);
+}
+
+console.log("Project instructions");
+{
+  const { loadPermanentContext } = await import("../src/context/index.js");
+  const { NOU_HOME } = await import("../src/config/index.js");
+  const repo = mkdtempSync(path.join(os.tmpdir(), "nou-rules-"));
+  mkdirSync(path.join(repo, ".git"));
+  mkdirSync(path.join(repo, "pkg"));
+  writeFileSync(path.join(repo, "AGENTS.md"), "Use pnpm.");
+  writeFileSync(path.join(repo, "pkg", "CLAUDE.md"), "Tests: pnpm test --filter pkg");
+  writeFileSync(path.join(repo, "pkg", "NOU.md"), "Use pnpm.");
+  mkdirSync(NOU_HOME, { recursive: true });
+  writeFileSync(path.join(NOU_HOME, "NOU.md"), "Answer in English.");
+  const here = process.cwd();
+  process.chdir(path.join(repo, "pkg"));
+  const rules = await loadPermanentContext();
+  process.chdir(here);
+  check("AGENTS.md and CLAUDE.md count as instructions, from here up to the repo root", rules.includes("Use pnpm.") && rules.includes("pnpm test --filter pkg"));
+  check("the same text in two files is given once", rules.split("Use pnpm.").length === 2);
+  check("~/.nou/NOU.md applies everywhere, and comes first", rules.indexOf("Answer in English.") < rules.indexOf("Use pnpm."));
+  rmSync(path.join(NOU_HOME, "NOU.md"));
+}
+
 console.log("write_file content");
 check("keeps \\n inside string literals", cleanContent('log("a\\nb");\n') === 'log("a\\nb");\n');
 check("keeps leading indentation", cleanContent("    x()\n") === "    x()\n");
@@ -73,12 +368,12 @@ console.log("Keeping the model's context small");
   const { readForModel, capOutput } = await import("../src/commands/index.js");
   const { pickNumCtx } = await import("../src/providers/ollama.js");
   writeFileSync("small.txt", "one\r\ntwo\r\n");
-  check("a small file is returned unchanged", (await readForModel("small.txt")) === "one\r\ntwo\r\n");
+  check("a small file is returned whole, its lines numbered", (await readForModel("small.txt")) === "1\tone\n2\ttwo");
   writeFileSync("big.txt", Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
   const page = await readForModel("big.txt");
-  check("a long file comes back one page at a time", page.includes("line 1000\n") && !page.includes("line 1001") && page.includes("Read more with offset=1001"));
+  check("a long file comes back one page at a time", page.includes("1000\tline 1000\n") && !page.includes("line 1001") && page.includes("Read more with offset=1001"));
   const last = await readForModel("big.txt", 2001, 1000);
-  check("offset reads on to the end", last.startsWith("line 2001\n") && last.includes("[Lines 2001-2500 of 2500.]"));
+  check("offset reads on to the end", last.startsWith("2001\tline 2001\n") && last.includes("[Lines 2001-2500 of 2500.]"));
   const capped = capOutput("a".repeat(30_000) + "THE ERROR", 10_000);
   check("long output keeps its end, where errors are", capped.length < 10_100 && capped.endsWith("THE ERROR") && capped.includes("characters cut"));
   check("Ollama gets a bigger context window, capped at the model's", pickNumCtx("temperature 0.6", { "qwen3.context_length": 40960 }) === 32768 && pickNumCtx("", { "x.context_length": 8192 }) === 8192);
@@ -302,7 +597,7 @@ console.log("Reading outside the project");
   });
   await agent.send("read it");
   check("reading outside the project asks first", asked.length === 1 && !results[0]!.includes("SECRET") && results[0]!.includes("denied"));
-  check("reading inside the project doesn't ask", asked.length === 1 && results[1] === "one\r\ntwo\r\n");
+  check("reading inside the project doesn't ask", asked.length === 1 && results[1] === "1\tone\n2\ttwo");
   const history = (agent as any).messages as any[];
   check("<think> blocks aren't sent back to the model", history.at(-1).content === "done");
 }

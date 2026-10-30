@@ -41,6 +41,20 @@ function toAnthropic(messages: ChatMessage[]): Params[] {
   return out;
 }
 
+/**
+ * Marks the end of the conversation for prompt caching, so the next request (every tool step of a turn)
+ * reads all of it from the cache instead of paying for it again: cached input costs a tenth or less.
+ */
+function withCacheBreakpoint(params: Params[]): Params[] {
+  const last = params[params.length - 1];
+  if (!last) return params;
+  const content: Block[] = typeof last.content === "string" ? [{ type: "text", text: last.content }] : [...(last.content as Block[])];
+  const end = content[content.length - 1];
+  if (!end || end.type === "thinking" || end.type === "redacted_thinking") return params;
+  content[content.length - 1] = { ...end, cache_control: { type: "ephemeral" } } as Block;
+  return [...params.slice(0, -1), { ...last, content }];
+}
+
 function hasCredentials(): boolean {
   return !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_PROFILE)
     || existsSync(path.join(os.homedir(), ".config", "anthropic"));
@@ -51,7 +65,8 @@ export function anthropicProvider(): Provider {
   let client: { auth: string; api: Anthropic } | null = null;
   const getClient = () => {
     const auth = `${process.env.ANTHROPIC_API_KEY}|${process.env.ANTHROPIC_AUTH_TOKEN}|${process.env.ANTHROPIC_BASE_URL}`;
-    if (client?.auth !== auth) client = { auth, api: new Anthropic() };
+    // No retries here: the agent retries failed requests itself (with backoff), and both would multiply.
+    if (client?.auth !== auth) client = { auth, api: new Anthropic({ maxRetries: 0 }) };
     return client.api;
   };
 
@@ -78,7 +93,7 @@ export function anthropicProvider(): Provider {
         model,
         max_tokens: 64000,
         system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-        messages: toAnthropic(messages),
+        messages: withCacheBreakpoint(toAnthropic(messages)),
         tools: tools.map((t) => ({
           name: t.name,
           description: t.description,
@@ -86,6 +101,8 @@ export function anthropicProvider(): Provider {
           eager_input_streaming: true,
         })),
         stream: true,
+        // Current models think between tool calls; summarized, that shows what they're doing instead of a silence.
+        ...(EFFORT_MODELS.test(model) ? { thinking: { type: "adaptive", display: "summarized" } as unknown as Anthropic.Beta.Messages.BetaThinkingConfigParam } : {}),
         ...(effort ? { output_config: { effort: effort as "low" | "medium" | "high" | "xhigh" | "max" } } : {}),
         ...(fallbacks ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
       };
@@ -94,7 +111,20 @@ export function anthropicProvider(): Provider {
         let text = "";
         try {
           const stream = getClient().beta.messages.stream(body, signal ? { signal } : {});
+          // Thinking streams as a quote above the reply (the chat shows quotes dimmed); only the reply is kept.
+          let thinking = false;
+          stream.on("thinking", (delta) => {
+            const piece = `${thinking ? "" : "> "}${delta.replace(/\n/g, "\n> ")}`;
+            thinking = true;
+            text += piece;
+            onText(piece);
+          });
           stream.on("text", (delta) => {
+            if (thinking) {
+              thinking = false;
+              text += "\n\n";
+              onText("\n\n");
+            }
             text += delta;
             onText(delta);
           });

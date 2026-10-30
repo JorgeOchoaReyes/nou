@@ -38,6 +38,17 @@ export const describe = (choice: ModelChoice) => `${choice.provider.id}:${choice
 export const rejectedKey = (error: string) => /\b(401|403)\b|api key|unauthori[sz]ed|authentication/i.test(error);
 
 /**
+ * Whether an error is the provider's setup rather than the request: a rejected key, a URL that doesn't
+ * answer, or a model it doesn't have. Each has a place in settings to fix it.
+ */
+export function setupProblem(provider: Provider, error: string): "key" | "url" | "model" | null {
+  if (rejectedKey(error) && provider.connect?.some((f) => f.secret)) return "key";
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo|fetch failed|Connection error|Invalid URL|connect ETIMEDOUT/i.test(error) && provider.connect?.some((f) => !f.secret)) return "url";
+  if (/model\b[^.]*\b(not found|does not exist|not exist|invalid|unknown|not available|not supported)|(invalid|unknown|no such) model|model_not_found/i.test(error)) return "model";
+  return null;
+}
+
+/**
  * For an error that says the key was rejected: which key, where it was set, and how to fix it.
  * The usual cause is a project's .env holding a key for the app rather than for Nou.
  */

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { existsSync, statSync } from "fs";
 import { toolDefs } from "../tools/index.js";
 import {
   applyChange,
@@ -6,6 +7,7 @@ import {
   fileTree,
   isInProject,
   proposeEdit,
+  proposeEdits,
   proposeWrite,
   readForModel,
   runCommand,
@@ -19,6 +21,18 @@ import { globFiles, grep } from "../search/index.js";
 
 /** Model requests per user message before stopping; real tasks (explore, edit, test, fix) take a few dozen. */
 const MAX_STEPS = 60;
+/** Tries per model request when it fails for a passing reason (see withRetries). */
+const RETRIES = 6;
+/** Errors worth retrying: overloaded, rate limited, a server error, a dropped or timed-out connection. */
+function transient(error: any): boolean {
+  const status = Number(error?.status ?? error?.statusCode);
+  if (status === 408 || status === 409 || status === 429 || status >= 500) return true;
+  if (status >= 400) return false;
+  const text = String(error?.message ?? error);
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Invalid URL|api key|unauthori[sz]ed/i.test(text)) return false;
+  return /overloaded|rate.?limit|too many requests|ECONNRESET|socket hang up|ETIMEDOUT|timed? ?out|EPIPE|network|premature close|terminated|\b(429|5\d\d)\b/i.test(text);
+}
+
 /** Messages kept word for word when older ones are summarized. */
 const KEEP_RECENT = 8;
 const TRIMMED_OUTPUT = "\n[... trimmed to save context; run the tool again if you need it]";
@@ -49,7 +63,10 @@ export interface AgentHooks {
   onEntry(entry: ChatEntry): void;
   onStream(partial: string): void;
   onBusy(label: string | null): void;
-  onRead(path: string): void;
+  /** A file the agent read; `line`..`to` when it read only part of it. */
+  onRead(path: string, line?: number, to?: number): void;
+  /** Shows a file in the user's code view, scrolled to `line` with `line`..`to` highlighted. */
+  onOpen?(path: string, line?: number, to?: number): void;
   /** `turn` is unique across sessions (session id + turn number), so undo can target one turn exactly. */
   onChange(change: FileChange, status: ChangeStatus, turn: string): void;
   approve(request: ApprovalRequest): Promise<boolean>;
@@ -74,6 +91,13 @@ How to work:
 4. Keep going until the task is done. The user approves each edit and command as it happens, so don't stop to ask permission between steps; ask only when the request is unclear or you need a decision.
 5. End with a short summary of what you changed and why. When the user only asks a question, answer it without editing anything.
 
+- Make independent calls together: several reads or searches in one response run at the same time.
+- Use grep, glob and read_file to look around, not run_command with grep, find or cat. Several edits to one file go in one multi_edit.
+- If an edit fails twice, read the file again before the next try.
+- For work with three or more steps, keep a plan with update_plan and update it as you go.
+- Don't commit, push, install packages or delete files unless the user asked. Don't add comments the code didn't need.
+- Before saying something works, check it (run the tests or the code). If you couldn't, say so.
+- When the user asks where something is, or to show, open or find something, search for it (grep, glob), read enough to be sure, then call open_file on the exact place (with line and end_line) so it opens in their code view, and answer in a sentence or two with path:line.
 - If the user rejects an edit or command, don't retry it: ask what they would like instead.
 - Keep replies short. Refer to code as path:line.
 
@@ -112,6 +136,10 @@ export class Agent implements Engine {
   constructor(public choice: ModelChoice, private system: string, private hooks: AgentHooks) {}
 
   configure(options: EngineOptions) {
+    // A different system prompt or tool list (an MCP server connected, a plugin switched) changes what the
+    // earlier thinking was written against: newer Claude models reject replaying it, so it's dropped.
+    const toolsChanged = options.extraTools && options.extraTools.map((t) => t.definition.name).join() !== this.extraTools.map((t) => t.definition.name).join();
+    if (this.messages.length && ((options.system !== undefined && options.system !== this.system) || toolsChanged)) this.forgetThinking();
     if (options.system !== undefined) this.system = options.system;
     if (options.extraTools) this.extraTools = options.extraTools;
     if (options.effort) this.effort = options.effort;
@@ -173,6 +201,7 @@ export class Agent implements Engine {
         trimmed++;
       }
     }
+    if (trimmed) this.forgetThinking();
     if (!force && this.requestSize() <= budget * 0.8) {
       this.hooks.onEntry({ kind: "info", text: `Trimmed ${trimmed} old tool outputs to fit the model's context.` });
       return true;
@@ -188,6 +217,7 @@ export class Agent implements Engine {
       if (signal?.aborted) throw error;
       summary = `(The earlier conversation was dropped to fit the context; summarizing it failed: ${error.message})`;
     }
+    this.forgetThinking();
     const intro = `[Summary of the conversation so far]\n${summary}`;
     const rest = this.messages.slice(split);
     const first = rest[0];
@@ -199,6 +229,24 @@ export class Agent implements Engine {
       text: `Summarized ${split} earlier messages to fit the model's context (${Math.round(startSize / 1000)}k → ${Math.round(this.requestSize() / 1000)}k characters).`,
     });
     return true;
+  }
+
+  /**
+   * Drops Claude's thinking blocks from the history. Newer Claude models reject a conversation whose
+   * earlier turns were edited while it still carries their thinking blocks (they're tied to the exact
+   * history they were written in), and trimming or summarizing is such an edit. Without them the model
+   * carries on from the visible text and tool calls, which is what the trimmed history holds anyway.
+   */
+  private forgetThinking() {
+    this.messages = this.messages.map((m) => {
+      if (m.role !== "assistant" || m.raw?.provider !== "anthropic" || !Array.isArray(m.raw.data)) return m;
+      const kept = (m.raw.data as { type: string }[]).filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking");
+      if (kept.length === m.raw.data.length) return m;
+      if (kept.length) return { ...m, raw: { ...m.raw, data: kept } };
+      const plain = { ...m };
+      delete plain.raw;
+      return plain;
+    });
   }
 
   /**
@@ -246,21 +294,25 @@ export class Agent implements Engine {
     this.controller = new AbortController();
     const { signal } = this.controller;
     try {
+      let cutOff = 0;
       for (let step = 0; step < MAX_STEPS; step++) {
         if (this.requestSize() > this.contextBudget()) await this.compact(false, signal);
         this.hooks.onBusy(`Pondering with ${describe(this.choice)}...`);
         let streamed = "";
-        const result = await this.choice.provider.chat({
-          model: this.choice.model,
-          system: this.system,
-          messages: this.messages,
-          tools: this.tools,
-          signal,
-          ...(this.effort ? { effort: this.effort } : {}),
-          onText: (delta) => {
-            streamed += delta;
-            this.hooks.onStream(streamed);
-          },
+        const result = await this.withRetries(signal, () => {
+          streamed = "";
+          return this.choice.provider.chat({
+            model: this.choice.model,
+            system: this.system,
+            messages: this.messages,
+            tools: this.tools,
+            signal,
+            ...(this.effort ? { effort: this.effort } : {}),
+            onText: (delta) => {
+              streamed += delta;
+              this.hooks.onStream(streamed);
+            },
+          });
         });
         this.hooks.onStream("");
 
@@ -289,28 +341,48 @@ export class Agent implements Engine {
           return;
         }
         if (result.stop === "max_tokens") {
-          this.hooks.onEntry({ kind: "error", text: "The response was cut off before its tool call finished. Try asking for a smaller change." });
-          this.dropUnansweredCalls();
-          return;
+          // The reply ran out of room mid tool call (usually a whole file in one write): tell the model and
+          // let it try in smaller pieces, a couple of times, before giving up.
+          if (++cutOff > 2) {
+            this.hooks.onEntry({ kind: "error", text: "The response was cut off before its tool call finished, again. Try asking for a smaller change." });
+            this.dropUnansweredCalls();
+            return;
+          }
+          for (const call of result.toolCalls) {
+            this.messages.push({ role: "tool", callId: call.id, name: call.name, isError: true,
+              content: "Not run: your response hit the output limit before this call was complete. Make the change in smaller steps (edit_file or multi_edit with only the lines that change, not the whole file)." });
+          }
+          continue;
         }
         if (result.toolCalls.length === 0) return;
 
-        for (const call of result.toolCalls) {
-          if (signal.aborted) break;
-          this.hooks.onBusy(`Running ${call.name}...`);
-          const problem = invalidArgs(call, this.tools);
-          const output = problem ?? capOutput(await this.runTool(call));
-          this.messages.push({
-            role: "tool",
-            callId: call.id,
-            name: call.name,
-            content: problem ? `Error: ${problem}` : output,
-            ...(problem ? { isError: true } : {}),
+        // Calls that only look (reads, searches) run together; the rest run one at a time, in order,
+        // since they may ask you first or change what a later call sees. Results keep the calls' order.
+        const calls = result.toolCalls;
+        for (let i = 0; i < calls.length && !signal.aborted;) {
+          let j = i + 1;
+          if (this.onlyLooks(calls[i]!)) while (j < calls.length && this.onlyLooks(calls[j]!)) j++;
+          const batch = calls.slice(i, j);
+          this.hooks.onBusy(batch.length > 1 ? `Running ${batch.length} tools...` : `Running ${batch[0]!.name}...`);
+          const outputs = await Promise.all(batch.map(async (call) => {
+            const problem = invalidArgs(call, this.tools);
+            return problem ? { error: `Error: ${problem}` } : { output: capOutput(await this.runTool(call)) };
+          }));
+          batch.forEach((call, k) => {
+            const out = outputs[k]!;
+            this.messages.push({
+              role: "tool",
+              callId: call.id,
+              name: call.name,
+              content: "error" in out ? out.error! : out.output!,
+              ...("error" in out ? { isError: true } : {}),
+            });
           });
+          i = j;
         }
         if (signal.aborted) throw new Error("aborted");
       }
-      this.hooks.onEntry({ kind: "error", text: `Stopped after ${MAX_STEPS} steps.` });
+      this.hooks.onEntry({ kind: "error", text: `Paused after ${MAX_STEPS} steps so it doesn't run away. Say "continue" to let it carry on.` });
     } catch (error: any) {
       this.hooks.onStream("");
       if (signal.aborted) {
@@ -339,6 +411,37 @@ export class Agent implements Engine {
     }
   }
 
+  /**
+   * Runs a model request again when it failed for a passing reason (overloaded, rate limited, a server
+   * error, a dropped connection), waiting longer each time. Setup problems (a bad key, a URL that doesn't
+   * answer) fail straight away: waiting won't fix them, and the app shows where to.
+   */
+  private async withRetries<T>(signal: AbortSignal, request: () => Promise<T>): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await request();
+      } catch (error: any) {
+        if (signal.aborted || attempt >= RETRIES || !transient(error)) throw error;
+        const after = Number(error?.headers?.get?.("retry-after") ?? error?.headers?.["retry-after"]);
+        const wait = Math.min(30_000, after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1) + Math.random() * 500);
+        this.hooks.onStream("");
+        this.hooks.onBusy(`${describe(this.choice)}: ${String(error?.message ?? error).slice(0, 60)}. Retrying in ${Math.ceil(wait / 1000)}s (${attempt}/${RETRIES - 1})...`);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, wait);
+          signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+        });
+        if (signal.aborted) throw error;
+      }
+    }
+  }
+
+  /** Tools that only read, which can run alongside each other. */
+  private onlyLooks(call: ToolCall): boolean {
+    if (["grep", "glob", "list_files", "get_file_tree"].includes(call.name)) return true;
+    if (call.name === "read_file") return typeof call.args.path === "string" && isInProject(call.args.path);
+    return this.extraTools.some((t) => t.definition.name === call.name && t.readOnly);
+  }
+
   private async runTool(call: ToolCall): Promise<string> {
     const { name, args } = call;
     try {
@@ -351,10 +454,22 @@ export class Agent implements Engine {
             return "User denied reading this file: it is outside the project folder.";
           }
         } else {
-          this.hooks.onRead(toRelative(args.path));
+          const from = Number(args.offset) > 1 ? Math.floor(Number(args.offset)) : undefined;
+          const count = Number(args.limit) > 0 ? Math.floor(Number(args.limit)) : undefined;
+          this.hooks.onRead(toRelative(args.path), from ?? (count ? 1 : undefined), count ? (from ?? 1) + count - 1 : undefined);
         }
         this.hooks.onEntry({ kind: "tool", text: `Read ${args.path}` });
         return await readForModel(args.path, args.offset, args.limit);
+      }
+      case "open_file": {
+        const file = toRelative(String(args.path));
+        if (!isInProject(file)) return "Error: only files in the project can be shown.";
+        if (!existsSync(file) || !statSync(file).isFile()) return `Error: ${file} is not a file. Find it with glob first.`;
+        const line = Number(args.line) > 0 ? Math.floor(Number(args.line)) : undefined;
+        const to = line && Number(args.end_line) >= line ? Math.floor(Number(args.end_line)) : line;
+        this.hooks.onOpen?.(file, line, to);
+        this.hooks.onEntry({ kind: "tool", text: `Opened ${file}${line ? `:${line}${to && to !== line ? `-${to}` : ""}` : ""}` });
+        return this.hooks.onOpen ? "It is now open in the user's code view." : "This interface can't show files; give the user the path instead.";
       }
       case "list_files":
       case "get_file_tree": {
@@ -377,11 +492,19 @@ export class Agent implements Engine {
         return globFiles(String(args.pattern), typeof args.path === "string" ? args.path : ".");
       }
       case "edit_file":
+      case "multi_edit":
       case "write_file": {
+        if (name === "multi_edit" && (!Array.isArray(args.edits) || !args.edits.length)) return "Error: edits must be a list of {old_string, new_string}.";
         const change = name === "edit_file"
           ? await proposeEdit(args.path, args.old_string, args.new_string, args.replace_all === true)
-          : await proposeWrite(args.path, args.content ?? "");
+          : name === "multi_edit" ? await proposeEdits(args.path, args.edits) : await proposeWrite(args.path, args.content ?? "");
         return await this.reviewChange(change);
+      }
+      case "update_plan": {
+        const steps = Array.isArray(args.steps) ? args.steps : [];
+        const mark = { done: "✓", in_progress: "▸", pending: "○" } as Record<string, string>;
+        this.hooks.onEntry({ kind: "tool", text: `Plan:\n${steps.map((st: any) => `${mark[st.status] ?? "○"} ${st.step}`).join("\n")}` });
+        return "Plan updated.";
       }
       case "run_command": {
         const ok = await this.hooks.approve({ kind: "command", command: args.command });
@@ -390,7 +513,9 @@ export class Agent implements Engine {
           return "User denied permission to run this command.";
         }
         this.hooks.onEntry({ kind: "tool", text: `Ran: ${args.command}` });
-        const output = await runCommand(args.command);
+        // Timeouts are in seconds; a model that sends milliseconds still gets a sensible limit.
+        const seconds = Number(args.timeout) > 0 ? Number(args.timeout) : 0;
+        const output = await runCommand(args.command, seconds ? (seconds > 3600 ? seconds : seconds * 1000) : undefined, this.controller?.signal);
         return output.trim() || "(no output)";
       }
       default: {
@@ -419,9 +544,12 @@ export class Agent implements Engine {
       return "User rejected this change. Ask them what they would like instead.";
     }
     const result = await applyChange(change);
-    this.hooks.onChange(change, "applied", this.turnId);
     this.hooks.onEntry({ kind: "tool", text: result });
-    if (result.startsWith("Failed")) return result;
+    if (result.startsWith("Failed")) {
+      this.hooks.onChange(change, "rejected", this.turnId);
+      return result;
+    }
+    this.hooks.onChange(change, "applied", this.turnId);
     this.hooks.onBusy(`Checking ${change.path} for problems...`);
     const problems = await this.hooks.checkChange?.(change).catch(() => null);
     if (problems) this.hooks.onEntry({ kind: "error", text: `New problems in ${change.path}:\n${problems}` });

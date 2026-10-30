@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { AUTO_SAVE, EFFORTS, type Settings as SettingsType } from "../config/index.js";
+import { AUTO_SAVE, CODE_THEMES, EFFORTS, FOLLOW_SPEEDS, type Settings as SettingsType } from "../config/index.js";
+import { highlightLines } from "./text.js";
+import { GAMES } from "../games/index.js";
 import { saveCredentials } from "../config/credentials.js";
 import { originOf, setOutsideNou } from "../config/origins.js";
 import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins/index.js";
@@ -18,6 +20,8 @@ type Props = {
   plugins: PluginEntry[];
   /** Open on this provider's connect form (the /connect command). */
   connectTo?: Provider;
+  /** Why settings opened, e.g. the error a request just hit, shown above the form. */
+  reason?: string | null;
   onModel(choice: ModelChoice): void;
   onEngine(id: EngineId): void;
   onChange(patch: Partial<SettingsType>): void;
@@ -26,12 +30,20 @@ type Props = {
   onClose(): void;
 };
 
-const TABS = ["Model", "Engine", "Preferences", "Plugins"] as const;
+/** A few lines of code to show what a code theme looks like. */
+const THEME_PREVIEW = `// Greets someone, politely
+export function greet(name: string, times = 2): string {
+  return \`Hello \${name}!\`.repeat(times) || null;
+}`;
+
+const TABS = ["Model", "Engine", "Preferences", "Plugins", "Games"] as const;
 type Tab = (typeof TABS)[number];
 
 type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boolean };
 const PREFS: Pref[] = [
   { key: "effort", label: "Reasoning effort", help: "How hard Claude thinks (low → max). Higher is smarter but slower and pricier." },
+  { key: "followSpeed", label: "Follow mode speed", help: "How long each file Nou reads stays on screen in follow mode (f): slow, normal, fast, or as it happens." },
+  { key: "codeTheme", label: "Code colors", help: "The theme for code. ←/→ to try them; github-light is for light terminals." },
   { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
   { key: "mouse", label: "Mouse", help: "Wheel scrolls the pane under the pointer; click to focus or open files. Hold Shift to select text." },
   { key: "followMode", label: "Follow mode on start", help: "The code view jumps to files Nou reads and edits." },
@@ -44,7 +56,7 @@ const PREFS: Pref[] = [
 /** Where you are in a provider's connect form: which field, and what's been entered so far. */
 type Connecting = { step: number; values: Record<string, string> };
 
-export function Settings({ width, height, settings, choice, plugins, connectTo, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
+export function Settings({ width, height, settings, choice, plugins, connectTo, reason, onModel, onEngine, onChange, onTogglePlugin, onRescanPlugins, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("Model");
   const [row, setRow] = useState(() => Math.max(0, providers.indexOf(connectTo ?? choice.provider)));
   const [column, setColumn] = useState<"providers" | "models">("providers");
@@ -97,7 +109,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   };
 
   const modelItems = Array.isArray(listed) ? listed : [];
-  const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Engine" ? ENGINES.length : t === "Preferences" ? PREFS.length : plugins.length);
+  const rowsFor = (t: Tab) => (t === "Model" ? providers.length : t === "Engine" ? ENGINES.length : t === "Preferences" ? PREFS.length : t === "Games" ? GAMES.length : plugins.length);
 
   useInput((input, key) => {
     if (connecting) {
@@ -152,11 +164,18 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
       const step = key.leftArrow ? -1 : 1;
       if (pref.key === "effort") {
         onChange({ effort: EFFORTS[(EFFORTS.indexOf(settings.effort) + step + EFFORTS.length) % EFFORTS.length]! });
+      } else if (pref.key === "followSpeed") {
+        onChange({ followSpeed: FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + step + FOLLOW_SPEEDS.length) % FOLLOW_SPEEDS.length]! });
+      } else if (pref.key === "codeTheme") {
+        onChange({ codeTheme: CODE_THEMES[(CODE_THEMES.indexOf(settings.codeTheme) + step + CODE_THEMES.length) % CODE_THEMES.length]! });
       } else if (pref.key === "autoSave") {
         onChange({ autoSave: AUTO_SAVE[(AUTO_SAVE.indexOf(settings.autoSave) + step + AUTO_SAVE.length) % AUTO_SAVE.length]! });
       } else {
         onChange({ [pref.key]: !settings[pref.key] } as Partial<SettingsType>);
       }
+    } else if (tab === "Games" && (key.return || input === " ") && GAMES[row]) {
+      const id = GAMES[row].id;
+      onChange({ games: settings.games.includes(id) ? settings.games.filter((g) => g !== id) : [...settings.games, id] });
     } else if (tab === "Plugins") {
       if (input === "r") onRescanPlugins();
       else if ((key.return || input === " ") && plugins[row]) onTogglePlugin(plugins[row].id, !isEnabled(plugins[row], settings));
@@ -164,6 +183,18 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   });
 
   const boxHeight = height - 6;
+  // Preferences take three rows each (label, help, gap), the code theme's preview four more: show the ones
+  // around the selected one that fit.
+  const prefWindow = (() => {
+    const room = Math.max(3, boxHeight - 4);
+    const cost = (i: number) => 3 + (tab === "Preferences" && i === row && PREFS[i]?.key === "codeTheme" ? 4 : 0);
+    let first = tab === "Preferences" ? row : 0;
+    let last = first + 1;
+    let used = cost(first);
+    while (last < PREFS.length && used + cost(last) <= room) used += cost(last++);
+    while (first > 0 && used + cost(first - 1) <= room) used += cost(--first);
+    return { first, last };
+  })();
   const toggle = (on: boolean, warn?: boolean) => (
     <Text color={on ? (warn ? C.orange : C.green) : C.dim} bold>{on ? "● ON " : "○ OFF"}</Text>
   );
@@ -193,6 +224,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
           </Box>
           <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={column === "models" ? C.accent : C.dim} paddingX={1}>
             <Text color={C.dim} bold>MODELS · {provider.label}</Text>
+            {reason ? <Text color={C.red} wrap="wrap">✖ {reason}</Text> : null}
             {connecting && provider.connect ? (
               <>
                 <Text color={C.accent2} bold>Connect {provider.label}</Text>
@@ -306,8 +338,10 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
 
     if (tab === "Preferences") {
       return (
-        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
-          {PREFS.map((pref, i) => {
+        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1} overflow="hidden">
+          {prefWindow.first > 0 ? <Text color={C.dim}>  ↑ {prefWindow.first} more</Text> : null}
+          {PREFS.slice(prefWindow.first, prefWindow.last).map((pref, at) => {
+            const i = prefWindow.first + at;
             const selected = i === row;
             const value = settings[pref.key];
             return (
@@ -315,11 +349,41 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                 <Text {...(selected ? { backgroundColor: C.panel } : {})}>
                   <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
                   <Text color={C.text} bold={selected}>{pref.label.padEnd(26)}</Text>
-                  {pref.key === "effort" || pref.key === "autoSave"
-                    ? <Text>{(pref.key === "effort" ? EFFORTS : AUTO_SAVE).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
-                    : toggle(value as boolean, pref.warn)}
+                  {pref.key === "codeTheme"
+                    ? <Text><Text color={C.dim}>‹ </Text><Text color={C.accent2} bold>{String(value)}</Text><Text color={C.dim}> ›  {CODE_THEMES.indexOf(value as never) + 1}/{CODE_THEMES.length}</Text></Text>
+                    : pref.key === "effort" || pref.key === "autoSave" || pref.key === "followSpeed"
+                      ? <Text>{(pref.key === "effort" ? EFFORTS : pref.key === "autoSave" ? AUTO_SAVE : FOLLOW_SPEEDS).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
+                      : toggle(value as boolean, pref.warn)}
                 </Text>
-                <Text color={C.dim}>    {pref.help}</Text>
+                <Text color={C.dim} wrap="truncate-end">    {pref.help}</Text>
+                {pref.key === "codeTheme" && selected
+                  ? highlightLines("preview.ts", THEME_PREVIEW).map((line, n) => <Text key={n} wrap="truncate-end">{"    "}{line}</Text>)
+                  : null}
+              </Box>
+            );
+          })}
+          {prefWindow.last < PREFS.length ? <Text color={C.dim}>  ↓ {PREFS.length - prefWindow.last} more</Text> : null}
+        </Box>
+      );
+    }
+
+    if (tab === "Games") {
+      return (
+        <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
+          <Text color={C.dim}>Little games for a break while Nou works. Added ones show in the Games panel: /games, or ? then "games".</Text>
+          <Text> </Text>
+          {GAMES.map((g, i) => {
+            const selected = i === row;
+            const added = settings.games.includes(g.id);
+            return (
+              <Box key={g.id} flexDirection="column" marginBottom={1}>
+                <Text {...(selected ? { backgroundColor: C.panel } : {})}>
+                  <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
+                  {added ? <Text color={C.green} bold>✓ ADDED</Text> : <Text color={C.accent2} bold>⬇ GET  </Text>}
+                  <Text color={C.text} bold> {g.title}</Text>
+                  <Text color={C.dim}>  {g.controls}</Text>
+                </Text>
+                <Text color={C.dim} wrap="truncate-end">    {g.blurb}</Text>
               </Box>
             );
           })}
@@ -365,7 +429,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
 
   const hints = tab === "Model"
     ? connecting ? "Enter next · Esc cancel" : column === "models" ? `↑↓ choose · Enter use model · ← providers${provider.connect ? " · k change key" : ""}` : `↑↓ provider · Enter/→ ${provider.unavailable() ? "connect" : "pick a model"}${provider.connect ? " · k change key" : ""}`
-    : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : "↑↓ move · Enter toggle · r rescan";
+    : tab === "Engine" ? "↑↓ move · Enter use this engine" : tab === "Preferences" ? "↑↓ move · Enter/Space toggle · ←→ change option" : tab === "Games" ? "↑↓ move · Enter add / remove · /games opens the panel" : "↑↓ move · Enter toggle · r rescan";
 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1}>

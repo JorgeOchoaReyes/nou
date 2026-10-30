@@ -1,10 +1,10 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
-import { highlightLines, sideBySide, splitLines } from "./text.js";
+import { highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -24,8 +24,11 @@ type Props = {
   marked: Set<number>;
   /** Problems in this file, shown in the gutter and at the end of their line. */
   problems: Diagnostic[];
-  /** Scroll so this line is in view (nonce lets the same line be requested twice). */
-  focusLine: { line: number; nonce: number } | null;
+  /**
+   * Scroll so this line is in view (nonce lets the same line be requested twice). With `path`, lines
+   * `line` to `to` of that file are highlighted too: what Nou was asked to find.
+   */
+  focusLine: { line: number; to?: number; path?: string; nonce: number } | null;
   /** Bumped when a syntax grammar finishes loading, to re-highlight. */
   syntaxVersion: number;
   /** A one-line note for the problems count, e.g. "+2 problems" on a proposed edit. */
@@ -34,21 +37,43 @@ type Props = {
   /** A click or drag on the scrollbar. */
   scrollTo?: ScrollTo | null;
   onViewport(top: number, bottom: number): void;
+  /** A Ctrl/Alt+click or right-click on the code: `row` from the top of the code, `x` from its left edge. */
+  defineAt?: { row: number; x: number; nonce: number } | null;
+  /** Go to the definition of what's at `line`:`col` (1-based, in the file's own text). */
+  onDefine?(line: number, col: number): void;
+  /** The open files as tabs, shown in the title row instead of the file's path. */
+  tabs?: ReactNode;
+  /** Whether the find bar (Ctrl+F) is open, so the app leaves the keyboard to it. */
+  onFinding?(open: boolean): void;
+  /** Changes to open the find bar. */
+  findRequest?: number;
 };
+
+/** The current match: a yellow background; the others are shown inverted. */
+const CURRENT_MATCH = ["\x1b[43m\x1b[30m", "\x1b[49m\x1b[39m"] as const;
 
 /** Columns ←/→ and Shift+wheel move sideways. */
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport }: Props) {
+export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest }: Props) {
   const [top, setTop] = useState(0);
-  // Columns scrolled sideways. Scrolled lines show without colors (slicing colored text could cut a color code in half).
+  // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
-  const rows = Math.max(1, height - 3);
+  // Ctrl+F: what's being looked for, and which match is current.
+  const [find, setFind] = useState<{ query: string; index: number } | null>(null);
+  useEffect(() => onFinding?.(!!find), [!!find]);
+  useEffect(() => setFind(null), [filePath]);
+  // Only a new request opens it: not the old one seen again when the view comes back (after the editor, settings...).
+  const lastFindRequest = useRef(findRequest);
+  useEffect(() => {
+    if (findRequest && findRequest !== lastFindRequest.current) setFind({ query: "", index: 0 });
+    lastFindRequest.current = findRequest;
+  }, [findRequest]);
+  const rows = Math.max(1, height - 3 - (find ? 1 : 0));
   const inner = width - 3; // minus the borders and the scrollbar
 
   const lines = useMemo(() => (filePath ? highlightLines(filePath, content) : []), [filePath, content, syntaxVersion]);
-  const plain = useMemo(() => (left > 0 ? splitLines(content) : []), [content, left > 0]);
   const problemsByLine = useMemo(() => {
     const map = new Map<number, Diagnostic[]>();
     for (const d of problems) map.set(d.line, [...(map.get(d.line) ?? []), d]);
@@ -72,6 +97,26 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
 
   const maxTop = Math.max(0, total - rows);
   const start = Math.min(top, maxTop);
+  const shownLines = useMemo(() => (find ? splitLines(content) : []), [content, !!find]);
+  const matches = useMemo(() => {
+    const out: { line: number; col: number }[] = [];
+    const q = find?.query.toLowerCase();
+    if (!q) return out;
+    shownLines.forEach((text, i) => {
+      const lower = text.toLowerCase();
+      for (let at = lower.indexOf(q); at >= 0 && out.length < 10_000; at = lower.indexOf(q, at + q.length)) out.push({ line: i, col: at });
+    });
+    return out;
+  }, [shownLines, find?.query]);
+  const current = find && matches.length ? matches[((find.index % matches.length) + matches.length) % matches.length]! : null;
+  // Bring the current match into view (a third of the way down, like a jump), sideways too.
+  useEffect(() => {
+    if (!current) return;
+    if (current.line < start || current.line >= start + rows) setTop(Math.max(0, current.line - Math.floor(rows / 3)));
+    const room = inner - String(lines.length).length - 2;
+    if (current.col < left || current.col + (find?.query.length ?? 0) > left + room) setLeft(Math.max(0, current.col - Math.floor(room / 3)));
+  }, [current?.line, current?.col]);
+  const found = focusLine?.path && focusLine.path === filePath ? { from: focusLine.line, to: Math.max(focusLine.line, focusLine.to ?? focusLine.line) } : null;
 
   useEffect(() => {
     if (!wheel) return;
@@ -86,7 +131,32 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     if (filePath && !diff) onViewport(start + 1, Math.min(total, start + rows));
   }, [filePath, diff, start, rows, total]);
 
+  useEffect(() => {
+    if (!defineAt || diff || !filePath) return;
+    const n = start + defineAt.row + 1;
+    const raw = content.replace(/\r\n/g, "\n").split("\n")[n - 1];
+    if (raw === undefined) return;
+    // Screen column to the file's own column: tabs are shown as two spaces.
+    const want = defineAt.x - (String(lines.length).length + 1) + left;
+    let shown = 0;
+    let col = 0;
+    while (col < raw.length && shown + (raw[col] === "\t" ? 2 : 1) <= want) shown += raw[col++] === "\t" ? 2 : 1;
+    onDefine?.(n, col + 1);
+  }, [defineAt?.nonce]);
+
   useInput((input, key) => {
+    if (!find) return;
+    if (key.escape) return setFind(null);
+    if (key.return || key.downArrow || (key.ctrl && input === "g")) return setFind((f) => f && { ...f, index: f.index + 1 });
+    if (key.upArrow) return setFind((f) => f && { ...f, index: f.index - 1 });
+    if (key.backspace || key.delete) return setFind((f) => f && { query: f.query.slice(0, -1), index: 0 });
+    if (key.ctrl && input === "f") return;
+    if (input && !key.ctrl && !key.meta && input >= " ") setFind((f) => f && { query: f.query + input, index: 0 });
+  }, { isActive: focused && !!find });
+
+  useInput((input, key) => {
+    if (find) return;
+    if (key.ctrl && input === "f" && !diff) return setFind({ query: "", index: 0 });
     if (key.upArrow || input === "k") setTop((t) => Math.max(0, Math.min(t, maxTop) - 1));
     else if (key.downArrow || input === "j") setTop((t) => Math.min(maxTop, t + 1));
     else if (key.pageUp) setTop((t) => Math.max(0, Math.min(t, maxTop) - rows));
@@ -184,10 +254,10 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   const errorCount = problems.filter((d) => d.severity === "error").length;
   const warningCount = problems.filter((d) => d.severity === "warning").length;
   // The edit hint only when it fits: a cut-off hint reads as noise.
-  const titleRoom = width - 4 - (3 + filePath.length + (errorCount ? 5 + String(errorCount).length : 0) + (warningCount ? 5 + String(warningCount).length : 0) + scroll.length + (total > rows ? 7 : 0));
+  const titleRoom = tabs ? 0 : width - 4 - (3 + filePath.length + (errorCount ? 5 + String(errorCount).length : 0) + (warningCount ? 5 + String(warningCount).length : 0) + scroll.length + (total > rows ? 7 : 0));
   const title = (
     <>
-      {" "}<Text color={color}>{icon}</Text> {filePath}
+      {tabs ?? <>{" "}<Text color={color}>{icon}</Text> {filePath}</>}
       {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
       <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused && titleRoom >= EDIT_HINT.length ? EDIT_HINT : ""}</Text>
@@ -199,6 +269,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
         <Box flexDirection="column" width={inner} flexShrink={0}>
           {lines.slice(start, start + rows).map((line, i) => {
             const n = start + i + 1;
+            const isFound = !!found && n >= found.from && n <= found.to;
             const isMarked = marked.has(n);
             const here = problemsByLine.get(n);
             const worst = here?.[0];
@@ -206,8 +277,19 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
             return (
               <Text key={n} wrap="truncate-end">
                 <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
-                {style ? <Text color={style.color}>{style.icon}</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
-                {(left ? plain[start + i]?.slice(left) : line) || " "}
+                {style ? <Text color={style.color}>{style.icon}</Text> : isFound ? <Text color={C.cyan} bold>▌</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
+                {(() => {
+                  let text = line;
+                  if (find?.query) {
+                    for (const m of matches) {
+                      if (m.line !== n - 1) continue;
+                      const now = m === current;
+                      text = markAnsi(text, m.col, m.col + find.query.length, ...(now ? CURRENT_MATCH : []));
+                    }
+                  }
+                  text = (left ? sliceAnsi(text, left) : text) || " ";
+                  return isFound ? <Text backgroundColor={C.panel}>{text}</Text> : text;
+                })()}
                 {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
               </Text>
             );
@@ -215,6 +297,16 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
         </Box>
         <Scrollbar total={total} top={start} rows={rows} focused={focused} />
       </Box>
+      {find ? (
+        <Text wrap="truncate-end">
+          <Text color={C.accent2} bold> ⌕ </Text>
+          <Text backgroundColor={C.panel}>{find.query}</Text><Text inverse> </Text>
+          <Text color={find.query && !matches.length ? C.red : C.dim}>
+            {"  "}{find.query ? (matches.length ? `${matches.indexOf(current!) + 1}/${matches.length}${matches.length >= 10_000 ? "+" : ""}` : "no matches") : "type to find"}
+            {"  "}Enter/↓ next · ↑ previous · Esc close
+          </Text>
+        </Text>
+      ) : null}
     </Pane>
   );
 });

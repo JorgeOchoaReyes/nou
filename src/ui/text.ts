@@ -1,6 +1,7 @@
 import path from "path";
 import { diffLines } from "diff";
 import { highlightTree, notifySyntaxLoaded } from "../syntax/index.js";
+import { highlightJsTheme } from "../syntax/themes.js";
 
 // highlight.js registers every language it has when it loads (a seventh of a second), so it loads
 // after Nou is on screen; files show plain until then, or tree-sitter colors once their grammar is in.
@@ -43,7 +44,7 @@ export function highlightLines(filePath: string, text: string): string[] {
   }
   if (!fallback.supportsLanguage(language)) return plain;
   try {
-    return fallback.highlight(plain.join("\n"), { language, ignoreIllegals: true }).split("\n");
+    return fallback.highlight(plain.join("\n"), { language, ignoreIllegals: true, theme: highlightJsTheme() }).split("\n");
   } catch {
     return plain;
   }
@@ -128,7 +129,9 @@ export function lineCounts(before: string, after: string): { added: number; remo
   return { added, removed };
 }
 
-export type Span = { text: string; bold?: boolean; italic?: boolean; code?: boolean; dim?: boolean };
+/** A file the text refers to, e.g. src/a.ts:12-20, which a click opens. */
+export type FileRef = { path: string; line?: number; to?: number };
+export type Span = { text: string; bold?: boolean; italic?: boolean; code?: boolean; dim?: boolean; link?: FileRef };
 export type MdLine = { spans: Span[]; kind: "text" | "heading" | "code" | "quote" | "rule" };
 
 const INLINE = /(`+)([^`]+?)\1|\*\*(.+?)\*\*|__(.+?)__|(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])|(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)/g;
@@ -152,7 +155,7 @@ export function inlineSpans(text: string, base: Span = { text: "" }): Span[] {
   return out.filter((s) => s.text);
 }
 
-const sameStyle = (a: Span, b: Span) => !!a.bold === !!b.bold && !!a.italic === !!b.italic && !!a.code === !!b.code && !!a.dim === !!b.dim;
+const sameStyle = (a: Span, b: Span) => !!a.bold === !!b.bold && !!a.italic === !!b.italic && !!a.code === !!b.code && !!a.dim === !!b.dim && a.link === b.link;
 
 /** Word-wraps styled spans; continuation lines start with `indent` spaces. */
 function wrapSpans(spans: Span[], width: number, indent = 0): Span[][] {
@@ -201,7 +204,9 @@ function wrapSpans(spans: Span[], width: number, indent = 0): Span[][] {
 const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 
 /** Renders markdown for the terminal: headings, lists, quotes, code blocks, tables and inline styles, wrapped to `width`. */
-export function renderMarkdown(text: string, width: number): MdLine[] {
+export function renderMarkdown(text: string, width: number, isFile?: (file: string) => boolean): MdLine[] {
+  // File references become links before wrapping, so a long path that wraps is still one link.
+  const spansOf = (line: string, base?: Span) => (isFile ? linkFileRefs(inlineSpans(line, base), isFile) : inlineSpans(line, base));
   const out: MdLine[] = [];
   const src = splitLines(text);
   let fence: string | null = null;
@@ -227,7 +232,7 @@ export function renderMarkdown(text: string, width: number): MdLine[] {
       let j = i + 2;
       for (; j < src.length && /^\s*\|/.test(src[j]!); j++) rows.push(cells(src[j]!));
       i = j - 1;
-      const plain = rows.map((r) => r.map((c) => inlineSpans(c).map((s) => s.text).join("")));
+      const plain = rows.map((r) => r.map((c) => spansOf(c).map((s) => s.text).join("")));
       const columns = Math.max(...plain.map((r) => r.length));
       const widths = Array.from({ length: columns }, (_, c) => Math.max(...plain.map((r) => (r[c] ?? "").length)));
       const fits = widths.reduce((a, b) => a + b, 0) + 3 * (columns - 1) <= width;
@@ -235,7 +240,7 @@ export function renderMarkdown(text: string, width: number): MdLine[] {
         const spans: Span[] = [];
         row.forEach((cell, c) => {
           if (c > 0) spans.push({ text: " │ ", dim: true });
-          spans.push(...inlineSpans(cell, r === 0 ? { text: "", bold: true } : { text: "" }));
+          spans.push(...spansOf(cell, r === 0 ? { text: "", bold: true } : { text: "" }));
           if (fits && c < columns - 1) spans.push({ text: " ".repeat(widths[c]! - plain[r]![c]!.length) });
         });
         for (const line of wrapSpans(spans, width, 2)) out.push({ kind: "text", spans: line });
@@ -245,7 +250,7 @@ export function renderMarkdown(text: string, width: number): MdLine[] {
     }
     const heading = raw.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
     if (heading) {
-      for (const line of wrapSpans(inlineSpans(heading[2]!, { text: "", bold: true }), width)) out.push({ kind: "heading", spans: line });
+      for (const line of wrapSpans(spansOf(heading[2]!, { text: "", bold: true }), width)) out.push({ kind: "heading", spans: line });
       continue;
     }
     if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(raw)) {
@@ -254,7 +259,7 @@ export function renderMarkdown(text: string, width: number): MdLine[] {
     }
     const quote = raw.match(/^\s*>\s?(.*)/);
     if (quote) {
-      for (const line of wrapSpans(inlineSpans(quote[1]!, { text: "", italic: true }), width - 2)) out.push({ kind: "quote", spans: [{ text: "│ ", dim: true }, ...line] });
+      for (const line of wrapSpans(spansOf(quote[1]!, { text: "", italic: true }), width - 2)) out.push({ kind: "quote", spans: [{ text: "│ ", dim: true }, ...line] });
       continue;
     }
     const item = raw.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?(.*)/);
@@ -262,10 +267,94 @@ export function renderMarkdown(text: string, width: number): MdLine[] {
       const depth = Math.floor(item[1]!.length / 2) * 2;
       const task = item[3] ? (/x/i.test(item[3]) ? "☑ " : "☐ ") : "";
       const bullet = `${" ".repeat(depth)}${/\d/.test(item[2]!) ? item[2] : "•"} ${task}`;
-      for (const line of wrapSpans([{ text: bullet }, ...inlineSpans(item[4]!)], width, bullet.length)) out.push({ kind: "text", spans: line });
+      for (const line of wrapSpans([{ text: bullet }, ...spansOf(item[4]!)], width, bullet.length)) out.push({ kind: "text", spans: line });
       continue;
     }
-    for (const line of wrapSpans(inlineSpans(raw), width)) out.push({ kind: "text", spans: line });
+    for (const line of wrapSpans(spansOf(raw), width)) out.push({ kind: "text", spans: line });
+  }
+  return out;
+}
+
+/**
+ * path, path:line or path:line-line; a path has a dot in its last part, so plain words don't match.
+ * Windows paths (C:\\dir\\file.ts, dir\\file.ts) count too.
+ */
+const FILE_REF = /(?<![\w/\\.@~-])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w@.~+-]+[\\/])*[\w@-][\w@.~+-]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?:[-–](\d+))?)?(?![\w/\\])/g;
+
+/** Splits out the references to files that exist (per `isFile`) as link spans, keeping each span's style. */
+export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): Span[] {
+  const out: Span[] = [];
+  for (const span of spans) {
+    let pos = 0;
+    for (const m of span.text.matchAll(FILE_REF)) {
+      const file = m[1]!.replace(/^\.[\\/]/, "");
+      if (!isFile(file)) continue;
+      if (m.index > pos) out.push({ ...span, text: span.text.slice(pos, m.index) });
+      const link: FileRef = { path: file };
+      if (m[2]) link.line = Number(m[2]);
+      if (m[3]) link.to = Number(m[3]);
+      out.push({ ...span, text: m[0], link });
+      pos = m.index + m[0].length;
+    }
+    if (pos < span.text.length) out.push(pos ? { ...span, text: span.text.slice(pos) } : span);
+  }
+  return out;
+}
+
+/** The link at column `col` of a line of spans, if any. */
+export function linkAt(spans: Span[], col: number): FileRef | null {
+  let x = 0;
+  for (const span of spans) {
+    if (col >= x && col < x + span.text.length) return span.link ?? null;
+    x += span.text.length;
+  }
+  return null;
+}
+
+// eslint-disable-next-line no-control-regex -- color codes start with ESC
+const ESCAPE = /\x1b\[[\d;]*m/y;
+
+/**
+ * Columns `from` to `from + width` of a highlighted line, keeping its colors: the color codes before
+ * `from` are kept (so the text still starts in the right color), the characters are dropped.
+ */
+export function sliceAnsi(line: string, from: number, width = Infinity): string {
+  let out = "";
+  let column = 0;
+  for (let i = 0; i < line.length;) {
+    ESCAPE.lastIndex = i;
+    const code = ESCAPE.exec(line);
+    if (code) {
+      out += code[0];
+      i += code[0].length;
+      continue;
+    }
+    const ch = String.fromCodePoint(line.codePointAt(i)!);
+    if (column >= from && column < from + width) out += ch;
+    column++;
+    i += ch.length;
+  }
+  return out;
+}
+
+/** Wraps visible columns `from`..`to` of a highlighted line in `open`/`close` codes (e.g. to mark a search match). */
+export function markAnsi(line: string, from: number, to: number, open = "\x1b[7m", close = "\x1b[27m"): string {
+  let out = "";
+  let column = 0;
+  for (let i = 0; i < line.length;) {
+    ESCAPE.lastIndex = i;
+    const code = ESCAPE.exec(line);
+    if (code) {
+      out += code[0];
+      i += code[0].length;
+      continue;
+    }
+    const ch = String.fromCodePoint(line.codePointAt(i)!);
+    if (column === from) out += open;
+    out += ch;
+    column++;
+    if (column === to) out += close;
+    i += ch.length;
   }
   return out;
 }

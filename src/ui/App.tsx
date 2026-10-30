@@ -2,21 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
+import { nouRulesOnly } from "../context/index.js";
+import { MCP_PRESETS, McpManager, loadMcpServers, removeUserServer, saveUserServers, USER_MCP_FILE } from "../mcp/index.js";
+import { findOtherMcpServers } from "../mcp/import.js";
 import { buildSystemPrompt, type AgentHooks, type ApprovalRequest, type ChangeStatus, type ChatEntry } from "../agent/index.js";
 import { ENGINES, createEngine, engineInfo, installEngine, isEngineId, isInstalled, type Engine, type EngineId, type EngineOptions } from "../engines/index.js";
 import { harness, problemsIntroduced } from "../agent/harness.js";
-import { describe, providers, resolveModel, saveModel, type ModelChoice, type Provider } from "../providers/index.js";
+import { describe, providers, resolveModel, saveModel, setupProblem, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
-import { loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
+import { FOLLOW_SPEEDS, isTrustedFolder, loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, sameStatus, status as gitStatus, statusAsync as gitStatusAsync, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch, trustState, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
 import { Timeline, type SessionSummary } from "../history/index.js";
 import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
+import { setCodeTheme } from "../syntax/themes.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
-import { changedLines, lineCounts, loadFallbackHighlighter } from "./text.js";
+import { changedLines, lineCounts, loadFallbackHighlighter, type FileRef } from "./text.js";
+import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
@@ -28,10 +33,13 @@ import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
-import { QuickOpen, listAllFiles, type PaletteAction } from "./QuickOpen.js";
+import { Tabs, layoutTabs } from "./Tabs.js";
+import { GAME_PANEL, GamePanel } from "./GamePanel.js";
+import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
-type Focus = "tree" | "code" | "chat";
+/** "game": the Games panel has the keyboard (it isn't one of the panes Tab moves between). */
+type Focus = "tree" | "code" | "chat" | "game";
 type DiffMode = "off" | "git" | "nou" | "session";
 const FOCUS_ORDER: Focus[] = ["tree", "code", "chat"];
 const MIN_TREE = 14;
@@ -39,8 +47,30 @@ const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
 const DOUBLE_CLICK_MS = 500;
+/** A step follow mode shows: a file the agent read, and the lines when it read part of it. */
+type FollowStep = { file: string; line?: number; to?: number };
+/** How long each follow step stays on screen before the next. */
+const FOLLOW_STEP_MS: Record<string, number> = { slow: 2500, normal: 1200, fast: 450, instant: 0 };
+/** Steps follow mode may fall behind before it skips ahead. */
+const MAX_FOLLOW_LAG = 12;
+/** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
+const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 16);
 
 type Props = { initialModel: ModelChoice; permContext: string };
+
+/** How much of the conversation a newly switched-to engine is given (the latest part when it's longer). */
+const HANDOFF_CHARS = 24_000;
+
+/** The conversation so far as text, for an engine taking over from another one; null when there's none. */
+export function conversationSoFar(entries: ChatEntry[]): string | null {
+  const said = entries
+    .filter((e) => e.kind === "user" || e.kind === "assistant" || e.kind === "tool")
+    .map((e) => (e.kind === "user" ? `User: ${e.text}` : e.kind === "assistant" ? `Assistant: ${e.text}` : `(${e.text})`));
+  if (!said.some((line) => line.startsWith("User:"))) return null;
+  let text = said.join("\n\n");
+  if (text.length > HANDOFF_CHARS) text = `[earlier messages left out]\n${text.slice(-HANDOFF_CHARS)}`;
+  return `You are taking over a conversation the user was having with another assistant in this project. Here it is, so you can carry on from where it left off (the files may have changed since; check before relying on them):\n<conversation>\n${text}\n</conversation>`;
+}
 /** A clickable stretch of the status bar, in columns. */
 type StatusZone = { from: number; to: number; run(): void };
 
@@ -54,7 +84,9 @@ Keys:
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
   e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
-  b  back to the previous file (Ctrl+P lists recent files first)
+  Ctrl+F  find in the open file (Enter/↓ next, ↑ previous)
+  b  back to the previous file (Ctrl+P lists recent files first)   [ ]  previous/next tab · x close tab
+  Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
 Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select
@@ -84,12 +116,36 @@ export function App({ initialModel, permContext }: Props) {
   const { columns, rows } = useWindowSize();
 
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
+  setCodeTheme(settings.codeTheme); // before anything below highlights code
   const [view, setView] = useState<"main" | "settings">("main");
   const [connectTo, setConnectTo] = useState<Provider | undefined>();
+  /** Why settings were opened for you (a request failed on the provider's setup). */
+  const [setupReason, setSetupReason] = useState<string | null>(null);
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
+  /** The Games panel: whether it's open, where it is while being dragged, and the pane to go back to. */
+  const [gamesOpen, setGamesOpen] = useState(false);
+  const [gameDrag, setGameDrag] = useState<{ x: number; y: number } | null>(null);
+  const beforeGame = useRef<Focus>("chat");
+  /** Keeps the Games panel on screen (it's dragged by its title; the header row stays clear). */
+  const placeGames = (x: number, y: number) => ({
+    x: Math.max(0, Math.min(columns - GAME_PANEL.width, x)),
+    y: Math.max(1, Math.min(rows - GAME_PANEL.height - 1, y)),
+  });
+  const gamePos = gameDrag ?? placeGames(settings.gamePanel?.x ?? columns - GAME_PANEL.width - 1, settings.gamePanel?.y ?? rows - GAME_PANEL.height - 2);
   const [follow, setFollow] = useState(settings.followMode);
+  // Follow mode replays what the agent reads a step at a time (it reads far faster than you can watch):
+  // the steps waiting, and the timer that shows the next one.
+  const followQueue = useRef<FollowStep[]>([]);
+  const followTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [followLag, setFollowLag] = useState(0);
+  const clearFollow = () => {
+    followQueue.current = [];
+    if (followTimer.current) clearTimeout(followTimer.current);
+    followTimer.current = null;
+    setFollowLag(0);
+  };
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [streaming, setStreaming] = useState("");
   // Streamed text arrives a token at a time; redrawing the whole screen for each one is wasted work.
@@ -115,6 +171,8 @@ export function App({ initialModel, permContext }: Props) {
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [reveal, setReveal] = useState<string | null>(null);
+  /** The open files, as tabs over the code view, in the order they were opened. */
+  const [tabs, setTabs] = useState<string[]>([]);
   /** Files opened this session, latest first: Ctrl+P lists them first, and b goes back to the previous one. */
   const [recent, setRecent] = useState<string[]>([]);
   const [treeVersion, setTreeVersion] = useState(0);
@@ -138,7 +196,7 @@ export function App({ initialModel, permContext }: Props) {
   const [codePanel, setCodePanel] = useState<"code" | "problems">("code");
   const [diagnosticsVersion, setDiagVersion] = useState(0);
   const [syntaxVersion, setSyntaxVersion] = useState(0);
-  const [focusLine, setFocusLine] = useState<{ line: number; nonce: number } | null>(null);
+  const [focusLine, setFocusLine] = useState<{ line: number; to?: number; path?: string; nonce: number } | null>(null);
   const [editorStart, setEditorStart] = useState<{ line: number; col?: number; nonce: number }>({ line: 1, nonce: 0 });
   const [pendingNote, setPendingNote] = useState<{ short: string; detail: string | null } | null>(null);
   const [exitArmed, setExitArmed] = useState(false);
@@ -153,6 +211,23 @@ export function App({ initialModel, permContext }: Props) {
   const [chatMenu, setChatMenu] = useState(false);
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [treeClick, setTreeClick] = useState<{ row: number; nonce: number } | null>(null);
+  /** Whether the code view's find bar is open (it takes the keyboard). */
+  const codeFinding = useRef(false);
+  const onCodeFinding = useCallback((open: boolean) => {
+    codeFinding.current = open;
+  }, []);
+  /** Bumped to open the code view's find bar from outside it (the palette, the status bar). */
+  const [findRequest, setFindRequest] = useState(0);
+  const startFind = () => {
+    if (!openFile) return info("Open a file first (Ctrl+P), then Ctrl+F searches it.");
+    setDiffMode("off");
+    setEditing(false);
+    setCodePanel("code");
+    setFocus("code");
+    setFindRequest((n) => n + 1);
+  };
+  const [codeDefine, setCodeDefine] = useState<{ row: number; x: number; nonce: number } | null>(null);
+  const [chatClick, setChatClick] = useState<{ row: number; col: number; nonce: number } | null>(null);
   // Pane geometry from the last render, so mouse events can be mapped to the pane under the pointer.
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0 });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
@@ -163,7 +238,9 @@ export function App({ initialModel, permContext }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | { game: { dx: number; dy: number } } | { scroll: Focus } | null>(null);
+  /** Which border is being dragged, for the status bar. */
+  const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
   diagnosticsRef.current ??= new DiagnosticsManager();
@@ -201,14 +278,17 @@ export function App({ initialModel, permContext }: Props) {
   const engineConfig = useRef<EngineOptions>({});
   if (!hooksRef.current) {
     hooksRef.current = {
-      onEntry: (entry) => setEntries((prev) => [...prev, entry]),
+      onEntry: (entry) => {
+        setEntries((prev) => [...prev, entry]);
+        if (entry.kind === "error") setupCheckRef.current(entry.text);
+      },
       onStream: showStream,
       onBusy: setBusy,
-      onRead: (filePath) => {
-        if (!followRef.current) return;
-        open(filePath);
-        setReveal(filePath);
+      onOpen: (filePath, line, to) => {
+        clearFollow(); // what was asked for wins over reads still waiting to be shown
+        openAtRef.current(filePath, line ?? 1, false, to);
       },
+      onRead: (filePath, line, to) => followStepRef.current({ file: filePath, ...(line ? { line } : {}), ...(to ? { to } : {}) }),
       onChange: (change, status, turn) => {
         if (status === "applied") {
           timelineRef.current!.record({ path: change.path, before: change.isNew ? null : change.before, after: change.after, source: "nou", turn });
@@ -217,6 +297,7 @@ export function App({ initialModel, permContext }: Props) {
         setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
         // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
         if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
+          clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
           setOpenFile(change.path);
           setContent(status === "applied" ? change.after : readText(change.path));
           setDiffMode("off");
@@ -247,6 +328,7 @@ export function App({ initialModel, permContext }: Props) {
 
   useEffect(() => diagnostics.subscribe(() => setDiagVersion((v) => v + 1)), []);
   useEffect(() => onGrammarLoaded(() => setSyntaxVersion((v) => v + 1)), []);
+  useEffect(() => setSyntaxVersion((v) => v + 1), [settings.codeTheme]); // re-color the code
   useEffect(() => void loadFallbackHighlighter(), []); // once Nou is on screen (it's slow to load)
   useEffect(() => {
     void checkForUpdate().then(setUpdate);
@@ -283,12 +365,32 @@ export function App({ initialModel, permContext }: Props) {
     }
   }, [activePlugins]);
 
-  // Keep the agent's system prompt and tools in sync with settings and plugins.
+  // MCP servers (yours, and in a trusted folder the project's): connected in the background; their tools
+  // join the engine's as they come up.
+  const mcpRef = useRef<McpManager | null>(null);
+  const [mcpVersion, setMcpVersion] = useState(0);
+  mcpRef.current ??= new McpManager(() => setMcpVersion((v) => v + 1));
+  const connectMcp = () => mcpRef.current!.connect(loadMcpServers(isTrustedFolder()));
+  useEffect(() => {
+    void connectMcp().then(() => {
+      // Servers you use in other tools, offered once there's nothing set up here yet.
+      if (loadMcpServers(false).length) return;
+      const found = findOtherMcpServers();
+      if (found.length) {
+        const from = [...new Set(found.map((f) => f.from.replace(/ \(this project\)$/, "")))].join(", ");
+        info(`Found ${found.length} MCP server${found.length > 1 ? "s" : ""} you use in ${from} (${found.map((f) => f.name).join(", ")}). Type /mcp import to use them here too.`);
+      }
+    });
+    return () => mcpRef.current?.close();
+  }, []);
+
+  // Keep the agent's system prompt and tools in sync with settings, plugins and MCP servers.
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, permContext].filter(Boolean), extraTools, effort: settings.effort };
+    // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
-  }, [settings.gitContext, settings.effort, activePlugins]);
+  }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
   // Pick up changes made outside Nou (other editors, git commands).
   const polling = useRef(false);
@@ -355,7 +457,9 @@ export function App({ initialModel, permContext }: Props) {
     engine.configure(engineConfig.current);
     agentRef.current = engine;
     updateSettings({ engine: id });
-    info(`Now using the ${target.label} engine (model: ${target.model(choice)}). This starts a new conversation.${target.approvals === "after" ? " It edits without asking first; review its changes in the diff view and press u to undo." : ""}`);
+    const handoff = conversationSoFar(entries);
+    if (handoff) engine.note(handoff);
+    info(`Now using the ${target.label} engine (model: ${target.model(choice)}). ${handoff ? "It has the conversation so far." : "This starts a new conversation."}${target.approvals === "after" ? " It edits without asking first; review its changes in the diff view and press u to undo." : ""}`);
   };
 
   /** Downloads an Ollama model, showing progress in the status line. Esc stops it. */
@@ -511,23 +615,36 @@ export function App({ initialModel, permContext }: Props) {
   };
 
   /** Adds a wheel event to its pane's total; the panes get one update per frame however many events arrive. */
+  const lastVerticalWheel = useRef(0);
   const queueWheel = (pane: Focus, dir: number, horizontal: boolean) => {
+    // A trackpad scrolling down also sends stray sideways steps: while scrolling up or down, ignore them.
+    if (!horizontal) lastVerticalWheel.current = Date.now();
+    else if (Date.now() - lastVerticalWheel.current < 300) return;
     const q = pendingWheel.current;
-    if (q.timer && q.pane !== pane) flushWheel();
+    if (q.timer && q.pane !== pane) flushWheel(true);
     q.pane = pane;
     if (horizontal) q.columns += dir * WHEEL_STEP;
     else q.lines += dir * WHEEL_STEP;
     q.timer ??= setTimeout(flushWheel, 16);
   };
-  const flushWheel = () => {
+  /**
+   * Scrolls by what the wheel added up, spread over a few frames: half of what's left each frame, so a
+   * notch glides over 2-3 frames and a fast flick eases out instead of jumping dozens of lines at once.
+   * `all` sends the rest at once (the pointer moved to another pane).
+   */
+  const flushWheel = (all = false) => {
     const q = pendingWheel.current;
     if (q.timer) clearTimeout(q.timer);
     q.timer = null;
     if (!q.lines && !q.columns) return;
-    const { pane, lines, columns } = q;
-    q.lines = 0;
-    q.columns = 0;
+    const part = (n: number) => (all || Math.abs(n) <= 1 ? n : Math.sign(n) * Math.ceil(Math.abs(n) / 2));
+    const lines = part(q.lines);
+    const columns = part(q.columns);
+    const { pane } = q;
+    q.lines -= lines;
+    q.columns -= columns;
     setWheel((w) => ({ pane, lines, columns, nonce: (w?.nonce ?? 0) + 1 }));
+    if (q.lines || q.columns) q.timer = setTimeout(flushWheel, 16);
   };
 
   /** Scrolls a pane to where its scrollbar was clicked or dragged (rows start at y=3, under the border and title). */
@@ -543,6 +660,28 @@ export function App({ initialModel, permContext }: Props) {
   // between panes to resize them.
   useMouse((event) => {
     if (view !== "main" || quickOpen !== null) return;
+    // The Games panel floats over the panes: it takes the clicks that land on it, and its title bar drags it.
+    if (gamesOpen) {
+      const drag = dragging.current;
+      if (drag && typeof drag === "object" && "game" in drag) {
+        const at = placeGames(event.x - drag.game.dx, event.y - drag.game.dy);
+        if (event.kind === "release") {
+          dragging.current = null;
+          setGameDrag(null);
+          updateSettings({ gamePanel: at });
+        } else setGameDrag(at);
+        return;
+      }
+      const g = gamePos;
+      const inside = event.x >= g.x && event.x < g.x + GAME_PANEL.width && event.y >= g.y && event.y < g.y + GAME_PANEL.height;
+      if (inside) {
+        if (event.kind !== "click") return;
+        if (focus !== "game") beforeGame.current = focus;
+        setFocus("game");
+        if (event.y <= g.y + 1) dragging.current = { game: { dx: event.x - g.x, dy: event.y - g.y } };
+        return;
+      }
+    }
     const { treeWidth, codeWidth, paneHeight } = layout.current;
     const codeLeft = treeWidth;
     const editorAt = (x: number, y: number, kind: EditorMouse["kind"]) =>
@@ -552,14 +691,16 @@ export function App({ initialModel, permContext }: Props) {
       const drag = dragging.current;
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
-      else if (drag) scrollPane(drag.scroll, event.y);
+      else if (drag && "scroll" in drag) scrollPane(drag.scroll, event.y);
       return;
     }
     if (event.kind === "release") {
       // The release says where the button let go, so a drag lands there even in a terminal that
       // doesn't report the movement in between.
-      if (dragging.current === "tree" || dragging.current === "chat") updateSettings({ paneWidths: moveBorder(dragging.current, event.x) });
-      else if (dragging.current && typeof dragging.current === "object") scrollPane(dragging.current.scroll, event.y);
+      if (dragging.current === "tree" || dragging.current === "chat") {
+        updateSettings({ paneWidths: moveBorder(dragging.current, event.x) });
+        setResizing(null);
+      } else if (dragging.current && typeof dragging.current === "object" && "scroll" in dragging.current) scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       dragging.current = null;
       return;
@@ -570,8 +711,16 @@ export function App({ initialModel, permContext }: Props) {
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
     if (event.kind === "wheel") return queueWheel(pane, event.dir, event.horizontal);
     // Each border is two columns: the left pane's edge and the right pane's.
-    if (Math.abs(event.x - (treeWidth - 0.5)) <= 1) return void (dragging.current = "tree");
-    if (Math.abs(event.x - (treeWidth + codeWidth - 0.5)) <= 1) return void (dragging.current = "chat");
+    // On the panes' top border row, a little either side of a border grabs it too: an easier target.
+    const reach = event.y === 1 ? 2 : 1;
+    for (const border of ["tree", "chat"] as const) {
+      const edge = border === "tree" ? treeWidth - 0.5 : treeWidth + codeWidth - 0.5;
+      if (Math.abs(event.x - edge) <= reach) {
+        dragging.current = border;
+        setResizing(border);
+        return;
+      }
+    }
     // Each pane's scrollbar is the column inside its right border.
     const scrollbarX = pane === "tree" ? treeWidth - 2 : pane === "code" ? treeWidth + codeWidth - 2 : columns - 2;
     if (event.x === scrollbarX && event.y >= 3) {
@@ -579,10 +728,28 @@ export function App({ initialModel, permContext }: Props) {
       scrollPane(pane, event.y);
       return;
     }
+    // The code view's title row holds the tabs: a click switches, the × closes.
+    if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length >= 2 && !diff) {
+      const zone = layoutTabs(tabs, openFile, tabsWidth(codeWidth)).zones.find((z) => event.x - codeLeft - 1 >= z.from && event.x - codeLeft - 1 < z.to);
+      if (!zone) return;
+      if (zone.close !== null && Math.abs(event.x - codeLeft - 1 - zone.close) <= 1) closeTab(zone.file);
+      else switchTab(zone.file);
+      return;
+    }
+    // Ctrl/Alt+click or right-click on code: go to the definition of what's under the pointer.
+    if (event.kind === "click" && event.define && pane === "code" && event.y >= 3 && codePanel === "code") {
+      lastClick.current = null;
+      setFocus("code");
+      if (showEditor) editorAt(event.x, event.y, "define");
+      else if (openFile && !diff) setCodeDefine((d) => ({ row: event.y - 3, x: event.x - codeLeft - 1, nonce: (d?.nonce ?? 0) + 1 }));
+      return;
+    }
     if (approval) return;
     setFocus(pane);
     // Rows start under the pane's top border (y=1) and title (y=2).
     if (pane === "tree" && event.y >= 3) setTreeClick((c) => ({ row: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
+    // Messages start after the chat's border and the two-column bar in front of each line.
+    if (pane === "chat" && event.y >= 3) setChatClick((c) => ({ row: event.y - 3, col: event.x - treeWidth - codeWidth - 3, nonce: (c?.nonce ?? 0) + 1 }));
     // Two clicks in the same spot within half a second are a double-click.
     const last = lastClick.current;
     const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
@@ -606,8 +773,7 @@ export function App({ initialModel, permContext }: Props) {
     if (!(key.ctrl && input === "c")) return;
     if (showEditor && focus === "code" && editorStateRef.current?.selection) return; // the editor copies it
     if (busy || approval) {
-      pullAbort.current?.abort();
-      agentRef.current?.cancel();
+      stop();
       approval?.resolve(false);
       setApproval(null);
       return;
@@ -730,8 +896,11 @@ export function App({ initialModel, permContext }: Props) {
     return false;
   };
 
-  /** Opens a file at a line, in the editor if `edit` (used by the Problems list and go-to-definition). */
-  const openAt = (file: string, line: number, edit = false) => {
+  /**
+   * Opens a file at a line, in the editor if `edit` (used by the Problems list and go-to-definition).
+   * With `to`, lines `line` to `to` are highlighted: something the user asked Nou to find.
+   */
+  const openAt = (file: string, line: number, edit = false, to?: number) => {
     if (!settleDraft(file)) return;
     if (file !== openFile) open(file);
     setReveal(file);
@@ -741,12 +910,92 @@ export function App({ initialModel, permContext }: Props) {
       setEditing(true);
       setFocus("code");
     } else {
-      setFocusLine((f) => ({ line, nonce: (f?.nonce ?? 0) + 1 }));
+      setFocusLine((f) => ({ line, ...(to !== undefined ? { to, path: file } : {}), nonce: (f?.nonce ?? 0) + 1 }));
     }
   };
+  // Every file that's shown gets a tab (however it was opened: the tree, Nou, a link...).
+  useEffect(() => {
+    if (openFile) setTabs((t) => (t.includes(openFile) ? t : [...t, openFile].slice(-20)));
+  }, [openFile]);
+  /** Switches to another open file's tab. */
+  const switchTab = (file: string) => {
+    if (file === openFile || !settleDraft(file)) return;
+    clearFollow();
+    open(file);
+    setReveal(file);
+  };
+  const cycleTab = (step: number) => {
+    if (tabs.length < 2 || !openFile) return;
+    const i = tabs.indexOf(openFile);
+    switchTab(tabs[(i + step + tabs.length) % tabs.length]!);
+  };
+  /** Closes a tab (the open file's by default), moving to its neighbour. */
+  const closeTab = (file = openFile) => {
+    if (!file) return;
+    const i = tabs.indexOf(file);
+    const rest = tabs.filter((f) => f !== file);
+    if (file !== openFile) return setTabs(rest);
+    const next = rest[Math.min(Math.max(0, i), rest.length - 1)];
+    if (!settleDraft(next ?? "")) return;
+    if (draft.current?.path === file) draft.current = null;
+    setTabs(rest);
+    if (next) {
+      open(next);
+      setReveal(next);
+    } else {
+      setOpenFile(null);
+      setContent("");
+      setEditing(false);
+      setDiffMode("off");
+    }
+  };
+  const showFollowStep = (step: FollowStep) => {
+    if (step.line) openAt(step.file, step.line, false, step.to ?? step.line);
+    else if (step.file !== openFile) {
+      if (!settleDraft(step.file)) return;
+      open(step.file);
+      setReveal(step.file);
+    }
+  };
+  const showFollowRef = useRef(showFollowStep);
+  showFollowRef.current = showFollowStep;
+  /** Shows the next waiting step, then waits as long as the follow speed says before the one after. */
+  const playFollow = () => {
+    const step = followQueue.current.shift();
+    setFollowLag(followQueue.current.length);
+    if (!step) {
+      followTimer.current = null;
+      return;
+    }
+    showFollowRef.current(step);
+    followTimer.current = setTimeout(playFollow, FOLLOW_STEP_MS[settingsRef.current.followSpeed] ?? FOLLOW_STEP_MS.normal);
+  };
+  const followStep = (step: FollowStep) => {
+    if (!followRef.current) return;
+    if (!FOLLOW_STEP_MS[settings.followSpeed]) return showFollowStep(step);
+    followQueue.current.push(step);
+    // Never fall too far behind: past that, the oldest steps are skipped.
+    if (followQueue.current.length > MAX_FOLLOW_LAG) followQueue.current.splice(0, followQueue.current.length - MAX_FOLLOW_LAG);
+    setFollowLag(followQueue.current.length);
+    if (!followTimer.current) playFollow();
+  };
+  const followStepRef = useRef(followStep);
+  followStepRef.current = followStep;
+  useEffect(() => {
+    if (!follow) clearFollow();
+  }, [follow]);
+  const openAtRef = useRef(openAt);
+  openAtRef.current = openAt;
+  /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
+  const openRef = useEvent((ref: FileRef) => {
+    clearFollow();
+    const file = path.relative(process.cwd(), path.resolve(ref.path)).replace(/\\/g, "/");
+    openAt(file, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined);
+  });
 
   const startEditing = () => {
     if (!openFile || !settleDraft(openFile)) return;
+    clearFollow();
     setDiffMode("off");
     setCodePanel("code");
     setEditorStart((s) => ({ line: viewport?.top ?? 1, nonce: s.nonce + 1 }));
@@ -773,7 +1022,7 @@ export function App({ initialModel, permContext }: Props) {
     // handles them itself when its input is empty), Esc stops the turn, and every other key works as usual.
     if (approval && !(showEditor && focus === "code")) {
       if (key.escape) {
-        agentRef.current?.cancel();
+        stop();
         return answer(false);
       }
       if (focus !== "chat" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
@@ -784,6 +1033,8 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (showEditor && focus === "code") return; // the editor owns the keyboard
+    if (focus === "code" && codeFinding.current) return; // so does the find bar
+    if (focus === "game") return; // and the Games panel
     if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
@@ -791,10 +1042,7 @@ export function App({ initialModel, permContext }: Props) {
       return;
     }
     if (key.escape) {
-      if (busy) {
-        pullAbort.current?.abort();
-        agentRef.current?.cancel();
-      }
+      if (busy) stop();
       else if (diffMode !== "off") {
         setDiffMode("off");
         setSessionView(null);
@@ -822,6 +1070,8 @@ export function App({ initialModel, permContext }: Props) {
       updateSettings({ paneWidths: null });
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
+    else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
+    else if (input === "x") closeTab();
     else if (input === "e") startEditing();
     else if (input === "b") goBack();
     else if (input === "s" || input === ",") setView("settings");
@@ -859,6 +1109,52 @@ ${snippet}
   const contextChip = openFile
     ? `${openFile}${showEditor && editorState ? `:${editorState.line}${editorState.dirty ? " ✎ unsaved" : ""}` : viewport ? `:${viewport.top}-${viewport.bottom}` : ""}`
     : null;
+
+  /** /mcp: list servers; add (a preset, a command, or a URL), remove, or import the ones from other tools. */
+  const mcpCommand = async ([action, name, ...more]: string[]) => {
+    if (action === "add") {
+      if (!name) return info(`Usage: /mcp add <name> <command and arguments | url>, or a ready-made one: ${Object.keys(MCP_PRESETS).join(", ")}`, "error");
+      const preset = MCP_PRESETS[name];
+      const target = more.join(" ").trim();
+      if (!preset && !target) return info(`Usage: /mcp add ${name} <command and arguments | url>`, "error");
+      const config = preset && !target ? preset.config : /^https?:\/\//.test(target) ? { url: target } : { command: more[0]!, args: more.slice(1) };
+      saveUserServers({ [name]: config });
+      info(`Added ${name} to ${USER_MCP_FILE}. Connecting...`);
+      await connectMcp();
+      const st = mcpRef.current!.status().find((x) => x.name === name);
+      return info(st?.state === "ready" ? `${name} is connected: ${st.tools} tools. Just ask; tools that change things ask you first.` : `${name} didn't connect: ${st?.error ?? "unknown error"}`, st?.state === "ready" ? "info" : "error");
+    }
+    if (action === "remove") {
+      if (!name || !removeUserServer(name)) return info(`No server called "${name ?? ""}" in ${USER_MCP_FILE}.`, "error");
+      await connectMcp();
+      return info(`Removed ${name}.`);
+    }
+    if (action === "import") {
+      const have = new Set(loadMcpServers(true).map((e) => e.name));
+      const found = findOtherMcpServers().filter((f) => !have.has(f.name));
+      if (!found.length) return info("No MCP servers to import: none set up in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini CLI or Codex that Nou doesn't have.");
+      saveUserServers(Object.fromEntries(found.map((f) => [f.name, f.config])));
+      info(`Imported ${found.map((f) => `${f.name} (from ${f.from})`).join(", ")} into ${USER_MCP_FILE}. Connecting...`);
+      await connectMcp();
+      return mcpCommand([]);
+    }
+    if (action === "reconnect") {
+      mcpRef.current!.close();
+      await connectMcp();
+      return mcpCommand([]);
+    }
+    if (action) return info("Usage: /mcp, /mcp add <name> <command|url>, /mcp add browser, /mcp remove <name>, /mcp import, /mcp reconnect", "error");
+    const list = mcpRef.current!.status();
+    const mark = { ready: "●", connecting: "◌", failed: "✖", off: "○" };
+    const lines = list.map((x) => `  ${mark[x.state]} ${x.name.padEnd(16)} ${x.state === "ready" ? `${x.tools} tools` : x.state}${x.scope === "project" ? " · this project" : ""}${x.error ? ` · ${x.error}` : ""}`);
+    const others = findOtherMcpServers().filter((f) => !list.some((x) => x.name === f.name));
+    return info([
+      list.length ? `MCP servers:\n${lines.join("\n")}` : "No MCP servers yet.",
+      `Ready-made: ${Object.entries(MCP_PRESETS).map(([k, v]) => `/mcp add ${k} (${v.about})`).join(" · ")}`,
+      others.length ? `In your other tools: ${others.map((f) => `${f.name} (${f.from})`).join(", ")}. /mcp import adds them.` : "",
+      `Yours are in ${USER_MCP_FILE}; a project's in .mcp.json (used in trusted folders).`,
+    ].filter(Boolean).join("\n"));
+  };
 
   const pluginsCommand = async ([action, name]: string[]) => {
     if (action === "add") {
@@ -902,6 +1198,23 @@ ${snippet}
       return showSessionDiff(arg);
     case "sessions":
       return showSessions();
+    case "open": {
+      // A path (with :line or :line-line), or part of a file's name.
+      const m = arg.match(/^(.*?)(?::(\d+)(?:-(\d+))?)?$/)!;
+      const wanted = m[1]!.replace(/^\.\//, "");
+      if (!wanted) return info("Usage: /open <file>[:line] (part of the name is enough), or ask in the chat where something is.", "error");
+      const files = listAllFiles();
+      const file = files.includes(wanted) ? wanted : files
+        .map((f) => ({ f, m: score(f, wanted) }))
+        .filter((r) => r.m)
+        .sort((a, b) => b.m!.score - a.m!.score)[0]?.f;
+      if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
+      return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
+    }
+    case "games":
+      return toggleGames();
+    case "mcp":
+      return mcpCommand(rest);
     case "problems":
       setCodePanel("problems");
       setFocus("code");
@@ -1012,9 +1325,67 @@ ${snippet}
     }
   };
 
+  /** Takes you to where the provider's setup is fixed: its key and URL form, or its list of models. */
+  const fixSetup = (provider: Provider, reason: string, form: boolean) => {
+    setConnectTo(form && provider.connect ? provider : undefined);
+    setSetupReason(reason);
+    setView("settings");
+  };
+  // A request that failed because of the provider's setup (not the request) opens the fix for it.
+  const setupCheck = (error: string) => {
+    // Only a failed request to the model ("provider:model: ..."), never a tool's error or a problem report.
+    if (agentRef.current?.id !== "nou" || !error.startsWith(`${describe(choice)}: `)) return;
+    const provider = choice.provider;
+    const problem = setupProblem(provider, error);
+    if (!problem) return;
+    const what = problem === "key" ? "the key was rejected" : problem === "url" ? "its URL didn't answer" : "it doesn't have that model";
+    info(`${provider.label}: ${what}. Opened its settings to fix it (Esc to come back).`);
+    fixSetup(provider, error.split("\n")[0]!, problem !== "model");
+  };
+  const setupCheckRef = useRef(setupCheck);
+  setupCheckRef.current = setupCheck;
+  /** Messages sent while Nou works: each goes when it finishes, in order. */
+  const [queued, setQueued] = useState<string[]>([]);
+  /** Set when you stop Nou: what was queued goes back into the input instead of being sent. */
+  const stopped = useRef(false);
+  const stop = () => {
+    pullAbort.current?.abort();
+    agentRef.current?.cancel();
+    stopped.current = true;
+  };
+  useEffect(() => {
+    if (busy || approval || !queued.length) return;
+    if (stopped.current) {
+      stopped.current = false;
+      setChatPrefill((p) => ({ text: queued.join("\n"), nonce: (p?.nonce ?? 0) + 1 }));
+      setQueued([]);
+      return;
+    }
+    const [next, ...rest] = queued;
+    setQueued(rest);
+    send(next!);
+  }, [busy, approval, queued]);
+  useEffect(() => {
+    if (busy) stopped.current = false;
+  }, [busy]);
+  /** From the chat: while Nou works, a message waits its turn, or (`now`) stops Nou and goes right away. */
+  const submit = (text: string, now = false) => {
+    if (!busy) return send(text);
+    if (now) {
+      stop();
+      stopped.current = false; // this one is meant to go
+      setQueued((q) => [text, ...q]);
+    } else setQueued((q) => [...q, text]);
+  };
   const send = (text: string) => {
     if (text.startsWith("/")) {
       void runCommand(text);
+      return;
+    }
+    const missing = agentRef.current?.id === "nou" ? choice.provider.unavailable() : null;
+    if (missing) {
+      info(`${choice.provider.label} isn't set up yet (${missing}). Opened its settings: enter what it needs, then send again.`, "error");
+      fixSetup(choice.provider, `${choice.provider.label} isn't set up: ${missing}`, true);
       return;
     }
     setEntries((prev) => [...prev, { kind: "user", text }]);
@@ -1041,6 +1412,7 @@ ${snippet}
 
   // Stable callbacks for the memoized panes.
   const onTreeOpen = useEvent((filePath: string) => {
+    clearFollow(); // you went somewhere yourself: follow mode stops replaying what Nou read
     open(filePath);
     setFocus("code");
   });
@@ -1048,23 +1420,32 @@ ${snippet}
   const onJump = useEvent((file: string, line: number) => openAt(file, line));
   const onCloseProblems = useEvent(() => setCodePanel("code"));
   const onViewport = useEvent((top: number, bottom: number) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom })));
-  const onSend = useEvent(send);
+  const onSend = useEvent(submit);
   const onChatMenu = useEvent((open: boolean) => {
     chatMenuOpen.current = open;
     setChatMenu(open);
   });
   const onAnswer = useEvent(answer);
   const onEditorHover = useEvent((text: string, line: number, col: number) => (lspEnabled && openFile ? lsp.hover(openFile, text, line, col) : Promise.resolve(null)));
-  const onEditorDefinition = useEvent((text: string, line: number, col: number) => {
+  /**
+   * Go to definition (Ctrl+G, Ctrl/Alt+click, right-click): the language server's answer when there is one,
+   * otherwise Nou's own (an imported name goes to its import line; a click on an import's path opens it).
+   */
+  const goToDefinition = async (text: string, line: number, col: number, inEditor: boolean) => {
     if (!openFile) return;
-    if (!lspEnabled) return info("Go to definition needs a language server (see /settings → Plugins).", "error");
-    void lsp.definition(openFile, text, line, col).then((target) => {
-      if (!target) return info("No definition found here.");
-      // Keep unsaved text when jumping within the same file.
-      if (target.file === openFile && draft.current) draft.current = { ...draft.current, text };
-      openAt(target.file, target.line, true);
-    });
-  });
+    const file = openFile;
+    const target = (lspEnabled ? await lsp.definition(file, text, line, col).catch(() => null) : null) ?? findDefinition(file, text, line, col);
+    if (!target) {
+      const word = wordAt(text.split(/\r?\n/)[line - 1] ?? "", col)?.word;
+      return info(word ? `No definition found for ${word}.` : "Ctrl+click (or Option+click, or right-click) a name to go to its definition.");
+    }
+    // Keep unsaved text when jumping within the same file.
+    if (inEditor && target.file === file && draft.current) draft.current = { ...draft.current, text };
+    if (inEditor) openAt(target.file, target.line, true);
+    else openAt(target.file, target.line, false, target.line);
+  };
+  const onEditorDefinition = useEvent((text: string, line: number, col: number) => void goToDefinition(text, line, col, true));
+  const onCodeDefine = useEvent((line: number, col: number) => void goToDefinition(content, line, col, false));
   const onEditorSave = useEvent((text: string) => saveFromEditor(text));
   const onEditorExit = useEvent(() => {
     draft.current = null;
@@ -1099,6 +1480,7 @@ ${snippet}
         choice={choice}
         plugins={allPlugins}
         {...(connectTo ? { connectTo } : {})}
+        reason={setupReason}
         onModel={(next) => void chooseModel(next)}
         onEngine={(id) => void switchEngine(id)}
         onChange={updateSettings}
@@ -1106,6 +1488,7 @@ ${snippet}
         onRescanPlugins={rescanPlugins}
         onClose={() => {
           setConnectTo(undefined);
+          setSetupReason(null);
           setView("main");
         }}
       />
@@ -1116,6 +1499,7 @@ ${snippet}
   const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
+  const tabStrip = tabs.length >= 2 && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
   layout.current = { treeWidth, codeWidth, paneHeight: height };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
@@ -1131,8 +1515,23 @@ ${snippet}
     updateSettings({ mouse: !settings.mouse });
     info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
   };
+  /** Opens the Games panel and gives it the keyboard, or closes it. */
+  const toggleGames = (open = !gamesOpen) => {
+    setGamesOpen(open);
+    if (open) {
+      if (focus !== "game") beforeGame.current = focus;
+      setFocus("game");
+    } else if (focus === "game") setFocus(beforeGame.current);
+  };
+  // Plain functions, not hooks: this runs after the settings screen's early return.
+  const leaveGames = () => setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
+  const gamesSettings = () => {
+    setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
+    setView("settings");
+  };
   /** Back to the file that was open before this one. */
   const goBack = () => {
+    clearFollow();
     const previous = recent.find((f) => f !== openFile);
     if (!previous) return info("No earlier file to go back to yet: Ctrl+P lists the files you've opened.");
     open(previous);
@@ -1146,7 +1545,16 @@ ${snippet}
   // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
+    { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
+    { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
+    { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
+    { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
+    { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },
+    { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout", keys: "/games", run: () => toggleGames() },
+    { title: "Next tab", keys: "]", run: () => cycleTab(1) },
+    { title: "Previous tab", keys: "[", run: () => cycleTab(-1) },
+    { title: "Close the tab", keys: "x", run: () => closeTab() },
     { title: "Edit the open file", keys: "e · double-click", run: startEditing },
     { title: "Diff the open file (vs git, Nou's edit, this session)", keys: "v", run: cycleDiff },
     { title: "Undo Nou's last change", keys: "u", run: undoLast },
@@ -1162,6 +1570,7 @@ ${snippet}
     { title: "Auto-edit: apply edits without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto-edit") },
     { title: "Auto: edits and commands without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto") },
     { title: `Follow mode ${follow ? "off" : "on"}: jump to files Nou works on`, keys: "f", run: () => setFollow((f) => !f) },
+    { title: `Replay speed for follow mode: ${settings.followSpeed} (next: ${FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + 1) % FOLLOW_SPEEDS.length]})`, keys: "settings", run: () => updateSettings({ followSpeed: FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + 1) % FOLLOW_SPEEDS.length]! }) },
     { title: `Mouse ${settings.mouse ? "off (select text in the terminal)" : "on"}`, keys: "m", run: toggleMouse },
     { title: "Copy the last reply", keys: "/copy", run: () => void runCommand("/copy") },
     { title: "Copy the last code block", keys: "/copy code", run: () => void runCommand("/copy code") },
@@ -1183,31 +1592,36 @@ ${snippet}
     { title: "Quit Nou", keys: "Ctrl+C ×2", run: quit },
   ];
 
-  const mode = approval
-    ? { label: "APPROVE", color: C.yellow }
-    : showEditor ? { label: "EDIT", color: C.green }
-      : diff ? { label: "DIFF", color: C.accent2 }
-        : busy ? { label: "WORKING", color: C.accent2 }
-          : { label: focus.toUpperCase(), color: C.accent };
+  const mode = resizing
+    ? { label: "RESIZE", color: C.cyan }
+    : approval
+      ? { label: "APPROVE", color: C.yellow }
+      : showEditor ? { label: "EDIT", color: C.green }
+        : diff ? { label: "DIFF", color: C.accent2 }
+          : busy ? { label: "WORKING", color: C.accent2 }
+            : { label: focus.toUpperCase(), color: C.accent };
 
   // Shortcuts for the status bar, most useful first; the ones that don't fit are left out (all of them are in /help).
-  const hints: [string, string][] = approval && !(showEditor && focus === "code")
-    ? [["y", "accept"], ["n", "reject"], ...(pendingChange && diff !== pendingChange ? [["o", "show the edit"] as [string, string]] : []), ["Esc", "stop"], ["Shift+Tab", "auto mode"]]
-    : showEditor && focus === "code"
-      ? editorState?.selection
-        ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
-        : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
-      : focus === "chat"
-        ? chatMenu ? [["↑↓", "choose"], ["Tab", "complete"], ["Enter", "run"], ["Esc", "close"]]
-          : busy
-            ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
-            : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
-        : focus === "tree"
-          ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
-          : diff
-            ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-            : [["double-click/e", "edit"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
-  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
+  const hints: [string, string][] = resizing
+    ? [[`files ${treeWidth} · code ${codeWidth} · chat ${chatWidth}`, "columns"], ["release", "to keep it"], ["=", "reset"]]
+    : approval && !(showEditor && focus === "code")
+      ? [["y", "accept"], ["n", "reject"], ...(pendingChange && diff !== pendingChange ? [["o", "show the edit"] as [string, string]] : []), ["Esc", "stop"], ["Shift+Tab", "auto mode"]]
+      : showEditor && focus === "code"
+        ? editorState?.selection
+          ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
+          : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
+        : focus === "chat"
+          ? chatMenu ? [["↑↓", "choose"], ["Tab", "complete"], ["Enter", "run"], ["Esc", "close"]]
+            : busy
+              ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
+              : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
+          : focus === "tree"
+            ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
+            : diff
+              ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
+              : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+  const followChip = follow ? ` ◉ follow${followLag ? ` ·${followLag}` : ""} ` : " ○ follow ";
+  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
     used += hints[i]![0].length + hints[i]![1].length + 4;
@@ -1220,12 +1634,9 @@ ${snippet}
     y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
     "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
-    e: startEditing, "double-click/e": startEditing, b: goBack, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    e: startEditing, "double-click/e": startEditing, b: goBack, "Ctrl+F": showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
-    Esc: busy ? () => {
-      pullAbort.current?.abort();
-      agentRef.current?.cancel();
-    } : diff && !showEditor ? () => setDiffMode("off") : undefined,
+    Esc: busy ? stop : diff && !showEditor ? () => setDiffMode("off") : undefined,
   };
   const zones: StatusZone[] = [];
   {
@@ -1235,7 +1646,7 @@ ${snippet}
       x += width;
     };
     add(` ${autoMode} `.length, () => cycleAutoMode());
-    add(10, () => setFollow((f) => !f));
+    add(followChip.length, () => setFollow((f) => !f));
     add(` ✖ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
     if (checking.length) add(3 + checking.join(", ").length);
     if (!exitArmed) {
@@ -1282,6 +1693,7 @@ ${snippet}
         ) : showEditor ? (
           <Editor
             key={`${openFile}:${editorStart.nonce}`}
+            {...(tabStrip ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={height}
             focused={focus === "code"}
@@ -1304,6 +1716,7 @@ ${snippet}
           />
         ) : (
           <CodeView
+            {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={height}
             focused={focus === "code"}
@@ -1320,6 +1733,10 @@ ${snippet}
             wheel={wheelFor("code")}
             scrollTo={scrollFor("code")}
             onViewport={onViewport}
+            defineAt={codeDefine}
+            onDefine={onCodeDefine}
+            onFinding={onCodeFinding}
+            findRequest={findRequest}
           />
         )}
         <Chat
@@ -1338,14 +1755,17 @@ ${snippet}
           extraCommands={pluginCommands}
           onMenu={onChatMenu}
           onSubmit={onSend}
+          queued={queued}
           onAnswer={onAnswer}
+          click={chatClick}
+          onOpenRef={openRef}
         />
       </Box>
       <Box>
         <Text wrap="truncate-end">
           <Text backgroundColor={mode.color} color="black" bold>{` ${mode.label} `}</Text>
           <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
-          <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{follow ? " ◉ follow " : " ○ follow "}</Text>
+          <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{followChip}</Text>
           <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
           <Text backgroundColor={C.panel} color={totals.warnings ? C.yellow : C.dim}>{` ▲ ${totals.warnings} `}</Text>
           {checking.length > 0 && <Text color={C.accent2}> ⟳ {checking.join(", ")}</Text>}
@@ -1356,6 +1776,9 @@ ${snippet}
             ))}
         </Text>
       </Box>
+      {gamesOpen && (
+        <GamePanel x={gamePos.x} y={gamePos.y} focused={focus === "game"} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+      )}
       {quickOpen !== null && (
         <QuickOpen
           width={columns}
@@ -1366,6 +1789,7 @@ ${snippet}
           initialQuery={quickOpen}
           onPick={(file) => {
             setQuickOpen(null);
+            clearFollow();
             open(file);
             setReveal(file);
             setFocus("code");

@@ -1,9 +1,9 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import path from "path";
 import { Box, Text, useInput, usePaste } from "ink";
 import type { AutoSave } from "../config/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
-import { highlightLines } from "./text.js";
+import { highlightLines, sliceAnsi } from "./text.js";
 import { C, fileIcon } from "./theme.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { Pane } from "./Pane.js";
@@ -17,7 +17,8 @@ export type EditorState = { line: number; col: number; dirty: boolean; lines: st
  * included). `seq` counts up: a quick click's press and release often arrive together, so the editor
  * gets the recent events as a list and handles each one it hasn't seen yet.
  */
-export type EditorMouse = { x: number; y: number; kind: "press" | "double" | "drag" | "release"; seq: number };
+/** "define": Ctrl/Alt+click or right-click, go to the definition of what's under the pointer. */
+export type EditorMouse = { x: number; y: number; kind: "press" | "double" | "drag" | "release" | "define"; seq: number };
 
 type Props = {
   width: number;
@@ -45,6 +46,8 @@ type Props = {
   onHover(text: string, line: number, col: number): Promise<string | null>;
   /** Jump to where the symbol at a position is defined. */
   onDefinition(text: string, line: number, col: number): void;
+  /** The open files as tabs, shown in the title row instead of the file's path. */
+  tabs?: ReactNode;
 };
 
 type Pos = { row: number; col: number };
@@ -127,7 +130,7 @@ const commentFor = (file: string) => LINE_COMMENTS[path.extname(file).toLowerCas
 type Prompt = { kind: "find" | "line"; text: string };
 
 /** A text editor: arrows and the mouse to move, Shift to select, Ctrl+C/X/V clipboard, Ctrl+S save, Ctrl+Z undo, Esc leave. */
-export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition }: Props) {
+export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs }: Props) {
   const eol = useMemo(() => (baseline.includes("\r\n") ? "\r\n" : "\n"), [baseline]);
   const indentUnit = useMemo(() => (/^\t/m.test(initial) ? "\t" : "  "), [initial]);
   const comment = useMemo(() => commentFor(filePath), [filePath]);
@@ -367,6 +370,11 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
     const col = bufferCol(buf.lines[row]!, Math.max(0, mouse.x - gutter) + v.left);
     setHover(null);
     setPrompt((p) => (p?.kind === "line" ? null : p));
+    if (mouse.kind === "define") {
+      dragFrom.current = null;
+      setBuf((b) => ({ ...b, row, col, anchor: null }));
+      return onDefinition(buf.lines.join("\n"), row + 1, col + 1);
+    }
     setBuf((b) => {
       if (mouse.kind === "press") {
         dragFrom.current = { row, col };
@@ -571,9 +579,11 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
 
   const visible = buf.lines.slice(v.top, v.top + rows);
   const colored = useMemo(
-    // Scrolled sideways: every line shifts by the same amount (plain text, since slicing highlighted
-    // text could cut a color code in half).
-    () => (v.left === 0 ? highlightLines(filePath, visible.join("\n")) : visible.map((l) => expand(l).slice(v.left, v.left + textWidth))),
+    // Scrolled sideways: every line shifts by the same amount, colors and all.
+    () => {
+      const lines = highlightLines(filePath, visible.join("\n"));
+      return v.left === 0 ? lines : lines.map((l) => sliceAnsi(l, v.left, textWidth));
+    },
     [filePath, visible.join("\n"), v.left, textWidth, syntaxVersion],
   );
 
@@ -598,7 +608,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
   const cursorVisible = buf.row >= v.top && buf.row < v.top + rows;
 
   return (
-    <Pane title={<> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}  <Text backgroundColor={C.green} color="black"> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
+    <Pane title={<>{tabs ?? <> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}</>}  <Text backgroundColor={C.green} color="black"> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={width - 3} flexShrink={0}>
           {visible.map((line, i) => {

@@ -49,12 +49,15 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🗂️ **File explorer** | Browse your project with file icons and git status (`M` modified, `?` new). Press <kbd>c</kbd> to see only changed files. |
 | 🔀 **Live diffs** | Every edit Nou proposes shows up side by side. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
 | ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself, with undo/redo and **auto-save**. |
+| 📍 **Shows you where things are** | Ask "where is the LiveKit integration?" and Nou finds it and opens it in the middle panel, jumped to the exact lines and highlighted. Any file a reply mentions (`src/a.ts:12`) is a link: click it. `/open name[:line]` opens a file yourself. |
+| 🎮 **Games for a break** | Add Pong, Snake and Breakout in settings → Games, then `/games` opens a floating panel you can drag anywhere by its title. A game runs only while the panel has the keyboard: Esc goes back to your code and it waits. |
+| 🧠 **A capable engine** | Reads and searches in parallel, numbered reads for exact line references, edits that survive small whitespace mismatches, several edits to a file as one change, a plan for longer tasks, full command output (stderr too) with exit codes and timeouts, retries when a provider is overloaded, and conversation caching with Claude. It follows your repo's `AGENTS.md`, `CLAUDE.md` and `NOU.md` (and `~/.nou/NOU.md`). |
 | 🔎 **Finds its way around** | The agent searches your code (`grep`, `glob`) without asking, reads only what it needs, runs your tests to check its work, and summarizes long conversations to stay within the model's context (`/compact` does it on demand). |
 | ↶ **Undo anything** | Every change, Nou's or yours, is recorded. <kbd>u</kbd> undoes Nou's last edit, `/rewind` undoes its whole last turn, and your own later edits are kept. |
 | 🧾 **Session diffs** | `/diff` shows everything that changed this session, file by file (<kbd>[</kbd> <kbd>]</kbd> to step through). `/sessions` lists earlier sessions and `/diff 2` shows one. |
 | 🩺 **Problems, live** | Syntax errors instantly, plus ESLint, TypeScript, Ruff and language servers when your project has them. Shown in the gutter, inline, and in a <kbd>p</kbd> Problems panel. |
 | 🤖 **Self-correcting** | Nou checks its own edits: you see "⚠ +1 problem" *before* approving, and any problems it introduced are fed back so it fixes them. |
-| 🎨 **Real syntax highlighting** | tree-sitter parsing for 14 languages (TS, JS, Python, Go, Rust, Java, C, JSON, YAML…). |
+| 🎨 **Real syntax highlighting** | tree-sitter parsing for 14 languages (TS, JS, Python, Go, Rust, Java, C, JSON, YAML…), in your choice of theme: One Dark (default), Tokyo Night, GitHub Dark, Dracula, High Contrast or GitHub Light (settings → Preferences → Code colors, with a preview). |
 | 🧭 **Code intelligence** | <kbd>Ctrl</kbd>+<kbd>K</kbd> hover info and <kbd>Ctrl</kbd>+<kbd>G</kbd> go-to-definition via language servers (typescript-language-server, pyright, rust-analyzer, gopls, clangd). |
 | 👀 **Knows what you're looking at** | The open file, visible lines, your cursor and unsaved edits ride along with each message. "Fix this function" just works. |
 | 🌿 **Git aware** | Sees your branch, uncommitted changes and recent commits, and can diff on its own. Press <kbd>v</kbd> to diff any file against `HEAD`. |
@@ -85,17 +88,21 @@ Every change is reviewed like a code review:
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
 | <kbd>b</kbd> | back to the previous file (press again to flip back) |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | find in the open file: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
+| 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, its × to close · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> close |
+| <kbd>Ctrl</kbd>+click | on a name in the code (or <kbd>Option</kbd>+click, or right-click): go to its definition; an imported name goes to its import, and the import's path opens that file |
 | <kbd>e</kbd> or a double-click | edit the open file (see the editor keys below) |
 | <kbd>p</kbd> | Problems panel: every error and warning, <kbd>Enter</kbd> jumps to it |
 | <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD`, Nou's last edit, or this session · <kbd>n</kbd>/<kbd>N</kbd> jump between changes · <kbd>[</kbd>/<kbd>]</kbd> previous/next file in a session diff |
 | <kbd>c</kbd> | in the file tree: show only changed files |
-| <kbd>f</kbd> | follow mode (off by default): jump to files as Nou reads and edits them |
+| <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
-| <kbd>Esc</kbd> | stop Nou · close a diff · back to chat |
+| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
+| <kbd>Esc</kbd> | stop Nou (anything queued goes back in the input) · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 
 In the editor:
@@ -167,6 +174,20 @@ nou --version
 ```
 
 Set `NOU_NO_UPDATE_CHECK=1` to turn the check off.
+
+## 🔌 MCP servers and browser control
+
+Nou's engine can use tools from [MCP](https://modelcontextprotocol.io) servers: a browser, GitHub, your database...
+
+- **Already use some?** Nou finds the MCP servers you've set up in Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini CLI and Codex, and offers them on start: `/mcp import` brings them over, with their settings. (Your Claude Code and Codex API keys are picked up too; see *Use Claude Code / Codex keys* in settings.)
+- **Browser control:** `/mcp add browser` adds [Playwright's MCP server](https://github.com/microsoft/playwright-mcp), so you can ask Nou to open a page, click through it, fill a form or check what your app shows.
+- **Your own:** `/mcp add <name> <command and arguments>` or `/mcp add <name> <url>`; `/mcp` lists them and their status, `/mcp remove <name>` removes one. They live in `~/.nou/mcp.json` (same format as Claude Code and Cursor); a project's `.mcp.json` is used too, in folders you trust.
+
+Tools that say they only read run on their own; any other MCP tool asks you first, like Nou's edits and commands. A server's own output never reaches Nou's screen.
+
+## 🔒 Trusting a folder
+
+The first time you open a folder, Nou asks whether you trust its files: it reads them, and can run the folder's MCP servers and plugins. Say no and Nou doesn't open it. Trusted folders are listed in `~/.nou/config.json`.
 
 ## 🧩 Plugins *(early)*
 
