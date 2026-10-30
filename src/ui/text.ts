@@ -275,8 +275,11 @@ export function renderMarkdown(text: string, width: number, isFile?: (file: stri
   return out;
 }
 
-/** path, path:line or path:line-line; a path has a dot in its last part, so plain words don't match. */
-const FILE_REF = /(?<![\w/.@-])((?:\.{0,2}\/)?(?:[\w@.-]+\/)*[\w@-][\w@.-]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?:[-–](\d+))?)?(?![\w/])/g;
+/**
+ * path, path:line or path:line-line; a path has a dot in its last part, so plain words don't match.
+ * Windows paths (C:\\dir\\file.ts, dir\\file.ts) count too.
+ */
+const FILE_REF = /(?<![\w/\\.@-])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w@.-]+[\\/])*[\w@-][\w@.-]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?:[-–](\d+))?)?(?![\w/\\])/g;
 
 /** Splits out the references to files that exist (per `isFile`) as link spans, keeping each span's style. */
 export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): Span[] {
@@ -284,7 +287,7 @@ export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): 
   for (const span of spans) {
     let pos = 0;
     for (const m of span.text.matchAll(FILE_REF)) {
-      const file = m[1]!.replace(/^\.\//, "");
+      const file = m[1]!.replace(/^\.[\\/]/, "");
       if (!isFile(file)) continue;
       if (m.index > pos) out.push({ ...span, text: span.text.slice(pos, m.index) });
       const link: FileRef = { path: file };
