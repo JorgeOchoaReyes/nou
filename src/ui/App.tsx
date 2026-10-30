@@ -205,6 +205,8 @@ export function App({ initialModel, permContext }: Props) {
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
   const dragging = useRef<"tree" | "chat" | "editor" | { scroll: Focus } | null>(null);
+  /** Which border is being dragged, for the status bar. */
+  const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
   const diagnosticsRef = useRef<DiagnosticsManager | null>(null);
   diagnosticsRef.current ??= new DiagnosticsManager();
@@ -609,8 +611,10 @@ export function App({ initialModel, permContext }: Props) {
     if (event.kind === "release") {
       // The release says where the button let go, so a drag lands there even in a terminal that
       // doesn't report the movement in between.
-      if (dragging.current === "tree" || dragging.current === "chat") updateSettings({ paneWidths: moveBorder(dragging.current, event.x) });
-      else if (dragging.current && typeof dragging.current === "object") scrollPane(dragging.current.scroll, event.y);
+      if (dragging.current === "tree" || dragging.current === "chat") {
+        updateSettings({ paneWidths: moveBorder(dragging.current, event.x) });
+        setResizing(null);
+      } else if (dragging.current && typeof dragging.current === "object") scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       dragging.current = null;
       return;
@@ -621,8 +625,16 @@ export function App({ initialModel, permContext }: Props) {
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
     if (event.kind === "wheel") return queueWheel(pane, event.dir, event.horizontal);
     // Each border is two columns: the left pane's edge and the right pane's.
-    if (Math.abs(event.x - (treeWidth - 0.5)) <= 1) return void (dragging.current = "tree");
-    if (Math.abs(event.x - (treeWidth + codeWidth - 0.5)) <= 1) return void (dragging.current = "chat");
+    // On the panes' top border row, a little either side of a border grabs it too: an easier target.
+    const reach = event.y === 1 ? 2 : 1;
+    for (const border of ["tree", "chat"] as const) {
+      const edge = border === "tree" ? treeWidth - 0.5 : treeWidth + codeWidth - 0.5;
+      if (Math.abs(event.x - edge) <= reach) {
+        dragging.current = border;
+        setResizing(border);
+        return;
+      }
+    }
     // Each pane's scrollbar is the column inside its right border.
     const scrollbarX = pane === "tree" ? treeWidth - 2 : pane === "code" ? treeWidth + codeWidth - 2 : columns - 2;
     if (event.x === scrollbarX && event.y >= 3) {
@@ -1383,30 +1395,34 @@ ${snippet}
     { title: "Quit Nou", keys: "Ctrl+C ×2", run: quit },
   ];
 
-  const mode = approval
-    ? { label: "APPROVE", color: C.yellow }
-    : showEditor ? { label: "EDIT", color: C.green }
-      : diff ? { label: "DIFF", color: C.accent2 }
-        : busy ? { label: "WORKING", color: C.accent2 }
-          : { label: focus.toUpperCase(), color: C.accent };
+  const mode = resizing
+    ? { label: "RESIZE", color: C.cyan }
+    : approval
+      ? { label: "APPROVE", color: C.yellow }
+      : showEditor ? { label: "EDIT", color: C.green }
+        : diff ? { label: "DIFF", color: C.accent2 }
+          : busy ? { label: "WORKING", color: C.accent2 }
+            : { label: focus.toUpperCase(), color: C.accent };
 
   // Shortcuts for the status bar, most useful first; the ones that don't fit are left out (all of them are in /help).
-  const hints: [string, string][] = approval && !(showEditor && focus === "code")
-    ? [["y", "accept"], ["n", "reject"], ...(pendingChange && diff !== pendingChange ? [["o", "show the edit"] as [string, string]] : []), ["Esc", "stop"], ["Shift+Tab", "auto mode"]]
-    : showEditor && focus === "code"
-      ? editorState?.selection
-        ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
-        : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
-      : focus === "chat"
-        ? chatMenu ? [["↑↓", "choose"], ["Tab", "complete"], ["Enter", "run"], ["Esc", "close"]]
-          : busy
-            ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
-            : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
-        : focus === "tree"
-          ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
-          : diff
-            ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-            : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+  const hints: [string, string][] = resizing
+    ? [[`files ${treeWidth} · code ${codeWidth} · chat ${chatWidth}`, "columns"], ["release", "to keep it"], ["=", "reset"]]
+    : approval && !(showEditor && focus === "code")
+      ? [["y", "accept"], ["n", "reject"], ...(pendingChange && diff !== pendingChange ? [["o", "show the edit"] as [string, string]] : []), ["Esc", "stop"], ["Shift+Tab", "auto mode"]]
+      : showEditor && focus === "code"
+        ? editorState?.selection
+          ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
+          : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
+        : focus === "chat"
+          ? chatMenu ? [["↑↓", "choose"], ["Tab", "complete"], ["Enter", "run"], ["Esc", "close"]]
+            : busy
+              ? [["Esc", "stop"], ["Shift+↑↓", "scroll"], ["Tab", "next pane"]]
+              : [["Enter", "send"], ["/", "commands"], ["Tab", "next pane"], ["Ctrl+P", "find file"], ["Shift+↑↓", "scroll"]]
+          : focus === "tree"
+            ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
+            : diff
+              ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
+              : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + 10 + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {

@@ -233,15 +233,19 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const before = codeLeft();
   await press(click(23, 10), 100);
   await press(`\x1b[<32;${33 + 1};11M`, 100); // drag the files/code border 10 columns right
+  check("while dragging, the status bar says so, with the widths", frame().split("\n").at(-1)!.includes("RESIZE") && frame().split("\n").at(-1)!.includes("files 34"));
   await press(`\x1b[<0;${33 + 1};11m`, 200);
   check("dragging the border between panes resizes them", before === 24 && codeLeft() === 34);
   await press(click(33, 10), 100); // grab it again and let go further right, with no movement reported in between
   await press(`\x1b[<0;${38 + 1};11m`, 200);
-  check("a border lands where it's released even without drag reports", codeLeft() === 39);
+  check("a border lands where it's released even without drag reports", codeLeft() === 39 && !frame().includes("RESIZE"));
+  await press(click(39 + 1, 1), 100); // on the top border row, a column further off still grabs it
+  await press(`\x1b[<0;${36 + 1};2m`, 200);
+  check("the top border row is an easier place to grab a border", codeLeft() === 37);
   await press(KEY.tab, 100); // to the file tree, so > and = aren't typed into the chat
   await press(KEY.tab, 100);
   await press(">", 200);
-  check("> widens the focused pane", codeLeft() === 41);
+  check("> widens the focused pane", codeLeft() === 39);
   await press("=", 200);
   check("= puts the default widths back", codeLeft() === 24);
 });
