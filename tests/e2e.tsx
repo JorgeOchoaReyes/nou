@@ -675,6 +675,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("change the greeting");
   await press(KEY.enter, 1500);
   check("the Codex engine answers in the chat", frame().includes("Changed the greeting."));
+  check("Codex reconnecting on the way isn't an error", !frame().includes("Reconnecting"));
   check("its edit is on disk and listed as Nou's", readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Howdy"));
   await press(KEY.esc, 150);
   await type("/rewind");

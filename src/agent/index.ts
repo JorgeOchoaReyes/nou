@@ -28,9 +28,13 @@ function transient(error: any): boolean {
   const status = Number(error?.status ?? error?.statusCode);
   if (status === 408 || status === 409 || status === 429 || status >= 500) return true;
   if (status >= 400) return false;
-  const text = String(error?.message ?? error);
-  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Invalid URL|api key|unauthori[sz]ed/i.test(text)) return false;
-  return /overloaded|rate.?limit|too many requests|ECONNRESET|socket hang up|ETIMEDOUT|timed? ?out|EPIPE|network|premature close|terminated|\b(429|5\d\d)\b/i.test(text);
+  return transientMessage(String(error?.message ?? error));
+}
+
+/** Whether an error's text reads as a passing problem (a dropped stream, a busy or failing server). */
+export function transientMessage(text: string): boolean {
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Invalid URL|api key|unauthori[sz]ed|\b40[13]\b/i.test(text)) return false;
+  return /overloaded|rate.?limit|too many requests|ECONNRESET|socket hang up|ETIMEDOUT|timed? ?out|EPIPE|network|premature close|terminated|disconnected|server had an error|internal server error|service unavailable|bad gateway|try again|\b(429|5\d\d)\b/i.test(text);
 }
 
 /** Messages kept word for word when older ones are summarized. */

@@ -306,6 +306,15 @@ console.log("MCP servers");
   check("Codex's TOML tables are read", JSON.stringify(codexServers('[mcp_servers.x]\ncommand = "a"\nargs = ["b"]\n').x) === JSON.stringify({ command: "a", args: ["b"] }));
 }
 
+console.log("Retrying passing failures");
+{
+  const { transientMessage } = await import("../src/agent/index.js");
+  check("a dropped stream or a failing server is worth retrying",
+    transientMessage("stream disconnected before completion: litellm.APIError: AzureException APIError - The server had an error processing your request.")
+    && transientMessage("503 Service Unavailable") && transientMessage("socket hang up"));
+  check("a bad key or a wrong URL isn't", !transientMessage("401 Unauthorized") && !transientMessage("connect ECONNREFUSED 127.0.0.1:4000") && !transientMessage("Invalid API key"));
+}
+
 console.log("Taking back a message, steady streaming");
 {
   const { Agent: Engine } = await import("../src/agent/index.js");

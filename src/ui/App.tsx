@@ -48,6 +48,7 @@ const MIN_TREE = 14;
 const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
+const NO_FILES = new Set<string>();
 const DOUBLE_CLICK_MS = 500;
 /** A step follow mode shows: a file the agent read, and the lines when it read part of it. */
 type FollowStep = { file: string; line?: number; to?: number };
@@ -163,6 +164,8 @@ export function App({ initialModel, permContext }: Props) {
     }
   };
   const [busy, setBusy] = useState<string | null>(null);
+  /** Files Nou has changed (or is asking to) since it started working: they shimmer in the tree until it's done. */
+  const [working, setWorking] = useState<Set<string>>(NO_FILES);
   const [choice, setChoice] = useState(initialModel);
   const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve(ok: boolean): void } | null>(null);
 
@@ -293,6 +296,10 @@ export function App({ initialModel, permContext }: Props) {
         }
         const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
         setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
+        setWorking((w) => {
+          if (status === "rejected") return w.has(change.path) ? new Set([...w].filter((p) => p !== change.path)) : w;
+          return w.has(change.path) ? w : new Set(w).add(change.path);
+        });
         // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
         if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
           clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
@@ -331,6 +338,9 @@ export function App({ initialModel, permContext }: Props) {
   useEffect(() => {
     void checkForUpdate().then(setUpdate);
   }, []);
+  useEffect(() => {
+    if (!busy) setWorking(NO_FILES); // done: the files stop shimmering (● still marks them)
+  }, [!busy]);
 
   // Discover plugins once and load the enabled ones.
   useEffect(() => {
@@ -1719,6 +1729,7 @@ ${snippet}
           reveal={reveal}
           version={treeVersion}
           changed={edited}
+          working={working}
           git={git}
           problemCounts={problemCounts}
           wheel={wheelFor("tree")}

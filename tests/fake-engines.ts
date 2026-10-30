@@ -43,6 +43,8 @@ export class Codex {
       async runStreamed(input) {
         log.inputs.push(input);
         return { events: (async function* () {
+          // Codex retrying a dropped stream: progress, not a failed turn.
+          yield { type: "error", message: "Reconnecting... 1/5 (stream disconnected before completion: The server had an error processing your request.)" };
           yield { type: "item.started", item: { type: "command_execution", command: "ls" } };
           yield { type: "item.completed", item: { type: "command_execution", command: "ls", exit_code: 0 } };
           writeFileSync("greet.js", readFileSync("greet.js", "utf-8").replace("Hello", "Howdy"));
