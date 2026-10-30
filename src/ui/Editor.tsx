@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import path from "path";
 import { Box, Text, useInput, usePaste } from "ink";
 import type { AutoSave } from "../config/index.js";
@@ -46,6 +46,8 @@ type Props = {
   onHover(text: string, line: number, col: number): Promise<string | null>;
   /** Jump to where the symbol at a position is defined. */
   onDefinition(text: string, line: number, col: number): void;
+  /** The open files as tabs, shown in the title row instead of the file's path. */
+  tabs?: ReactNode;
 };
 
 type Pos = { row: number; col: number };
@@ -128,7 +130,7 @@ const commentFor = (file: string) => LINE_COMMENTS[path.extname(file).toLowerCas
 type Prompt = { kind: "find" | "line"; text: string };
 
 /** A text editor: arrows and the mouse to move, Shift to select, Ctrl+C/X/V clipboard, Ctrl+S save, Ctrl+Z undo, Esc leave. */
-export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition }: Props) {
+export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs }: Props) {
   const eol = useMemo(() => (baseline.includes("\r\n") ? "\r\n" : "\n"), [baseline]);
   const indentUnit = useMemo(() => (/^\t/m.test(initial) ? "\t" : "  "), [initial]);
   const comment = useMemo(() => commentFor(filePath), [filePath]);
@@ -606,7 +608,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
   const cursorVisible = buf.row >= v.top && buf.row < v.top + rows;
 
   return (
-    <Pane title={<> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}  <Text backgroundColor={C.green} color="black"> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
+    <Pane title={<>{tabs ?? <> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}</>}  <Text backgroundColor={C.green} color="black"> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={width - 3} flexShrink={0}>
           {visible.map((line, i) => {

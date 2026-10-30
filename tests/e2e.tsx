@@ -398,7 +398,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("Ctrl+P lists the files you opened first, latest first, marked recent", first >= 0 && second > first);
   await press(KEY.esc, 200);
   await press("b", 400);
-  check("b goes back to the previous file", frame().includes("many.ts  1-"));
+  check("b goes back to the previous file", frame().includes("many.ts ×") && frame().includes("const line1 = 1;"));
   await press("b", 400);
   check("pressing b again flips back", frame().includes("long.ts"));
   check("the header stays on one line", frame().split("\n")[1]!.startsWith("┌") || frame().split("\n")[1]!.startsWith("╭"));
@@ -444,6 +444,27 @@ console.log("Finding things for you: open_file and clickable paths");
     check("right-click goes to definitions too", frame().includes("1▌const a = 1;"));
   });
 }
+
+console.log("Tabs");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  for (const f of ["a.ts", "b.ts"]) {
+    await type(`/open ${f}`);
+    await press(KEY.enter, 300);
+  }
+  const title = () => frame().split("\n")[2]!;
+  check("open files show as tabs over the code, the current one with ×", title().includes("◆ a.ts │") && title().includes("◆ b.ts × │"));
+  const at = title().indexOf("◆ a.ts");
+  await press(click(at, 2), 300);
+  check("clicking a tab switches to it", title().includes("◆ a.ts × │") && frame().includes("const a = 1;"));
+  await press(KEY.tab, 100);
+  await press(KEY.tab, 100); // to the code
+  await press("]", 300);
+  check("] goes to the next tab", title().includes("◆ b.ts ×"));
+  await press(click(title().indexOf("×"), 2), 300);
+  check("clicking × closes the tab", !title().includes("b.ts") && frame().includes("const a = 1;"));
+  await press("x", 300);
+  check("x closes the last one, back to the welcome screen", frame().includes("Welcome"));
+});
 
 console.log("Engines");
 writeFakeEngines(process.env.NOU_ENGINE_DIR!);

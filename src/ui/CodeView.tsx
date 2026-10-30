@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
@@ -41,13 +41,15 @@ type Props = {
   defineAt?: { row: number; x: number; nonce: number } | null;
   /** Go to the definition of what's at `line`:`col` (1-based, in the file's own text). */
   onDefine?(line: number, col: number): void;
+  /** The open files as tabs, shown in the title row instead of the file's path. */
+  tabs?: ReactNode;
 };
 
 /** Columns ←/→ and Shift+wheel move sideways. */
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine }: Props) {
+export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs }: Props) {
   const [top, setTop] = useState(0);
   // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
@@ -204,10 +206,10 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   const errorCount = problems.filter((d) => d.severity === "error").length;
   const warningCount = problems.filter((d) => d.severity === "warning").length;
   // The edit hint only when it fits: a cut-off hint reads as noise.
-  const titleRoom = width - 4 - (3 + filePath.length + (errorCount ? 5 + String(errorCount).length : 0) + (warningCount ? 5 + String(warningCount).length : 0) + scroll.length + (total > rows ? 7 : 0));
+  const titleRoom = tabs ? 0 : width - 4 - (3 + filePath.length + (errorCount ? 5 + String(errorCount).length : 0) + (warningCount ? 5 + String(warningCount).length : 0) + scroll.length + (total > rows ? 7 : 0));
   const title = (
     <>
-      {" "}<Text color={color}>{icon}</Text> {filePath}
+      {tabs ?? <>{" "}<Text color={color}>{icon}</Text> {filePath}</>}
       {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
       <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused && titleRoom >= EDIT_HINT.length ? EDIT_HINT : ""}</Text>

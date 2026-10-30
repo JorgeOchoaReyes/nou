@@ -29,6 +29,7 @@ import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
 import { Header } from "./Header.js";
+import { Tabs, layoutTabs } from "./Tabs.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
 
@@ -40,6 +41,8 @@ const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
 const DOUBLE_CLICK_MS = 500;
+/** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
+const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 16);
 
 type Props = { initialModel: ModelChoice; permContext: string };
 /** A clickable stretch of the status bar, in columns. */
@@ -55,7 +58,8 @@ Keys:
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
   e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
-  b  back to the previous file (Ctrl+P lists recent files first)
+  b  back to the previous file (Ctrl+P lists recent files first)   [ ]  previous/next tab · x close tab
+  Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
 Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select
@@ -118,6 +122,8 @@ export function App({ initialModel, permContext }: Props) {
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [reveal, setReveal] = useState<string | null>(null);
+  /** The open files, as tabs over the code view, in the order they were opened. */
+  const [tabs, setTabs] = useState<string[]>([]);
   /** Files opened this session, latest first: Ctrl+P lists them first, and b goes back to the previous one. */
   const [recent, setRecent] = useState<string[]>([]);
   const [treeVersion, setTreeVersion] = useState(0);
@@ -592,6 +598,14 @@ export function App({ initialModel, permContext }: Props) {
       scrollPane(pane, event.y);
       return;
     }
+    // The code view's title row holds the tabs: a click switches, the × closes.
+    if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length >= 2 && !diff) {
+      const zone = layoutTabs(tabs, openFile, tabsWidth(codeWidth)).zones.find((z) => event.x - codeLeft - 1 >= z.from && event.x - codeLeft - 1 < z.to);
+      if (!zone) return;
+      if (zone.close !== null && Math.abs(event.x - codeLeft - 1 - zone.close) <= 1) closeTab(zone.file);
+      else switchTab(zone.file);
+      return;
+    }
     // Ctrl/Alt+click or right-click on code: go to the definition of what's under the pointer.
     if (event.kind === "click" && event.define && pane === "code" && event.y >= 3 && codePanel === "code") {
       lastClick.current = null;
@@ -770,6 +784,41 @@ export function App({ initialModel, permContext }: Props) {
       setFocusLine((f) => ({ line, ...(to !== undefined ? { to, path: file } : {}), nonce: (f?.nonce ?? 0) + 1 }));
     }
   };
+  // Every file that's shown gets a tab (however it was opened: the tree, Nou, a link...).
+  useEffect(() => {
+    if (openFile) setTabs((t) => (t.includes(openFile) ? t : [...t, openFile].slice(-20)));
+  }, [openFile]);
+  /** Switches to another open file's tab. */
+  const switchTab = (file: string) => {
+    if (file === openFile || !settleDraft(file)) return;
+    open(file);
+    setReveal(file);
+  };
+  const cycleTab = (step: number) => {
+    if (tabs.length < 2 || !openFile) return;
+    const i = tabs.indexOf(openFile);
+    switchTab(tabs[(i + step + tabs.length) % tabs.length]!);
+  };
+  /** Closes a tab (the open file's by default), moving to its neighbour. */
+  const closeTab = (file = openFile) => {
+    if (!file) return;
+    const i = tabs.indexOf(file);
+    const rest = tabs.filter((f) => f !== file);
+    if (file !== openFile) return setTabs(rest);
+    const next = rest[Math.min(Math.max(0, i), rest.length - 1)];
+    if (!settleDraft(next ?? "")) return;
+    if (draft.current?.path === file) draft.current = null;
+    setTabs(rest);
+    if (next) {
+      open(next);
+      setReveal(next);
+    } else {
+      setOpenFile(null);
+      setContent("");
+      setEditing(false);
+      setDiffMode("off");
+    }
+  };
   const openAtRef = useRef(openAt);
   openAtRef.current = openAt;
   /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
@@ -855,6 +904,8 @@ export function App({ initialModel, permContext }: Props) {
       updateSettings({ paneWidths: null });
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
+    else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
+    else if (input === "x") closeTab();
     else if (input === "e") startEditing();
     else if (input === "b") goBack();
     else if (input === "s" || input === ",") setView("settings");
@@ -1197,6 +1248,7 @@ ${snippet}
   const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
+  const tabStrip = tabs.length >= 2 && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
   layout.current = { treeWidth, codeWidth, paneHeight: height };
   const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
@@ -1229,6 +1281,9 @@ ${snippet}
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
+    { title: "Next tab", keys: "]", run: () => cycleTab(1) },
+    { title: "Previous tab", keys: "[", run: () => cycleTab(-1) },
+    { title: "Close the tab", keys: "x", run: () => closeTab() },
     { title: "Edit the open file", keys: "e · double-click", run: startEditing },
     { title: "Diff the open file (vs git, Nou's edit, this session)", keys: "v", run: cycleDiff },
     { title: "Undo Nou's last change", keys: "u", run: undoLast },
@@ -1364,6 +1419,7 @@ ${snippet}
         ) : showEditor ? (
           <Editor
             key={`${openFile}:${editorStart.nonce}`}
+            {...(tabStrip ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={height}
             focused={focus === "code"}
@@ -1386,6 +1442,7 @@ ${snippet}
           />
         ) : (
           <CodeView
+            {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={height}
             focused={focus === "code"}
