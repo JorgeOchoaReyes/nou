@@ -499,16 +499,23 @@ console.log("Queueing and interrupting");
     await type("urgent");
     await press("\x1b\r", 1200);
     check("Alt+Enter stops Nou and sends right away", heard.at(-1) === "urgent" && frame().includes("Cancelled"));
-    // Let the urgent reply finish (slow machines take longer), so "later" starts a fresh turn.
-    for (let waited = 0; waited < 5000 && frame().includes("Esc stops"); waited += 100) await delay(100);
-    await delay(200);
+    // Each step waits for the state it needs (slow machines take longer than any fixed delay).
+    const status = () => frame().split("\n").at(-1)!;
+    const until = async (ok: () => boolean, ms = 5000) => {
+      for (let waited = 0; waited < ms && !ok(); waited += 50) await delay(50);
+    };
+    await until(() => !status().includes("WORKING"));
     await type("later");
-    await press(KEY.enter, 200);
+    await press(KEY.enter, 100);
+    await until(() => status().includes("WORKING") && heard.at(-1) === "later");
     await type("never");
-    await press(KEY.enter, 200);
-    await press(KEY.esc, 300);
-    for (let waited = 0; waited < 2000 && !frame().includes("❯ never"); waited += 50) await delay(50);
-    check("Esc stops Nou and puts what was queued back in the input", !heard.includes("never") && frame().includes("❯ never"));
+    await press(KEY.enter, 100);
+    await until(() => frame().includes("⏳ next: never"));
+    await press(KEY.esc, 100);
+    await until(() => frame().includes("❯ never"), 3000);
+    const ok = !heard.includes("never") && frame().includes("❯ never");
+    if (!ok) console.log(frame());
+    check("Esc stops Nou and puts what was queued back in the input", ok);
   });
 }
 
