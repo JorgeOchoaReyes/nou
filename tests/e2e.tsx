@@ -447,14 +447,15 @@ console.log("Finding things for you: open_file and clickable paths");
     writeFileSync(path.join(dir, "imp.ts"), 'import { a } from "./a.js";\nconsole.log(a);\n');
     await type("/open imp.ts");
     await press(KEY.enter, 400);
+    await until(() => frame().includes("console.log(a)"));
     // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
     const ctrlClick = (x: number, y: number) => `\x1b[<16;${x + 1};${y + 1}M`;
     await press(ctrlClick(27 + 12, 4), 400); // the "a" in console.log(a)
-    check("Ctrl+click on an imported name jumps to its import line", /1▌import \{ a \}/.test(frame()));
+    check("Ctrl+click on an imported name jumps to its import line", await until(() => /1▌import \{ a \}/.test(frame())));
     await press(ctrlClick(27 + 20, 3), 400); // the path in the import
-    check("Ctrl+click on the import's path opens that file", frame().split("\n")[2]!.includes(" a.ts"));
+    check("Ctrl+click on the import's path opens that file", await until(() => frame().split("\n")[2]!.includes(" a.ts") && frame().includes("const a = 1;")));
     await press(`\x1b[<2;${27 + 6 + 1};${3 + 1}M`, 400); // right-click the "a" of const a = 1
-    check("right-click goes to definitions too", frame().includes("1▌const a = 1;"));
+    check("right-click goes to definitions too", await until(() => frame().includes("1▌const a = 1;")));
   });
 }
 
