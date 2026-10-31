@@ -155,6 +155,10 @@ const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).joi
 
 export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [] }: Props) {
   const [input, setInputText] = useState("");
+  // Whether the chat has the keyboard right now: a key handler from a render before focus moved away can
+  // still be attached for a moment (on a busy machine), and its keys belong to the pane that has focus.
+  const focusedNow = useRef(focused);
+  focusedNow.current = focused;
   const [menuRow, setMenuRow] = useState(0);
   /** A new input also puts the command menu back on its first row, in the same render. */
   const setInput = (text: string) => {
@@ -464,7 +468,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
       <Text color={focused ? C.accent : C.dim}>{"─".repeat(Math.max(0, inner + 1))}</Text>
       <ChatInput
         value={input}
-        onChange={setInput}
+        onChange={(text) => focusedNow.current && setInput(text)}
         onSubmit={submit}
         focus={focused && !(approval && !input)}
         width={inner + 1}
