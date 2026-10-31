@@ -14,6 +14,8 @@ type Props = {
   wheel?: Wheel | null;
   /** Esc: back to the pane you came from (the command keeps running). */
   onLeave(): void;
+  /** Alt+↑/↓: taller or shorter, by this many rows. */
+  onResize(by: number): void;
 };
 
 const COLORS = { out: C.text, command: C.accent, info: C.dim, error: C.red } as const;
@@ -21,8 +23,9 @@ const COLORS = { out: C.text, command: C.accent, info: C.dim, error: C.red } as 
 /**
  * The terminal panel, under the code like VS Code's: type a command and Enter runs it. While one runs,
  * what you type goes to it; Ctrl+C stops it. ↑↓ go through what you ran, Ctrl+L clears, Esc leaves.
+ * Drag its top border (or Alt+↑/↓) to make it taller or shorter.
  */
-export const Terminal = memo(function Terminal({ shell, version, width, height, focused, wheel, onLeave }: Props) {
+export const Terminal = memo(function Terminal({ shell, version, width, height, focused, wheel, onLeave, onResize }: Props) {
   const [input, setInput] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [back, setBack] = useState(-1);
@@ -66,6 +69,7 @@ export const Terminal = memo(function Terminal({ shell, version, width, height, 
       setBack(-1);
       return;
     }
+    if (key.meta && (key.upArrow || key.downArrow)) return onResize(key.upArrow ? 2 : -2);
     if (key.upArrow || key.downArrow) {
       if (!history.length) return;
       const next = key.upArrow ? Math.min(history.length - 1, back + 1) : back - 1;

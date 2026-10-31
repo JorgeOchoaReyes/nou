@@ -98,7 +98,7 @@ Every change is reviewed like a code review:
 | <kbd>c</kbd> | in the file tree: show only changed files |
 | <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
-| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it; drag its top border (or <kbd>Alt</kbd>+↑/↓) to make it taller or shorter. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |

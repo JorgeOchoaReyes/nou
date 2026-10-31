@@ -702,6 +702,15 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("cd sub");
   await press(KEY.enter, 300);
   check("cd sticks for the next command", frame().includes("sub $ "));
+  const titleRow = () => frame().split("\n").findIndex((l) => l.includes("▸ Terminal"));
+  const before = titleRow();
+  const x = frame().split("\n")[before]!.indexOf("▸ Terminal");
+  await press(click(x, before - 1), 100); // its top border
+  await press(`\x1b[<32;${x + 1};${before - 4 + 1}M`, 100);
+  await press(`\x1b[<0;${x + 1};${before - 4 + 1}m`, 100);
+  check("dragging its top border makes it taller", await until(() => titleRow() === before - 3));
+  await press("\x1b\x1b[B", 100); // Alt+↓
+  check("Alt+↓ makes it shorter", await until(() => titleRow() === before - 1));
   await press(KEY.esc, 200);
   check("Esc leaves it open and gives the keyboard back", frame().includes("▸ Terminal") && !frame().split("\n").at(-1)!.includes("TERMINAL"));
   const rows = frame().split("\n");

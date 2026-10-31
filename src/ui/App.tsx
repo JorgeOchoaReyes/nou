@@ -146,6 +146,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** The terminal panel under the code (` or /terminal): its shell lives on while the panel is closed. */
   const [termOpen, setTermOpen] = useState(false);
   const [termVersion, setTermVersion] = useState(0);
+  /** Its height while its top border is being dragged (saved when you let go). */
+  const [termDrag, setTermDrag] = useState<number | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -258,7 +260,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "chatText" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -773,10 +775,24 @@ export function App({ initialModel, permContext, resume }: Props) {
     // The Games panel sits under a pane: it takes the clicks that land on it, × on its title closes it,
     // and dragging its title docks it under the pane you let go over.
     const term = layout.current.terminal;
+    // Dragging the terminal's top border makes it taller or shorter; its bottom stays put.
+    if (term && dragging.current === "terminal") {
+      const rows = Math.max(4, term.y + term.height - event.y);
+      if (event.kind === "release") {
+        dragging.current = null;
+        setTermDrag(null);
+        updateSettings({ terminalRows: rows });
+      } else if (event.kind === "drag") setTermDrag(rows);
+      return;
+    }
     if (term && event.x >= term.x && event.x < term.x + term.width && event.y >= term.y && event.y < term.y + term.height && !dragging.current) {
       if (event.kind === "wheel") return queueWheel("terminal", event.dir, false);
       if (event.kind !== "click") return;
       if (event.y === term.y + 1 && event.x >= term.x + term.width - 5) return toggleTerminal(false); // ×
+      if (event.y === term.y) {
+        dragging.current = "terminal"; // its top border: drag to resize
+        return;
+      }
       if (focus !== "terminal") beforeTerm.current = focus;
       setFocus("terminal");
       return;
@@ -1685,7 +1701,7 @@ ${snippet}
   const heights: Record<Dock, number> = { tree: height, code: height, chat: height };
   heights[gameDock] -= gameHeight;
   // The terminal takes the bottom third of the code's column (above the Games panel when that's there too).
-  const termHeight = termOpen ? Math.max(6, Math.min(Math.floor(height / 3), heights.code - 6)) : 0;
+  const termHeight = termOpen ? Math.max(4, Math.min(termDrag ?? settings.terminalRows ?? Math.floor(height / 3), heights.code - 4)) : 0;
   heights.code -= termHeight;
   const dockLeft = gameDock === "tree" ? 0 : gameDock === "code" ? treeWidth : treeWidth + codeWidth;
   const dockWidth = gameDock === "tree" ? treeWidth : gameDock === "code" ? codeWidth : chatWidth;
@@ -1712,6 +1728,11 @@ ${snippet}
       if (focus !== "terminal") beforeTerm.current = focus;
       setFocus("terminal");
     } else if (focus === "terminal") setFocus(beforeTerm.current === "terminal" ? "code" : beforeTerm.current);
+  }
+  /** Alt+↑/↓ in the terminal: taller or shorter by a couple of rows. */
+  function resizeTerminal(by: number) {
+    const now = layout.current.terminal?.height ?? 0;
+    if (now) updateSettings({ terminalRows: Math.max(4, now + by) });
   }
   function leaveTerminal() {
     setFocus(beforeTerm.current === "terminal" ? "code" : beforeTerm.current);
@@ -1985,7 +2006,7 @@ ${snippet}
       </Box>
       {layout.current.terminal && shellRef.current && (
         <Box position="absolute" marginLeft={layout.current.terminal.x} marginTop={layout.current.terminal.y}>
-          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} />
+          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onResize={resizeTerminal} />
         </Box>
       )}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}
