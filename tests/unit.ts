@@ -356,6 +356,16 @@ console.log("Show me how");
   check("engines without Nou's tools are asked for the block", showMePrompt("x", false).includes("nou-steps") && showMePrompt("x", true).includes("show_steps"));
 }
 
+console.log("Web links in the chat");
+{
+  const { renderMarkdown, linkAt } = await import("../src/ui/text.js");
+  const bare = renderMarkdown("See https://example.com/docs/README.md, then retry.", 80, () => true)[0]!.spans;
+  const url = bare.find((sp) => sp.link?.url);
+  check("a bare web address is a link, without the punctuation after it", url?.link?.url === "https://example.com/docs/README.md" && !bare.some((sp) => sp.link && !sp.link.url));
+  const md = renderMarkdown("Read [the docs](https://example.com/x).", 80)[0]!.spans;
+  check("[text](url) links its text to the page", md.find((sp) => sp.text === "the docs")?.link?.url === "https://example.com/x" && linkAt(md, 6)?.url === "https://example.com/x");
+}
+
 console.log("Retrying passing failures");
 {
   const { transientMessage } = await import("../src/agent/index.js");

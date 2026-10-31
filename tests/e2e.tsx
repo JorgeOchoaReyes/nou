@@ -16,6 +16,7 @@ process.chdir(dir);
 process.env.NOU_NO_UPDATE_CHECK = "1";
 // Keep test runs out of the real ~/.nou (history, settings).
 process.env.HOME = process.env.USERPROFILE = mkdtempSync(path.join(os.tmpdir(), "nou-home-"));
+process.env.NOU_TEST_OPEN = "1"; // web links are noted, not opened in a browser
 process.env.NOU_ENGINE_DIR = mkdtempSync(path.join(os.tmpdir(), "nou-engines-"));
 
 // Imported after chdir: some modules read the working directory when loaded.
@@ -426,7 +427,7 @@ console.log("Finding things for you: open_file and clickable paths");
       asked++;
       const last = messages[messages.length - 1];
       if (last.role === "user") return { text: "", toolCalls: [{ id: `o${asked}`, name: "open_file", args: { path: "many.ts", line: 40, end_line: 42 } }] };
-      return { text: "It's in many.ts:40-42, and a.ts has the other one.", toolCalls: [] };
+      return { text: "It's in many.ts:40-42, and a.ts has the other one. Docs: https://example.com/guide", toolCalls: [] };
     },
   };
   await session({ provider: finder, model: "fake" }, async ({ press, type, frame }) => {
@@ -441,6 +442,9 @@ console.log("Finding things for you: open_file and clickable paths");
     const x = rows[y]!.indexOf("a.ts has");
     await press(click(x + 1, y), 500);
     check("clicking a file named in a reply opens it", frame().split("\n")[2]!.includes(" a.ts"));
+    const urlRow = frame().split("\n").findIndex((l) => l.includes("example.com"));
+    await press(click(frame().split("\n")[urlRow]!.indexOf("example.com"), urlRow), 300);
+    check("clicking a web address opens it in the browser", await until(() => (globalThis as any).__opened === "https://example.com/guide"));
     await type("/open long");
     await press(KEY.enter, 400);
     check("/open opens a file from part of its name", frame().split("\n")[2]!.includes("long.ts"));

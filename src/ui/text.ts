@@ -130,7 +130,8 @@ export function lineCounts(before: string, after: string): { added: number; remo
 }
 
 /** A file the text refers to, e.g. src/a.ts:12-20, which a click opens. */
-export type FileRef = { path: string; line?: number; to?: number };
+/** Something clickable in the chat: a file (and lines) in the project, or a web address (`url`). */
+export type FileRef = { path: string; line?: number; to?: number; url?: string };
 export type Span = { text: string; bold?: boolean; italic?: boolean; code?: boolean; dim?: boolean; link?: FileRef };
 export type MdLine = { spans: Span[]; kind: "text" | "heading" | "code" | "quote" | "rule" };
 
@@ -146,8 +147,10 @@ export function inlineSpans(text: string, base: Span = { text: "" }): Span[] {
     else if (m[3] !== undefined || m[4] !== undefined) out.push(...inlineSpans(m[3] ?? m[4]!, { ...base, bold: true }));
     else if (m[5] !== undefined || m[6] !== undefined) out.push(...inlineSpans(m[5] ?? m[6]!, { ...base, italic: true }));
     else {
-      out.push(...inlineSpans(m[7]!, base));
-      if (m[8] !== m[7]) out.push({ ...base, text: ` (${m[8]})`, dim: true });
+      // [text](https://...) links to the page; [text](file) is left for the file links.
+      const web = /^https?:\/\//.test(m[8]!) ? { ...base, link: { path: "", url: m[8]! } } : base;
+      out.push(...inlineSpans(m[7]!, web));
+      if (m[8] !== m[7]) out.push({ ...web, text: ` (${m[8]})`, dim: true });
     }
     pos = m.index + m[0].length;
   }
@@ -206,7 +209,8 @@ const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").
 /** Renders markdown for the terminal: headings, lists, quotes, code blocks, tables and inline styles, wrapped to `width`. */
 export function renderMarkdown(text: string, width: number, isFile?: (file: string) => boolean): MdLine[] {
   // File references become links before wrapping, so a long path that wraps is still one link.
-  const spansOf = (line: string, base?: Span) => (isFile ? linkFileRefs(inlineSpans(line, base), isFile) : inlineSpans(line, base));
+  // Web addresses first, so a file name inside a URL stays part of the URL.
+  const spansOf = (line: string, base?: Span) => (isFile ? linkFileRefs(linkUrls(inlineSpans(line, base)), isFile) : linkUrls(inlineSpans(line, base)));
   const out: MdLine[] = [];
   const src = splitLines(text);
   let fence: string | null = null;
@@ -285,6 +289,10 @@ const FILE_REF = /(?<![\w/\\.@~-])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w@.~+-]+
 export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): Span[] {
   const out: Span[] = [];
   for (const span of spans) {
+    if (span.link) {
+      out.push(span);
+      continue;
+    }
     let pos = 0;
     for (const m of span.text.matchAll(FILE_REF)) {
       const file = m[1]!.replace(/^\.[\\/]/, "");
@@ -294,6 +302,27 @@ export function linkFileRefs(spans: Span[], isFile: (file: string) => boolean): 
       if (m[2]) link.line = Number(m[2]);
       if (m[3]) link.to = Number(m[3]);
       out.push({ ...span, text: m[0], link });
+      pos = m.index + m[0].length;
+    }
+    if (pos < span.text.length) out.push(pos ? { ...span, text: span.text.slice(pos) } : span);
+  }
+  return out;
+}
+
+const URL_RE = /\bhttps?:\/\/[^\s<>()"'`]+[^\s<>()"'`.,;:!?]/g;
+
+/** Splits out web addresses (http:// and https://) as link spans, keeping each span's style. */
+export function linkUrls(spans: Span[]): Span[] {
+  const out: Span[] = [];
+  for (const span of spans) {
+    if (span.link || span.code || !span.text.includes("http")) {
+      out.push(span);
+      continue;
+    }
+    let pos = 0;
+    for (const m of span.text.matchAll(URL_RE)) {
+      if (m.index > pos) out.push({ ...span, text: span.text.slice(pos, m.index) });
+      out.push({ ...span, text: m[0], link: { path: "", url: m[0] } });
       pos = m.index + m[0].length;
     }
     if (pos < span.text.length) out.push(pos ? { ...span, text: span.text.slice(pos) } : span);

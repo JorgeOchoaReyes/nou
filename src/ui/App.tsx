@@ -33,7 +33,7 @@ import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
 import { SLASH_COMMANDS, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat, type ChatSelect } from "./Chat.js";
-import { copyToClipboard } from "./clipboard.js";
+import { copyToClipboard, openInBrowser } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GamePanel } from "./GamePanel.js";
@@ -1159,6 +1159,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   openAtRef.current = openAt;
   /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
   const openRef = useEvent((ref: FileRef) => {
+    if (ref.url) return openInBrowser(ref.url);
     clearFollow();
     const file = path.relative(process.cwd(), path.resolve(ref.path)).replace(/\\/g, "/");
     openAt(file, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined);

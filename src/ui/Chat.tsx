@@ -3,7 +3,7 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
 import { statSync } from "fs";
 import path from "path";
-import { closeOpenMarkdown, linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
+import { closeOpenMarkdown, linkAt, linkFileRefs, linkUrls, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { copyToClipboard } from "./clipboard.js";
 import { C, SPINNER, ANIMATION_MS } from "./theme.js";
@@ -108,7 +108,7 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
       ? { icon: "⚙", color: C.dim }
       : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
     wrap(entry.text, inner - 4).forEach((line, i) => {
-      const spans = links && entry.kind !== "user" ? linkFileRefs([{ text: ` ${line}` }], isProjectFile) : [];
+      const spans = links && entry.kind !== "user" ? linkFileRefs(linkUrls([{ text: ` ${line}` }]), isProjectFile) : [];
       out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color, ...(spans.some((sp) => sp.link) ? { spans } : {}) });
     });
   }
