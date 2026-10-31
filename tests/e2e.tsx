@@ -773,15 +773,21 @@ console.log("Show me how");
     await type("/showme add a double helper");
     await press(KEY.enter, 300);
     check("/showme opens the first step in the editor, saying why", await until(() => frame().includes("Step 1 of 2") && frame().includes("EDITING") && frame().includes("A helper that reuses add")));
-    check("the code to type shows ahead of the cursor", frame().includes("xport const double"));
+    check("the code to type shows ahead of the cursor", await until(() => frame().includes("xport const double")));
+    // The editor's on screen; End (harmless in either pane) lets it take the keyboard before typing: on a
+    // loaded machine, React hooks up its key handler only when the next key arrives.
+    await until(() => frame().split("\n").at(-1)!.includes("EDIT"));
+    await press(KEY.end, 200);
     await type("export const dou");
-    check("typing follows the dim text", frame().includes("ble = (n: number)") && frame().includes("Type the dim text"));
+    check("typing follows the dim text", await until(() => frame().includes("ble = (n: number)") && frame().includes("Type the dim text")));
     await press(KEY.tab, 300);
-    check("Tab fills in the rest; the step is done, saved, and the next one opens", await until(() => frame().includes("Step 2 of 2"))
+    check("Tab fills in the rest; the step is done, saved, and the next one opens", await until(() => frame().includes("Step 2 of 2") && readFileSync(path.join(dir, "guided.ts"), "utf-8").includes("double"))
       && readFileSync(path.join(dir, "guided.ts"), "utf-8").includes("export const double = (n: number) => add(n, n);"));
+    await press(KEY.end, 200);
     await type("// math helperz");
     check("a typo is pointed out", await until(() => frame().includes("Not quite")));
     await press("\x7f", 100); // Backspace
+    await until(() => !frame().includes("Not quite"));
     await type("s");
     check("fixing it finishes the guide", await until(() => frame().includes("That's it: all 2 steps")) && readFileSync(path.join(dir, "guided.ts"), "utf-8").startsWith("// math helpers\nexport function add"));
     check("Nou didn't edit anything itself", calls === 2);
