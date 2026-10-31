@@ -885,9 +885,9 @@ console.log("Resuming a conversation");
     await type("/resume");
     await press(KEY.enter, 300);
     check("/resume lists earlier conversations here", frame().includes("just now)"));
-    await type("/resume 1");
+    await type("1");
     await press(KEY.enter, 400);
-    check("/resume 1 picks the latest back up", frame().includes("Resumed") && frame().includes("pineapple"));
+    check("then typing its number picks it back up (not sent to the agent)", await until(() => frame().includes("Resumed") && frame().includes("pineapple")) && !frame().includes("answer 2"));
   });
   // A new run of Nou in the same folder.
   await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {

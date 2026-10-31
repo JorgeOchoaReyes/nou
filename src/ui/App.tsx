@@ -172,6 +172,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const guideAsk = useRef<string | null>(null);
   /** Where the undo history stood when the steps were asked for: an engine that edits anyway is put back. */
   const guideMark = useRef(0);
+  /** /resume just listed the conversations: the next message, if it's a number, picks one. */
+  const pickingResume = useRef(false);
   const guideFound = useRef<GuideStep[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
@@ -651,7 +653,8 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (!list.length) return info("No earlier conversations in this folder yet: Nou's are saved after each reply, and Claude Code's and Codex's own sessions here show up too.");
     if (!arg) {
       const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${"file" in c ? `${engineInfo(c.engine).label} CLI` : engineInfo(isEngineId(c.engine) ? c.engine : "nou").label} · ${ago(c.updated)})`);
-      return info(`Earlier conversations here. /resume <number> picks one up (or /resume last):\n${rows.join("\n")}`);
+      pickingResume.current = true; // a bare number, typed next, picks one
+      return info(`Earlier conversations here. Type a number to pick one up (or /resume last):\n${rows.join("\n")}`);
     }
     const pick = arg === "last" ? list[0] : list[Number(arg) - 1] ?? list.find((c) => c.id === arg);
     if (!pick) return info(`There's no conversation ${arg}: /resume lists them.`, "error");
@@ -1825,6 +1828,10 @@ ${snippet}
     } else setQueued((q) => [...q, text]);
   };
   const send = (text: string) => {
+    // Right after /resume lists them, a number picks a conversation instead of being sent to the agent.
+    const picking = pickingResume.current;
+    pickingResume.current = false;
+    if (picking && /^\s*\d+\s*$/.test(text)) return void resumeConversation(text.trim());
     if (text.startsWith("/")) {
       void runCommand(text);
       return;
