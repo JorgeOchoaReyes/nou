@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 export function runsWhileBusy(text: string): boolean {
@@ -43,6 +43,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "clear", description: "start a fresh conversation" },
   { name: "showme", args: "<what you want>", description: "Nou shows you how, step by step, and you type it (with the code shown ahead of your cursor)" },
   { name: "teach", args: "<what you want>", description: "same as /showme: Nou teaches you to make the change yourself, step by step" },
+  { name: "new", description: "a new conversation tab: another agent, working alongside this one" },
+  { name: "tab", args: "[n]", description: "list the conversation tabs, or switch to tab n" },
+  { name: "close", description: "close this conversation tab (it stays saved for /resume)" },
   { name: "terminal", description: "a terminal under the code, like VS Code's (or press `)" },
   { name: "resume", args: "[number|last]", description: "pick up an earlier conversation in this folder (any engine)" },
   { name: "pull", args: "<model>", description: "download an Ollama model" },

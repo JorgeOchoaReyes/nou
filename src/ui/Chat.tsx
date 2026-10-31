@@ -38,6 +38,8 @@ type Props = {
   queued?: string[];
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
+  /** Conversation tabs (several agents at once): shown in the title row, with + for a new one. */
+  tabs?: { items: ChatTabItem[]; active: string } | null;
   /** Pressing, dragging and letting go over the messages: selects text, copied when you let go. */
   select?: ChatSelect | null;
   /** A click in the conversation: `row` from the top of the messages, `col` from where their text starts. */
@@ -126,11 +128,32 @@ function cachedLines(entry: ChatEntry, inner: number): Line[] {
   return lines;
 }
 
+/** A conversation tab over the chat: what it's called, and whether it's working or waiting on you. */
+export type ChatTabItem = { id: string; label: string; state: "idle" | "busy" | "waiting" };
+
+/**
+ * Where each tab sits in the chat's title row (columns from the pane's inner left edge), and the "+"
+ * that opens a new one: shared by the drawing and the clicks.
+ */
+export function chatTabZones(tabs: ChatTabItem[]): { zones: { id: string; from: number; to: number }[]; plus: number; width: number } {
+  // One tab: just "Chat +", to leave the title row its room.
+  if (tabs.length === 1) return { zones: [{ id: tabs[0]!.id, from: 3, to: 7 }], plus: 8, width: 9 };
+  let x = 3; // " ◆ "
+  const zones = tabs.map((t) => {
+    const w = tabText(t).length;
+    const zone = { id: t.id, from: x, to: x + w };
+    x += w + 1;
+    return zone;
+  });
+  return { zones, plus: x + 1, width: x + 3 };
+}
+const tabText = (t: ChatTabItem) => ` ${t.state === "busy" ? "● " : t.state === "waiting" ? "! " : ""}${t.label} `;
+
 export type ChatSelect = { row: number; col: number; kind: "press" | "drag" | "release"; nonce: number };
 type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, queued = [] }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [] }: Props) {
   const [input, setInputText] = useState("");
   const [menuRow, setMenuRow] = useState(0);
   /** A new input also puts the command menu back on its first row, in the same render. */
@@ -351,7 +374,20 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const empty = entries.length === 0 && !streaming;
   const title = (
     <>
-      {" "}<Text color={C.accent2}>◆</Text> Chat
+      {" "}<Text color={C.accent2}>◆</Text>{" "}
+      {tabs && tabs.items.length > 1 ? (
+        <>
+          {tabs.items.map((t) => (
+            <Text key={t.id}>
+              <Text {...(t.id === tabs.active ? { backgroundColor: C.panel, color: C.text, bold: true } : { color: t.state === "waiting" ? C.yellow : C.dim })}>
+                {tabText(t)}
+              </Text>
+              {" "}
+            </Text>
+          ))}
+          <Text color={C.accent2} bold> + </Text>
+        </>
+      ) : <>Chat{tabs ? <Text color={C.accent2} bold> +</Text> : null}</>}
       {flash ? <Text color={C.green} bold>  {flash}</Text> : back
         ? unread
           ? <Text color={C.green} bold>  ↓ {unread} new lines below<Text color={C.dim}> · PgDn / wheel / Ctrl+End</Text></Text>

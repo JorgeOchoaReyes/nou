@@ -829,6 +829,40 @@ console.log("Steps fold into one line");
   });
 }
 
+console.log("Conversation tabs");
+{
+  let release: (() => void) | null = null;
+  const twoAtOnce: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      const last = String(messages[messages.length - 1].content).replace(/<editor_context>[\s\S]*/, "").trim();
+      if (last === "slow job") await new Promise<void>((r) => (release = r));
+      return { text: `done: ${last}`, toolCalls: [] };
+    },
+  };
+  await session({ provider: twoAtOnce, model: "fake" }, async ({ press, type, frame }) => {
+    await type("slow job");
+    await press(KEY.enter, 300);
+    await until(() => !!release);
+    await type("/new");
+    await press(KEY.enter, 300);
+    check("/new opens another conversation while the first keeps working", await until(() => frame().includes("● slow job") && frame().includes("chat 2") && !frame().includes("❯ slow job")));
+    await type("quick one");
+    await press(KEY.enter, 300);
+    check("the new tab answers on its own", await until(() => frame().includes("done: quick one")));
+    release!();
+    await delay(300);
+    check("the first tab finishes in the background", !frame().includes("● slow job") && !frame().includes("done: slow job"));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes(" slow job "));
+    await press(click(rows[y]!.indexOf("slow job"), y), 300);
+    check("clicking its tab shows it, reply and all", await until(() => frame().includes("done: slow job")) && !frame().includes("done: quick one"));
+    await type("/close");
+    await press(KEY.enter, 300);
+    check("/close closes the tab on screen", await until(() => frame().includes("done: quick one") && !frame().includes("chat 2")));
+  });
+}
+
 console.log("Resuming a conversation");
 {
   let seen: any[] = [];

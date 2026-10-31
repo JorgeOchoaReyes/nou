@@ -32,7 +32,7 @@ import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
 import { SLASH_COMMANDS, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
-import { Chat, type ChatSelect } from "./Chat.js";
+import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
@@ -64,6 +64,17 @@ const FOLLOW_STEP_MS: Record<string, number> = { slow: 2500, normal: 1200, fast:
 const MAX_FOLLOW_LAG = 12;
 /** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
 const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 3);
+
+/** A conversation tab while it's not on screen. */
+type TabState = {
+  entries: ChatEntry[];
+  streaming: string;
+  busy: string | null;
+  approval: { request: ApprovalRequest; resolve(ok: boolean): void } | null;
+  queued: string[];
+  conversationId: string;
+  agent: Engine;
+};
 
 type Props = {
   initialModel: ModelChoice;
@@ -325,32 +336,7 @@ export function App({ initialModel, permContext, resume }: Props) {
         openAtRef.current(filePath, line ?? 1, false, to);
       },
       onRead: (filePath, line, to) => followStepRef.current({ file: filePath, ...(line ? { line } : {}), ...(to ? { to } : {}) }),
-      onChange: (change, status, turn) => {
-        if (status === "applied") {
-          timelineRef.current!.record({ path: change.path, before: change.isNew ? null : change.before, after: change.after, source: "nou", turn });
-        }
-        const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
-        setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
-        setWorking((w) => {
-          if (status === "rejected") return w.has(change.path) ? new Set([...w].filter((p) => p !== change.path)) : w;
-          return w.has(change.path) ? w : new Set(w).add(change.path);
-        });
-        // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
-        if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
-          clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
-          setOpenFile(change.path);
-          setContent(status === "applied" ? change.after : readText(change.path));
-          setDiffMode("off");
-          setReveal(change.path);
-        }
-        if (status === "applied") {
-          setTreeVersion((v) => v + 1);
-          setGit(gitStatus());
-          if (draft.current?.path === change.path) {
-            setEntries((prev) => [...prev, { kind: "info", text: `Heads up: you have unsaved edits in ${change.path}; saving them will overwrite Nou's change.` }]);
-          }
-        }
-      },
+      onChange: (change, status, turn) => applyChange(change, status, turn, false),
       approve: (request) => {
         // Asked to show how, not to do it: edits are turned down (the model is told to hand back steps).
         if (guideAsk.current && request.kind === "change") return Promise.resolve(false);
@@ -363,9 +349,136 @@ export function App({ initialModel, permContext, resume }: Props) {
       checkChange: (change) => problemsIntroduced(diagnosticsRef.current!, change),
     };
   }
+  /** A change an engine made or proposes; one from a tab in the background doesn't take over the code view. */
+  function applyChange(change: FileChange, status: ChangeStatus, turn: string, background: boolean) {
+    if (status === "applied") {
+          timelineRef.current!.record({ path: change.path, before: change.isNew ? null : change.before, after: change.after, source: "nou", turn });
+    }
+    const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
+    setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
+    setWorking((w) => {
+      if (status === "rejected") return w.has(change.path) ? new Set([...w].filter((p) => p !== change.path)) : w;
+      return w.has(change.path) ? w : new Set(w).add(change.path);
+    });
+    // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
+    if (!background && ((status === "pending" && !draftActiveRef.current) || followRef.current)) {
+      clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
+      setOpenFile(change.path);
+      setContent(status === "applied" ? change.after : readText(change.path));
+      setDiffMode("off");
+      setReveal(change.path);
+    }
+    if (status === "applied") {
+      setTreeVersion((v) => v + 1);
+      setGit(gitStatus());
+      if (draft.current?.path === change.path) {
+        setEntries((prev) => [...prev, { kind: "info", text: `Heads up: you have unsaved edits in ${change.path}; saving them will overwrite Nou's change.` }]);
+      }
+    }
+  }
+
+  // Conversation tabs: several agents at once. The one on screen uses the state above; the others keep
+  // theirs here, and each tab's engine reports through hooks that send it to the right place.
+  const activeTab = useRef("1");
+  const [activeTabId, setActiveTabId] = useState("1");
+  const [chatTabs, setChatTabs] = useState<string[]>(["1"]);
+  const tabStore = useRef(new Map<string, TabState>());
+  const [, setTabVersion] = useState(0);
+  const tabHooks = useRef(new Map<string, AgentHooks>());
+  /** The hooks for tab `id`'s engine: on screen, they're the chat's own; in the background, its stored state. */
+  function hooksFor(id: string): AgentHooks {
+    const cached = tabHooks.current.get(id);
+    if (cached) return cached;
+    const live = () => hooksRef.current!;
+    const shown = () => activeTab.current === id;
+    const stored = (fn: (t: TabState) => void) => {
+      const t = tabStore.current.get(id);
+      if (!t) return;
+      fn(t);
+      setTabVersion((v) => v + 1);
+    };
+    const hooks: AgentHooks = {
+      onEntry: (entry) => (shown() ? live().onEntry(entry) : stored((t) => (t.entries = [...t.entries, entry]))),
+      onStream: (text) => (shown() ? live().onStream(text) : void (tabStore.current.get(id) && (tabStore.current.get(id)!.streaming = text))),
+      onBusy: (label) => {
+        if (shown()) return live().onBusy(label);
+        stored((t) => {
+          t.busy = label;
+          if (!label) saveTab(t); // it finished in the background: keep it for /resume
+        });
+      },
+      onOpen: (...args) => (shown() ? live().onOpen?.(...args) : undefined),
+      onRead: (...args) => (shown() ? live().onRead(...args) : undefined),
+      onChange: (change, status, turn) => applyChange(change, status, turn, !shown()),
+      approve: (request) => {
+        if (shown()) return live().approve(request);
+        const s = settingsRef.current;
+        if ((request.kind === "change" && s.autoApproveEdits) || (request.kind !== "change" && s.autoApproveCommands)) return Promise.resolve(true);
+        // It waits for you: its tab says so, and the question is there when you switch to it.
+        return new Promise<boolean>((resolve) => stored((t) => (t.approval = { request, resolve })));
+      },
+      checkChange: (change) => live().checkChange?.(change) ?? Promise.resolve(null),
+    };
+    tabHooks.current.set(id, hooks);
+    return hooks;
+  }
+  /** Puts tab `id` on screen, keeping the one there now (and whatever it's doing) in the background. */
+  function switchChatTab(id: string) {
+    if (id === activeTab.current || !tabStore.current.has(id)) return;
+    tabStore.current.set(activeTab.current, { entries, streaming: streamed.current.text, busy, approval, queued, conversationId, agent: agentRef.current! });
+    const t = tabStore.current.get(id)!;
+    tabStore.current.delete(id);
+    activeTab.current = id;
+    setActiveTabId(id);
+    agentRef.current = t.agent;
+    setEntries(t.entries);
+    showStream(t.streaming);
+    setBusy(t.busy);
+    setApproval(t.approval);
+    setQueued(t.queued);
+    setConversationId(t.conversationId);
+    setFocus("chat");
+  }
+  /** A new conversation tab, with the same engine and model, next to the others. */
+  function newChatTab() {
+    const id = String(Date.now());
+    const agent = createEngine(agentRef.current!.id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksFor(id));
+    agent.configure(engineConfig.current);
+    tabStore.current.set(id, { entries: [], streaming: "", busy: null, approval: null, queued: [], conversationId: newSessionId(), agent });
+    setChatTabs((tabs) => [...tabs, id]);
+    switchChatTab(id);
+  }
+  /** Closes the conversation tab on screen (stopping its engine); the conversation stays saved for /resume. */
+  function closeChatTab() {
+    if (chatTabs.length < 2) return info("That's the only conversation tab. /clear starts a fresh conversation in it.");
+    const id = activeTab.current;
+    const at = chatTabs.indexOf(id);
+    const next = chatTabs[at + 1] ?? chatTabs[at - 1]!;
+    const agent = agentRef.current!;
+    approval?.resolve(false);
+    switchChatTab(next);
+    agent.cancel();
+    agent.dispose?.();
+    tabStore.current.delete(id);
+    tabHooks.current.delete(id);
+    setChatTabs((tabs) => tabs.filter((t) => t !== id));
+  }
+  /** The tabs as the chat's title row shows them: named for what you asked first, marked when working or waiting. */
+  function chatTabItems(): ChatTabItem[] {
+    return chatTabs.map((id, i) => {
+      const t = id === activeTab.current ? { entries, busy, approval } : tabStore.current.get(id);
+      const first = t?.entries.find((e) => e.kind === "user")?.text.replace(/\s+/g, " ");
+      const label = first ? (first.length > 14 ? `${first.slice(0, 13)}…` : first) : `chat ${i + 1}`;
+      return { id, label, state: t?.approval ? "waiting" : t?.busy ? "busy" : "idle" };
+    });
+  }
+  function saveTab(t: TabState) {
+    const first = t.entries.find((e) => e.kind === "user");
+    if (first) saveConversation({ id: t.conversationId, title: first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: t.agent.id, entries: t.entries, state: t.agent.snapshot?.() });
+  }
   if (!agentRef.current) {
     const saved = loadSettings().engine;
-    agentRef.current = createEngine(isEngineId(saved) ? saved : "nou", initialModel, buildSystemPrompt(permContext), hooksRef.current);
+    agentRef.current = createEngine(isEngineId(saved) ? saved : "nou", initialModel, buildSystemPrompt(permContext), hooksFor(activeTab.current));
   }
 
   useEffect(() => diagnostics.subscribe(() => setDiagVersion((v) => v + 1)), []);
@@ -510,7 +623,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       info(`Installed ${target.label} (${target.package}).`);
     }
     agentRef.current!.dispose?.();
-    const engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+    const engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksFor(activeTab.current));
     engine.configure(engineConfig.current);
     agentRef.current = engine;
     updateSettings({ engine: id });
@@ -562,7 +675,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     let engine = agentRef.current!;
     if (id && id !== engine.id && isInstalled(engineInfo(id))) {
       engine.dispose?.();
-      engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+      engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksFor(activeTab.current));
       engine.configure(engineConfig.current);
       agentRef.current = engine;
       updateSettings({ engine: id });
@@ -901,6 +1014,14 @@ export function App({ initialModel, permContext, resume }: Props) {
       dragging.current = { scroll: pane };
       scrollPane(pane, event.y);
       return;
+    }
+    // The chat's title row holds the conversation tabs: a click switches, + opens a new one.
+    if (event.kind === "click" && pane === "chat" && event.y === 2) {
+      const at = event.x - treeWidth - codeWidth - 1;
+      const { zones, plus } = chatTabZones(chatTabItems());
+      if (Math.abs(at - plus) <= 1) return newChatTab();
+      const zone = zones.find((z) => at >= z.from && at < z.to);
+      if (zone) return switchChatTab(zone.id);
     }
     // The code view's title row holds the tabs: a click switches, the × closes.
     if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length && !diff) {
@@ -1493,6 +1614,15 @@ ${snippet}
       return;
     case "terminal":
       return toggleTerminal();
+    case "new":
+      return newChatTab();
+    case "close":
+      return closeChatTab();
+    case "tab": {
+      const n = Number(arg);
+      if (!n || !chatTabs[n - 1]) return info(`Conversation tabs: ${chatTabItems().map((t, i) => `${i + 1}. ${t.label}${t.state !== "idle" ? ` (${t.state === "busy" ? "working" : "waiting on you"})` : ""}`).join("  ")}. /tab <n> switches, /new opens one, /close closes this one.`);
+      return switchChatTab(chatTabs[n - 1]!);
+    }
     case "showme":
     case "teach":
       return showMe(rest.join(" "));
@@ -2104,6 +2234,7 @@ ${snippet}
           onAnswer={onAnswer}
           click={chatClick}
           select={chatSelect}
+          tabs={{ items: chatTabItems(), active: activeTabId }}
           onOpenRef={openRef}
         />
       </Box>
