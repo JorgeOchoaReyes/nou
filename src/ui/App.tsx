@@ -38,6 +38,7 @@ import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GameGuard, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
+import { forgetScreen } from "./redraw.js";
 import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
@@ -160,6 +161,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [termVersion, setTermVersion] = useState(0);
   /** Its height while its top border is being dragged (saved when you let go). */
   const [termDrag, setTermDrag] = useState<number | null>(null);
+  /** Bumped to draw every line again after the screen is cleared (/redraw, Ctrl+L). */
+  const [, setRepaint] = useState(0);
   /** The Games panel's height while its top border is being dragged (saved when you let go). */
   const [gameSizeDrag, setGameSizeDrag] = useState<number | null>(null);
   /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
@@ -1367,6 +1370,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       else setFocus("chat");
       return;
     }
+    if (key.ctrl && input === "l") return redraw(); // (the editor and terminal use Ctrl+L themselves)
     if (focus === "chat") return; // letters belong to the text box
     if (input === "?") setQuickOpen(">"); // every action, searchable
     else if (input === "/") {
@@ -1625,6 +1629,8 @@ ${snippet}
       return;
     case "terminal":
       return toggleTerminal();
+    case "redraw":
+      return redraw();
     case "new":
       return newChatTab();
     case "close":
@@ -1982,6 +1988,11 @@ ${snippet}
     updateSettings({ mouse: !settings.mouse });
     info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
   };
+  /** /redraw, Ctrl+L: draws the whole screen again, in case anything else wrote to the terminal and shifted it. */
+  function redraw() {
+    forgetScreen();
+    setRepaint((n) => n + 1);
+  }
   /** Opens the terminal panel (starting its shell the first time) and gives it the keyboard, or closes it. */
   function toggleTerminal(open = !termOpen) {
     shellRef.current ??= new Shell(() => setTermVersion((v) => v + 1));
