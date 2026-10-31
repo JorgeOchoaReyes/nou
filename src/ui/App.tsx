@@ -149,6 +149,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [termVersion, setTermVersion] = useState(0);
   /** Its height while its top border is being dragged (saved when you let go). */
   const [termDrag, setTermDrag] = useState<number | null>(null);
+  /** The Games panel's height while its top border is being dragged (saved when you let go). */
+  const [gameSizeDrag, setGameSizeDrag] = useState<number | null>(null);
   /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
   const tabStripCache = useRef<{ key: string; strip: ReactNode } | null>(null);
   /**
@@ -272,7 +274,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -814,6 +816,16 @@ export function App({ initialModel, permContext, resume }: Props) {
     const game = layout.current.game;
     if (gamesOpen && game) {
       const drag = dragging.current;
+      // Its top border makes it taller or shorter (its bottom stays put); its title moves it.
+      if (drag === "gameSize") {
+        const rows = Math.max(GAME_PANEL.minHeight, game.y + game.height - event.y);
+        if (event.kind === "release") {
+          dragging.current = null;
+          setGameSizeDrag(null);
+          updateSettings({ gameRows: rows });
+        } else if (event.kind === "drag") setGameSizeDrag(rows);
+        return;
+      }
       if (drag === "game") {
         const { treeWidth, codeWidth } = layout.current;
         const over: Dock = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
@@ -835,7 +847,8 @@ export function App({ initialModel, permContext, resume }: Props) {
         }
         if (focus !== "game") beforeGame.current = focus;
         setFocus("game");
-        if (event.y <= game.y + 1) dragging.current = "game";
+        if (event.y === game.y) dragging.current = "gameSize";
+        else if (event.y === game.y + 1) dragging.current = "game";
         return;
       }
     }
@@ -1801,7 +1814,7 @@ ${snippet}
   }
   const tabStrip = tabStripCache.current.strip;
   // The Games panel takes the bottom of its pane's column: up to 19 rows, and never more than half.
-  const gameHeight = gamesOpen ? Math.min(GAME_PANEL.height, Math.floor(height / 2)) : 0;
+  const gameHeight = gamesOpen ? Math.max(GAME_PANEL.minHeight, Math.min(gameSizeDrag ?? settings.gameRows ?? GAME_PANEL.height, height - 6)) : 0;
   const heights: Record<Dock, number> = { tree: height, code: height, chat: height };
   heights[gameDock] -= gameHeight;
   // The terminal takes the bottom third of the code's column (above the Games panel when that's there too).

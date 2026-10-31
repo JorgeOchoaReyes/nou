@@ -88,7 +88,7 @@ export const GamePanel = memo(function GamePanel({ width, height, focused, movin
 
   const color = focused || moving ? C.accent2 : C.dim;
   const inner = width - 2;
-  const title = moving ? " ✦ Drop it on a pane: files, code or chat" : playing ? ` ✦ ${playing.game.title}  ⠿ drag to move` : " ✦ Games  ⠿ drag to move";
+  const title = moving ? " ✦ Drop it on a pane: files, code or chat" : `${playing ? ` ✦ ${playing.game.title}` : " ✦ Games"}  ⠿ drag to move · top edge resizes`;
   // The title row: the name and the drag handle, and × (close) at the right.
   const head = title.length > inner - 3 ? `${title.slice(0, inner - 4)}…` : title.padEnd(inner - 3);
   const hint = !focused ? "click to play" : playing ? (view?.over ? "Enter again · q games · Esc leave" : `${paused ? "PAUSED · " : ""}Space pause · q games · Esc leave`) : "↑↓ choose · Enter play · Esc leave";

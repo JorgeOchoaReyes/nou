@@ -643,6 +643,13 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const after = frame().split("\n");
   const moved = after.findIndex((l) => l.includes("✦ Pong"));
   check("letting go over the code docks it under the code", moved > 3 && after[moved]!.indexOf("✦ Pong") > 24 && after[moved]!.indexOf("✦ Pong") < 66);
+  const gameTitle = () => frame().split("\n").findIndex((l) => l.includes("✦ Pong"));
+  const top = gameTitle();
+  const gx = frame().split("\n")[top]!.indexOf("✦ Pong");
+  await press(click(gx, top - 1), 100); // its top border
+  await press(`\x1b[<32;${gx + 1};${top + 1 + 1}M`, 100);
+  await press(`\x1b[<0;${gx + 1};${top + 1 + 1}m`, 100);
+  check("dragging its top border makes it shorter", await until(() => gameTitle() === top + 2));
   await press(KEY.esc, 300);
   check("Esc gives the keyboard back, and the game waits", !frame().split("\n").at(-1)!.includes("GAME") && frame().includes("click to play"));
   await type("/games");
