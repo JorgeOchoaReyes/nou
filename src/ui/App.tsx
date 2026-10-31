@@ -1521,7 +1521,7 @@ ${snippet}
     setFocus("chat");
   }, [retract, busy]);
 
-  /** Messages sent while Nou works: each goes when it finishes, in order. */
+  /** Messages sent while Nou works: they go together when it finishes (commands each in turn). */
   const [queued, setQueued] = useState<string[]>([]);
   /** Set when you stop Nou: what was queued goes back into the input instead of being sent. */
   const stopped = useRef(false);
@@ -1538,9 +1538,12 @@ ${snippet}
       setQueued([]);
       return;
     }
-    const [next, ...rest] = queued;
-    setQueued(rest);
-    send(next!);
+    // Messages queued together go together, as one message, so they're answered at once rather than one
+    // after another. A command runs on its own, in its turn.
+    const isCommand = (text: string) => text.startsWith("/");
+    const take = isCommand(queued[0]!) ? 1 : Math.max(1, queued.findIndex(isCommand) === -1 ? queued.length : queued.findIndex(isCommand));
+    setQueued(queued.slice(take));
+    send(queued.slice(0, take).join("\n\n"));
   }, [busy, approval, queued]);
   useEffect(() => {
     if (busy) stopped.current = false;
