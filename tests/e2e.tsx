@@ -43,6 +43,11 @@ ink.Output.prototype.get = function (this: any) {
 };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Waits until `ok()` holds (up to `ms`), so a check doesn't race a slow machine; returns whether it does. */
+const until = async (ok: () => boolean, ms = 5000) => {
+  for (let waited = 0; waited < ms && !ok(); waited += 50) await delay(50);
+  return ok();
+};
 let failures = 0;
 const check = (label: string, ok: boolean) => {
   if (!ok) failures++;
@@ -219,11 +224,11 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   }
   await press(wheel("up", 80, 8), 200);
   await press(wheel("up", 80, 8), 200);
-  check("wheel over the chat scrolls it back", frame().includes("scrolled"));
+  check("wheel over the chat scrolls it back", await until(() => frame().includes("scrolled")));
   check("mouse events don't leak into the chat input", !frame().includes("[<"));
   await press(wheel("down", 80, 8), 200);
   await press(wheel("down", 80, 8), 200);
-  check("wheel down returns to the latest messages", !frame().includes("scrolled"));
+  check("wheel down returns to the latest messages", await until(() => !frame().includes("scrolled")));
   await press(click(5, 3 + 3), 800); // 4th row in the tree: many.ts
   check("clicking a file in the tree opens it", frame().includes("many.ts") && frame().includes("const line1 = 1;"));
   await press(wheel("down", 40, 10), 200);
@@ -264,13 +269,14 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("stray sideways steps while scrolling down are ignored (trackpads send them)", !/→\d/.test(frame()));
   await delay(200);
   await press(wheel("down", 40, 10, true), 200);
-  check("Shift+wheel scrolls sideways", frame().includes("→6") && !frame().includes("const line16"));
+  check("Shift+wheel scrolls sideways", await until(() => frame().includes("→6") && !frame().includes("const line16")));
   await press("h", 100);
+  await until(() => !/→\d/.test(frame()));
   await press(click(64, 21), 300); // the bottom of the code pane's scrollbar
-  check("clicking the scrollbar jumps there", frame().includes("/100") && frame().includes("const line100 = 100;"));
+  check("clicking the scrollbar jumps there", await until(() => frame().includes("/100") && frame().includes("const line100 = 100;")));
   await press(`\x1b[<32;${64 + 1};${3 + 1}M`, 200); // drag it to the top
   await press(`\x1b[<0;${64 + 1};${3 + 1}m`, 100);
-  check("dragging the scrollbar scrolls", frame().includes("const line1 = 1;"));
+  check("dragging the scrollbar scrolls", await until(() => frame().includes("const line1 = 1;")));
   await type("/help"); // from the code view: / goes to the chat's command box
   check("/ in the code view starts a command in the chat", frame().includes("❯ /help") && !frame().includes("EDITING"));
   await press(KEY.enter, 150);
@@ -486,50 +492,54 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
 console.log("Queueing and interrupting");
 {
   const heard: string[] = [];
+  /** Replies to these stay open until the test lets them go, so what's typed meanwhile is queued however slow the machine. */
+  const held = new Set(["first", "busy now", "third"]);
+  let release: (() => void) | null = null;
   const slow: any = {
     id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
     async chat({ messages, signal }: any) {
       const last = messages[messages.length - 1];
       heard.push(typeof last.content === "string" ? last.content.replace(/<editor_context>[\s\S]*/, "").trim() : "");
-      await new Promise((r, reject) => {
+      await new Promise<void>((r, reject) => {
         // "later" is the turn the test interrupts: long enough that "never" is always typed while it runs.
-        // "busy now" stays busy until both messages queued behind it are in, however slow the machine.
-        const t = setTimeout(r, heard.at(-1) === "later" ? 8000 : heard.at(-1) === "busy now" ? 4000 : 800);
-        signal?.addEventListener("abort", () => (clearTimeout(t), reject(new Error("aborted"))));
+        const t = held.has(heard.at(-1)!) ? null : setTimeout(r, heard.at(-1) === "later" ? 8000 : 800);
+        if (!t) release = r;
+        signal?.addEventListener("abort", () => (t && clearTimeout(t), reject(new Error("aborted"))));
       });
       return { text: `ok ${heard.length}`, toolCalls: [] };
     },
   };
   await session({ provider: slow, model: "fake" }, async ({ press, type, frame }) => {
+    // Each step waits for the state it needs (slow machines take longer than any fixed delay).
+    const status = () => frame().split("\n").at(-1)!;
+    const idle = () => until(() => !status().includes("WORKING"));
     await type("first");
-    await press(KEY.enter, 200);
+    await press(KEY.enter, 100);
+    await until(() => heard.at(-1) === "first");
     await type("second");
     await press(KEY.enter, 100);
-    for (let waited = 0; waited < 1500 && !frame().includes("⏳ next: second"); waited += 50) await delay(50);
-    check("a message sent while Nou works waits its turn, shown as next", frame().includes("⏳ next: second"));
-    await delay(1800);
-    check("and goes when Nou finishes", heard.includes("second") && !frame().includes("⏳ next"));
+    check("a message sent while Nou works waits its turn, shown as next", await until(() => frame().includes("⏳ next: second")));
+    release!();
+    check("and goes when Nou finishes", await until(() => heard.includes("second") && !frame().includes("⏳ next")));
+    await idle();
     await type("busy now");
-    await press(KEY.enter, 150);
-    for (let waited = 0; waited < 3000 && heard.at(-1) !== "busy now"; waited += 50) await delay(50);
+    await press(KEY.enter, 100);
+    await until(() => heard.at(-1) === "busy now");
     await type("also this");
     await press(KEY.enter, 80);
     await type("and that");
     await press(KEY.enter, 80);
-    for (let waited = 0; waited < 8000 && !heard.includes("also this\n\nand that"); waited += 50) await delay(50);
-    check("messages queued together go as one", heard.includes("also this\n\nand that") && !heard.includes("also this"));
-    for (let waited = 0; waited < 4000 && frame().split("\n").at(-1)!.includes("WORKING"); waited += 50) await delay(50);
+    await until(() => frame().includes("⏳ next: and that"));
+    release!();
+    check("messages queued together go as one", await until(() => heard.includes("also this\n\nand that")) && !heard.includes("also this"));
+    await idle();
     await type("third");
-    await press(KEY.enter, 200);
+    await press(KEY.enter, 100);
+    await until(() => heard.at(-1) === "third");
     await type("urgent");
-    await press("\x1b\r", 1200);
-    check("Alt+Enter stops Nou and sends right away", heard.at(-1) === "urgent" && frame().includes("Cancelled"));
-    // Each step waits for the state it needs (slow machines take longer than any fixed delay).
-    const status = () => frame().split("\n").at(-1)!;
-    const until = async (ok: () => boolean, ms = 5000) => {
-      for (let waited = 0; waited < ms && !ok(); waited += 50) await delay(50);
-    };
-    await until(() => !status().includes("WORKING"));
+    await press("\x1b\r", 100);
+    check("Alt+Enter stops Nou and sends right away", await until(() => heard.at(-1) === "urgent" && frame().includes("Cancelled")));
+    await idle();
     await type("later");
     await press(KEY.enter, 100);
     await until(() => status().includes("WORKING") && heard.at(-1) === "later");
