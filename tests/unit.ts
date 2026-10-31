@@ -306,6 +306,37 @@ console.log("MCP servers");
   check("Codex's TOML tables are read", JSON.stringify(codexServers('[mcp_servers.x]\ncommand = "a"\nargs = ["b"]\n').x) === JSON.stringify({ command: "a", args: ["b"] }));
 }
 
+console.log("Sessions from Claude Code's and Codex's own CLI");
+{
+  const { externalSessions, externalEntries } = await import("../src/conversations/external.js");
+  const home = mkdtempSync(path.join(os.tmpdir(), "nou-ext-"));
+  const cwd = "/work/my.app";
+  const claude = path.join(home, ".claude", "projects", "-work-my-app");
+  mkdirSync(claude, { recursive: true });
+  writeFileSync(path.join(claude, "abc-123.jsonl"), [
+    { type: "user", message: { role: "user", content: "<command-name>/clear</command-name>" } },
+    { type: "user", message: { role: "user", content: "fix the login bug" } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Fixed it." }, { type: "tool_use", name: "Edit" }] } },
+    { type: "user", message: { role: "user", content: [{ type: "tool_result", content: "ok" }] } },
+  ].map((l) => JSON.stringify(l)).join("\n"));
+  const codex = path.join(home, ".codex", "sessions", "2026", "10", "30");
+  mkdirSync(codex, { recursive: true });
+  writeFileSync(path.join(codex, "rollout-2026-10-30T10-00-00-xyz.jsonl"), [
+    { type: "session_meta", payload: { id: "thread-9", cwd } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>...</environment_context>" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "add dark mode" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Added it." }] } },
+  ].map((l) => JSON.stringify(l)).join("\n"));
+  writeFileSync(path.join(codex, "rollout-2026-10-30T09-00-00-other.jsonl"), JSON.stringify({ type: "session_meta", payload: { id: "elsewhere", cwd: "/other" } }));
+  const found = externalSessions(home, cwd);
+  const c = found.find((f) => f.engine === "claude-code");
+  const x = found.find((f) => f.engine === "codex");
+  check("Claude Code's sessions in this folder are found, titled by what you asked", c?.id === "abc-123" && c.title === "fix the login bug" && c.messages === 1);
+  check("Codex's sessions in this folder are found, and other folders' aren't", x?.id === "thread-9" && x.title === "add dark mode" && !found.some((f) => f.id === "elsewhere"));
+  check("their chat comes back without tool noise", JSON.stringify(externalEntries(c!)) === JSON.stringify([{ kind: "user", text: "fix the login bug" }, { kind: "assistant", text: "Fixed it." }])
+    && externalEntries(x!).map((e) => e.text).join("|") === "add dark mode|Added it.");
+}
+
 console.log("Retrying passing failures");
 {
   const { transientMessage } = await import("../src/agent/index.js");

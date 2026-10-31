@@ -493,7 +493,8 @@ console.log("Queueing and interrupting");
       heard.push(typeof last.content === "string" ? last.content.replace(/<editor_context>[\s\S]*/, "").trim() : "");
       await new Promise((r, reject) => {
         // "later" is the turn the test interrupts: long enough that "never" is always typed while it runs.
-        const t = setTimeout(r, heard.at(-1) === "later" ? 8000 : 800);
+        // "busy now" stays busy until both messages queued behind it are in, however slow the machine.
+        const t = setTimeout(r, heard.at(-1) === "later" ? 8000 : heard.at(-1) === "busy now" ? 4000 : 800);
         signal?.addEventListener("abort", () => (clearTimeout(t), reject(new Error("aborted"))));
       });
       return { text: `ok ${heard.length}`, toolCalls: [] };
@@ -508,6 +509,16 @@ console.log("Queueing and interrupting");
     check("a message sent while Nou works waits its turn, shown as next", frame().includes("⏳ next: second"));
     await delay(1800);
     check("and goes when Nou finishes", heard.includes("second") && !frame().includes("⏳ next"));
+    await type("busy now");
+    await press(KEY.enter, 150);
+    for (let waited = 0; waited < 3000 && heard.at(-1) !== "busy now"; waited += 50) await delay(50);
+    await type("also this");
+    await press(KEY.enter, 80);
+    await type("and that");
+    await press(KEY.enter, 80);
+    for (let waited = 0; waited < 8000 && !heard.includes("also this\n\nand that"); waited += 50) await delay(50);
+    check("messages queued together go as one", heard.includes("also this\n\nand that") && !heard.includes("also this"));
+    for (let waited = 0; waited < 4000 && frame().split("\n").at(-1)!.includes("WORKING"); waited += 50) await delay(50);
     await type("third");
     await press(KEY.enter, 200);
     await type("urgent");
@@ -687,6 +698,19 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const y = rows.findIndex((l) => l.includes("▸ Terminal"));
   await press(click(rows[y]!.indexOf("×", rows[y]!.indexOf("▸ Terminal")), y), 300);
   check("× closes it", !frame().includes("▸ Terminal"));
+});
+
+console.log("New lines in a message");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  const inputLines = () => frame().split("\n").filter((l) => /line (one|two|three|four)/.test(l));
+  await type("line one");
+  await press("\x1b[13;5u", 150); // Ctrl+Enter (kitty keyboard protocol)
+  await type("line two");
+  await press("\x1b[13;9u", 150); // Cmd+Enter
+  await type("line three\\");
+  await press(KEY.enter, 150); // \ then Enter, in any terminal
+  await type("line four");
+  check("Ctrl+Enter, Cmd+Enter and \\+Enter add lines instead of sending", inputLines().length === 4 && !frame().includes("◆ nou") && !frame().includes("line three\\"));
 });
 
 console.log("Resuming a conversation");

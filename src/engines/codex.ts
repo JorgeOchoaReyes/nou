@@ -119,8 +119,13 @@ export class CodexEngine extends ExternalEngine {
     try {
       const { events } = await this.thread.runStreamed(input, { signal });
       for await (const event of events) {
-        if (event.type === "turn.completed") failure = undefined; // it recovered from what went wrong on the way
-        else failure = (await this.handle(event)) ?? failure;
+        if (event.type === "turn.completed") {
+          // Its turn is over (it may have just asked you something): done now, rather than waiting for the
+          // codex process to wind down, which kept "Codex is working..." up under its question.
+          failure = undefined; // and it recovered from anything that went wrong on the way
+          break;
+        }
+        failure = (await this.handle(event)) ?? failure;
       }
     } catch (error: any) {
       // The codex process exiting with an error ends the stream; its first line says why.

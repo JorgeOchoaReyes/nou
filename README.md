@@ -102,7 +102,7 @@ Every change is reviewed like a code review:
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
-| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
+| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes, together with anything else you queued, as one message (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
 | <kbd>Esc</kbd> | stop Nou (anything queued goes back in the input) · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 
@@ -122,7 +122,9 @@ In the editor:
 
 Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/help`
 
-Conversations are saved per folder after each reply. `/resume` lists them and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far.
+New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol), or type `\` and press <kbd>Enter</kbd> in any terminal.
+
+Conversations are saved per folder after each reply. `/resume` lists them and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far. Sessions you started in Claude Code's or Codex's own CLI in this folder are listed too (marked "CLI"), and resuming one carries it on in that engine inside Nou.
 
 ## 🧠 Models
 

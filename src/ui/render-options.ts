@@ -10,4 +10,8 @@ export const RENDER_OPTIONS: RenderOptions = {
   incrementalRendering: true,
   // Up to 60 frames a second, so scrolling and typing keep up with the keyboard and mouse.
   maxFps: 60,
+  // Terminals that speak the kitty keyboard protocol (kitty, Ghostty, WezTerm, iTerm2, foot...) then tell
+  // Enter from Ctrl+Enter, Cmd+Enter and Shift+Enter, so those can add a line in the chat. Others just
+  // don't answer the query and keys work as before.
+  kittyKeyboard: { mode: "auto", flags: ["disambiguateEscapeCodes"] },
 };

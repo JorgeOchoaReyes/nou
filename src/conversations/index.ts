@@ -19,7 +19,11 @@ export type Conversation = {
   /** The engine's own state, when it can pick the conversation back up itself. */
   state?: unknown;
 };
-export type ConversationSummary = Pick<Conversation, "id" | "title" | "updated" | "engine"> & { messages: number };
+export type ConversationSummary = Pick<Conversation, "id" | "title" | "updated" | "engine"> & {
+  messages: number;
+  /** The Claude Code session or Codex thread it continues, so that one isn't listed twice. */
+  ref?: string;
+};
 
 /** Kept per project: the oldest go once there are more. */
 const KEEP = 50;
@@ -53,7 +57,9 @@ export function listConversations(): ConversationSummary[] {
     if (!file.endsWith(".json")) continue;
     try {
       const c: Conversation = JSON.parse(readFileSync(path.join(dir, file), "utf-8"));
-      out.push({ id: c.id, title: c.title, updated: c.updated, engine: c.engine, messages: c.entries.filter((e) => e.kind === "user").length });
+      const state = c.state as any;
+      const ref = state?.claudeSession ?? state?.codexThread;
+      out.push({ id: c.id, title: c.title, updated: c.updated, engine: c.engine, messages: c.entries.filter((e) => e.kind === "user").length, ...(typeof ref === "string" ? { ref } : {}) });
     } catch {
       // a damaged file is skipped
     }
