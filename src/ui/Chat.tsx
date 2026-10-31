@@ -51,7 +51,22 @@ type Props = {
  * in a column of its own: the rest of the line is then usually plain ASCII, which Ink measures far
  * faster than text with symbols in it, and that's most of the cost of every streamed frame.
  */
-type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[] };
+type Line = {
+  text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[];
+  /** The header of a collapsed run of steps: clicking it opens or closes the run. */
+  toggle?: ChatEntry;
+};
+
+/**
+ * What the agent did between replies (files read, commands run...) folds into one line, like Claude's
+ * "▸ 5 steps": click it (or Ctrl+O for all of them) to see each step. `open` holds the runs shown open.
+ */
+function stepLines(steps: ChatEntry[], open: boolean, live: boolean, inner: number): Line[] {
+  const last = steps[steps.length - 1]!.text.replace(/\s+/g, " ");
+  const summary = `${open ? "▾" : "▸"} ${steps.length} steps${open ? "" : ` · ${live ? "now: " : "last: "}${last}`}`;
+  const head: Line = { text: ` ${summary.length > inner - 4 ? `${summary.slice(0, inner - 5)}…` : summary}`, color: open ? C.accent2 : C.dim, lead: " ⚙", leadColor: C.dim, toggle: steps[0]! };
+  return open ? [head, ...steps.flatMap((e) => cachedLines(e, inner).map((l) => (l.lead === " ⚙" ? { ...l, lead: "  " } : l)))] : [head];
+}
 const BAR = "▌ ";
 
 // Whether a path in a message is a file in the project, remembered so each one is checked once.
@@ -130,7 +145,26 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy });
   const inner = width - 3; // minus the borders and the scrollbar
 
-  const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
+  const [openSteps, setOpenSteps] = useState<Set<ChatEntry>>(new Set());
+  const [allOpen, setAllOpen] = useState(false);
+  const history = useMemo(() => {
+    const out: Line[] = [];
+    for (let i = 0; i < entries.length; ) {
+      if (entries[i]!.kind !== "tool") {
+        out.push(...cachedLines(entries[i]!, inner));
+        i++;
+        continue;
+      }
+      // A run of steps: one alone is shown as is, two or more fold into a line.
+      let j = i;
+      while (j < entries.length && entries[j]!.kind === "tool") j++;
+      const steps = entries.slice(i, j);
+      if (steps.length === 1) out.push(...cachedLines(steps[0]!, inner));
+      else out.push(...stepLines(steps, allOpen || openSteps.has(steps[0]!), !!busy && j === entries.length, inner));
+      i = j;
+    }
+    return out;
+  }, [entries, inner, openSteps, allOpen, !!busy]);
   const lines = useMemo(
     () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: closeOpenMarkdown(streaming) }, inner, false)] : history),
     [history, streaming, inner],
@@ -208,6 +242,17 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   useEffect(() => {
     if (!click) return;
     const line = visible[click.row];
+    const run = line?.toggle;
+    if (run) {
+      setOpenSteps((open) => {
+        const next = new Set(open);
+        if (next.has(run) || allOpen) next.delete(run);
+        else next.add(run);
+        return next;
+      });
+      if (allOpen) setAllOpen(false);
+      return;
+    }
     const ref = line?.spans ? linkAt(line.spans, click.col) : null;
     if (ref) onOpenRef?.(ref);
   }, [click?.nonce]);
@@ -261,10 +306,15 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     else if (typed && typed >= " ") setInput(typed); // printable, not a control key
   }, { isActive: focused && !!approval && !input });
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.pageUp || (key.upArrow && key.shift)) setScrollBack((b) => Math.min(maxBack, Math.min(b, maxBack) + Math.max(1, rows - 2)));
     else if (key.pageDown || (key.downArrow && key.shift)) setScrollBack((b) => Math.max(0, Math.min(b, maxBack) - Math.max(1, rows - 2)));
     else if (key.ctrl && key.home) setScrollBack(maxBack);
+    else if (key.ctrl && input === "o") {
+      // Open every run of steps, or fold them all (the ones opened by a click too).
+      setAllOpen(!allOpen);
+      if (allOpen) setOpenSteps(new Set());
+    }
     else if (key.ctrl && key.end) setScrollBack(0);
   }, { isActive: focused });
 

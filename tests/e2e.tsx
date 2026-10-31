@@ -793,6 +793,31 @@ console.log("Show me how");
   });
 }
 
+console.log("Steps fold into one line");
+{
+  let n = 0;
+  const reader: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      n++;
+      if (n <= 3) return { text: "", toolCalls: [{ id: `s${n}`, name: "read_file", args: { path: ["a.ts", "b.ts", "long.ts"][n - 1] } }] };
+      return { text: "Read all three.", toolCalls: [] };
+    },
+  };
+  await session({ provider: reader, model: "fake" }, async ({ press, type, frame }) => {
+    await type("read them");
+    await press(KEY.enter, 300);
+    check("what the agent did folds into one line", await until(() => frame().includes("▸ 3 steps") && frame().includes("Read all three.")));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes("▸ 3 steps"));
+    await press(click(rows[y]!.indexOf("▸"), y), 300);
+    check("clicking it shows each step", await until(() => frame().includes("▾ 3 steps")) && frame().includes("long.ts"));
+    await press("\x0f", 200); // Ctrl+O: open every run (it's open), then fold them all
+    await press("\x0f", 200);
+    check("Ctrl+O opens and folds them all", await until(() => frame().includes("▸ 3 steps")));
+  });
+}
+
 console.log("Resuming a conversation");
 {
   let seen: any[] = [];
