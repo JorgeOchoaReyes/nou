@@ -51,7 +51,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "pull", args: "<model>", description: "download an Ollama model" },
   { name: "plugins", args: "[add|new <name>]", description: "your plugins and the starter ones" },
   { name: "mcp", args: "[add|remove|import]", description: "MCP servers: tools from other programs (/mcp add browser for a browser)" },
-  { name: "games", description: "open or close the Games panel (Pong, Snake, Breakout)" },
+  { name: "games", description: "open or close the Games panel (Pong, Snake, Breakout, Dodge, Hop, Pairs)" },
   { name: "version", description: "which version of Nou this is" },
   { name: "help", description: "all commands and keys" },
 ];

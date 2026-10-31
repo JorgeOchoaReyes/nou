@@ -650,6 +650,16 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(`\x1b[<32;${gx + 1};${top + 1 + 1}M`, 100);
   await press(`\x1b[<0;${gx + 1};${top + 1 + 1}m`, 100);
   check("dragging its top border makes it shorter", await until(() => gameTitle() === top + 2));
+  // As small as it goes: the game waits, saying how much room it needs, instead of crashing Nou.
+  const now = gameTitle();
+  await press(click(gx, now - 1), 100);
+  await press(`\x1b[<32;${gx + 1};${now + 15 + 1}M`, 100);
+  await press(`\x1b[<0;${gx + 1};${now + 15 + 1}m`, 200);
+  check("made too small, the game waits and says it needs more room", await until(() => frame().includes("needs more room")) && frame().includes("NOU"));
+  await press(click(gx, gameTitle() - 1), 100);
+  await press(`\x1b[<32;${gx + 1};${top + 2 + 1}M`, 100);
+  await press(`\x1b[<0;${gx + 1};${top + 2 + 1}m`, 200);
+  await until(() => frame().includes("✦ Pong") && !frame().includes("needs more room"));
   await press(KEY.esc, 300);
   check("Esc gives the keyboard back, and the game waits", !frame().split("\n").at(-1)!.includes("GAME") && frame().includes("click to play"));
   await type("/games");

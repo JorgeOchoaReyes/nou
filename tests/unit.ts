@@ -416,6 +416,40 @@ console.log("Games");
   const paddle = b.paddle;
   b = breakout.tick(b, ["right"]);
   check("Breakout: the paddle moves with the keys", b.paddle === paddle + 2);
+  const { dodge, hop, pairs } = await import("../src/games/index.js");
+  // No size crashes a game: a panel dragged small used to take Nou down with it.
+  let survived = true;
+  for (const g of GAMES) for (const [w, h] of [[10, 3], [4, 1], [0, 0], [-3, -2]] as const) {
+    try {
+      let st = g.create(w, h, 5);
+      for (let i = 0; i < 100; i++) st = g.tick(st, i % 3 ? ["action", "left"] : ["up", "right"]);
+      g.view(st);
+    } catch {
+      survived = false;
+    }
+  }
+  check("every game copes with a field of any size, even none", survived);
+  let d = dodge.create(20, 8, 4);
+  d = { ...d, rocks: [{ x: d.x, y: d.h - 2 }] };
+  d = dodge.tick(d, []);
+  check("Dodge: a rock landing on you ends it", d.dead && !!dodge.view(d).over);
+  let hp = hop.create(30, 8, 4);
+  hp = hop.tick(hp, ["action"]);
+  check("Hop: Enter hops off the ground", hp.y > 0);
+  hp = { ...hop.create(30, 8, 4), walls: [{ x: 4, tall: 2 }] };
+  hp = hop.tick(hp, []);
+  check("Hop: a wall you don't hop ends it", hp.dead);
+  let pr = pairs.create(24, 8, 4);
+  const twin = pr.cards.findIndex((c, i) => i > 0 && c === pr.cards[0]);
+  pr = pairs.tick(pr, ["action"]);
+  for (let i = 0; i < twin; i++) pr = pairs.tick(pr, ["right"]);
+  pr = pairs.tick(pr, ["action"]);
+  check("Pairs: flipping two that match keeps them found", pr.found[0] === true && pr.found[twin] === true && pr.moves === 1);
+  let walls = breakout.create(36, 13, 2);
+  walls = { ...walls, bricks: walls.bricks.map((r) => r.map(() => false)) };
+  walls = breakout.tick(walls, []);
+  check("Breakout: clearing the wall brings the next level", walls.level === 2 && walls.bricks.some((r) => r.some(Boolean)));
+  check("Snake speeds up as it eats", (snake.speed!({ ...snake.create(20, 10, 1), score: 12 }) ?? 0) < snake.tickMs);
 }
 
 console.log("Project instructions");

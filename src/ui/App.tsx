@@ -36,7 +36,7 @@ import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
-import { GAME_PANEL, GamePanel } from "./GamePanel.js";
+import { GAME_PANEL, GameGuard, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
 import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
@@ -2008,6 +2008,7 @@ ${snippet}
     } else if (focus === "game") setFocus(beforeGame.current);
   };
   // Plain functions, not hooks: this runs after the settings screen's early return.
+  const onGameScore = (game: string, score: number) => updateSettings({ gameBest: { ...(settings.gameBest ?? {}), [game]: score } });
   const leaveGames = () => setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
   const gamesSettings = () => {
     setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
@@ -2039,7 +2040,7 @@ ${snippet}
     { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
     { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
     { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },
-    { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout", keys: "/games", run: () => toggleGames() },
+    { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout, Dodge, Hop, Pairs", keys: "/games", run: () => toggleGames() },
     { title: "Next tab", keys: "]", run: () => cycleTab(1) },
     { title: "Previous tab", keys: "[", run: () => cycleTab(-1) },
     { title: "Close the tab", keys: "x", run: () => closeTab() },
@@ -2276,7 +2277,9 @@ ${snippet}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}
       {layout.current.game && (
         <Box position="absolute" marginLeft={layout.current.game.x} marginTop={layout.current.game.y}>
-          <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+          <GameGuard>
+            <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} best={settings.gameBest ?? {}} onScore={onGameScore} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+          </GameGuard>
         </Box>
       )}
       {quickOpen !== null && (
