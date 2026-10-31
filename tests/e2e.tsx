@@ -777,6 +777,22 @@ console.log("Show me how");
   });
 }
 
+{
+  // Engines that can't call Nou's tools give the steps in a nou-steps block at the end of their reply.
+  writeFileSync(path.join(dir, "taught.ts"), "export const one = 1;\n");
+  const blockTeacher: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      return { text: 'Add it like this.\n```nou-steps\n[{"file": "taught.ts", "line": 2, "code": "export const two = 2;", "why": "The next number."}]\n```', toolCalls: [] };
+    },
+  };
+  await session({ provider: blockTeacher, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/teach add two");
+    await press(KEY.enter, 300);
+    check("/teach reads steps from the reply's block, and hides the block", await until(() => frame().includes("Step 1 of 1") && frame().includes("The next number.")) && !frame().includes("nou-steps"));
+  });
+}
+
 console.log("Resuming a conversation");
 {
   let seen: any[] = [];
@@ -836,6 +852,21 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 400);
   check("switching back to Nou's engine", frame().includes("Now using the Nou engine"));
   check("switching engines hands over the conversation so far", frame().includes("It has the conversation so"));
+});
+
+console.log("Show me how on another engine");
+writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/engine codex");
+  await press(KEY.enter, 600);
+  await until(() => frame().includes("Now using the Codex engine"));
+  await type("/showme change the greeting");
+  await press(KEY.enter, 300);
+  // The fake Codex edits greet.js whatever it's asked, and gives no steps.
+  check("an engine that edits anyway has its edit put back", await until(() => frame().includes("edited files anyway")) && readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Hello"));
+  check("and Nou says it didn't get steps", frame().includes("come back with"));
+  await type("/engine nou");
+  await press(KEY.enter, 400);
 });
 
 console.log("Connecting a provider");

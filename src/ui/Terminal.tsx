@@ -86,7 +86,7 @@ export const Terminal = memo(function Terminal({ shell, version, width, height, 
   }, { isActive: focused });
 
   const color = focused ? C.accent : C.dim;
-  const title = ` ▸ Terminal${shell.running ? "  ● running · Ctrl+C stops" : ""}${at ? `  ↑ ${at} lines` : ""}`;
+  const title = ` ▸ Terminal${shell.running ? "  ● running · Ctrl+C stops" : ""}${at ? `  ↑ ${at} lines` : ""}${focused && !shell.running && !at ? "  ⇕ drag this edge or Alt+↑↓ to resize" : ""}`;
   return (
     <Box width={width} height={height} flexDirection="column" borderStyle={focused ? "round" : "single"} borderColor={color} overflow="hidden">
       <Text wrap="truncate-end"><Text color={color} bold>{title.slice(0, inner - 3).padEnd(inner - 3)}</Text><Text color={C.text} bold> × </Text></Text>

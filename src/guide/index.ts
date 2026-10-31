@@ -47,9 +47,7 @@ export function showStepsTool(onSteps: (steps: GuideStep[]) => void): ExtraTool 
     readOnly: true,
     source: "nou",
     run: (args) => {
-      const steps = (Array.isArray(args.steps) ? args.steps : [])
-        .filter((s: any) => typeof s?.file === "string" && typeof s?.code === "string" && s.code.trim())
-        .map((s: any) => ({ file: path.relative(process.cwd(), path.resolve(s.file)).split(path.sep).join("/"), line: Math.max(1, Math.floor(Number(s.line) || 1)), code: s.code.replace(/\r\n/g, "\n").replace(/\n+$/, ""), why: String(s.why ?? "") }));
+      const steps = tidySteps(args.steps);
       if (!steps.length) return "No usable steps: each needs a file, a line and the code to type. Call show_steps again.";
       onSteps(steps);
       return `Shown to the user as ${steps.length} step${steps.length > 1 ? "s" : ""} to type. Don't edit the files yourself; finish with a one-line summary.`;
@@ -57,9 +55,37 @@ export function showStepsTool(onSteps: (steps: GuideStep[]) => void): ExtraTool 
   };
 }
 
-/** The message that asks for steps. */
-export function showMePrompt(task: string): string {
-  return `[Show me how] ${task}\n\nDon't edit any files: I want to type it myself. Read what you need to find where it goes, then call ${SHOW_STEPS} once with the steps in order (each: file, the line to add before, the exact lines of code to type, and why). Keep each step small, a few lines, so it's easy to follow.`;
+/** Steps as the model gave them, kept when usable: a file, a line, code to type. */
+function tidySteps(raw: unknown): GuideStep[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((s: any) => typeof s?.file === "string" && typeof s?.code === "string" && s.code.trim())
+    .map((s: any) => ({ file: path.relative(process.cwd(), path.resolve(s.file)).split(path.sep).join("/"), line: Math.max(1, Math.floor(Number(s.line) || 1)), code: s.code.replace(/\r\n/g, "\n").replace(/\n+$/, ""), why: String(s.why ?? "") }));
+}
+
+/** The fenced block other engines (which can't call Nou's tools) put their steps in. */
+const BLOCK = /```nou-steps\s*\n([\s\S]*?)\n```/;
+
+/**
+ * The message that asks for steps. Nou's own engine hands them back with the show_steps tool; Claude
+ * Code, Codex and pi can't call Nou's tools, so they end their reply with a ```nou-steps block instead.
+ */
+export function showMePrompt(task: string, withTool: boolean): string {
+  const how = withTool
+    ? `call ${SHOW_STEPS} once with the steps in order`
+    : "end your reply with the steps in order as a JSON array in a fenced block marked nou-steps, like:\n```nou-steps\n[{\"file\": \"src/cli.ts\", \"line\": 12, \"code\": \"const verbose = args.includes(\\\"--verbose\\\");\", \"why\": \"Reads the new flag.\"}]\n```";
+  return `[Show me how] ${task}\n\nDon't edit any files: I want to type it myself. Read what you need to find where it goes, then ${how} (each step: file, the line to add the code before, the exact lines of code to type, and why). Keep each step small, a few lines, so it's easy to follow.`;
+}
+
+/** Steps from a reply's ```nou-steps block, and the reply without it; null when there's none. */
+export function stepsFromReply(text: string): { steps: GuideStep[]; rest: string } | null {
+  const m = BLOCK.exec(text);
+  if (!m) return null;
+  try {
+    const steps = tidySteps(JSON.parse(m[1]!));
+    return steps.length ? { steps, rest: text.replace(m[0], "").trim() } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

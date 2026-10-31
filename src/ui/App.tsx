@@ -38,7 +38,7 @@ import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
-import { showMePrompt, showStepsTool, type GuideStep } from "../guide/index.js";
+import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -157,6 +157,8 @@ export function App({ initialModel, permContext, resume }: Props) {
    */
   const [guide, setGuide] = useState<{ steps: GuideStep[]; at: number; task: string } | null>(null);
   const guideAsk = useRef<string | null>(null);
+  /** Where the undo history stood when the steps were asked for: an engine that edits anyway is put back. */
+  const guideMark = useRef(0);
   const guideFound = useRef<GuideStep[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
@@ -1478,6 +1480,7 @@ ${snippet}
     case "terminal":
       return toggleTerminal();
     case "showme":
+    case "teach":
       return showMe(rest.join(" "));
     case "resume":
       return resumeConversation(rest[0] ?? "");
@@ -1579,9 +1582,25 @@ ${snippet}
   useEffect(() => {
     if (busy || !guideAsk.current) return;
     const task = guideAsk.current;
-    const steps = guideFound.current;
+    let steps = guideFound.current;
     guideAsk.current = null;
     guideFound.current = null;
+    // Other engines hand their steps back in a ```nou-steps block at the end of the reply: read it, and
+    // show the reply without it.
+    if (!steps?.length) {
+      const reply = [...entries].reverse().find((e) => e.kind === "assistant");
+      const found = reply && stepsFromReply(reply.text);
+      if (found) {
+        steps = found.steps;
+        setEntries((prev) => prev.map((e) => (e === reply ? { ...e, text: found.rest || "Here's how." } : e)));
+      }
+    }
+    // Asked not to, an engine that edited anyway (Codex can't be stopped before it does) is put back.
+    const edited = timeline.all.slice(guideMark.current).filter((c) => c.source === "nou" && !c.undone);
+    if (edited.length) {
+      undoCheckpoints([...edited].reverse() as ReturnType<typeof timeline.lastTurn>);
+      info("It edited files anyway, so those changes were put back: you're the one typing them.");
+    }
     if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /showme add a --verbose flag to the CLI", "error");
     info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /showme next skips a step, /showme stop ends it.`);
     setGuide({ steps, at: 0, task });
@@ -1634,12 +1653,12 @@ ${snippet}
       if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /showme next skips it, /showme stop ends it.`);
       return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /showme add a --verbose flag to the CLI");
     }
-    if (agentRef.current!.id !== "nou") return info("Show me how uses Nou's own engine: /engine nou, then /showme again.", "error");
     if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
     setGuide(null);
     guideAsk.current = words;
     guideFound.current = null;
-    send(showMePrompt(words));
+    guideMark.current = timeline.all.length;
+    send(showMePrompt(words, agentRef.current!.id === "nou"));
   };
   useEffect(() => {
     if (busy) stopped.current = false;

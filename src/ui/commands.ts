@@ -19,7 +19,7 @@ const INSTANT = new Set(["terminal", "games", "open", "settings", "auto", "diff"
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 export function runsWhileBusy(text: string): boolean {
   const [name, ...rest] = text.slice(1).trim().split(/\s+/);
-  if (name === "showme") return !rest.length || /^(next|skip|stop|end)$/.test(rest.join(" "));
+  if (name === "showme" || name === "teach") return !rest.length || /^(next|skip|stop|end)$/.test(rest.join(" "));
   return text.startsWith("/") && INSTANT.has(name ?? "");
 }
 
@@ -42,6 +42,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "compact", description: "summarize the conversation to free up context" },
   { name: "clear", description: "start a fresh conversation" },
   { name: "showme", args: "<what you want>", description: "Nou shows you how, step by step, and you type it (with the code shown ahead of your cursor)" },
+  { name: "teach", args: "<what you want>", description: "same as /showme: Nou teaches you to make the change yourself, step by step" },
   { name: "terminal", description: "a terminal under the code, like VS Code's (or press `)" },
   { name: "resume", args: "[number|last]", description: "pick up an earlier conversation in this folder (any engine)" },
   { name: "pull", args: "<model>", description: "download an Ollama model" },

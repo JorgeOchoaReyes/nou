@@ -348,6 +348,12 @@ console.log("Show me how");
   const tool = showStepsTool((steps) => (got = steps));
   const said = await tool.run({ steps: [{ file: "./src/a.ts", line: 3, code: "x();\n\n", why: "because" }, { file: "b.ts", code: "" }] });
   check("show_steps keeps the usable steps, tidied", got.length === 1 && got[0].file === "src/a.ts" && got[0].code === "x();" && said.includes("1 step"));
+  const { stepsFromReply, showMePrompt } = await import("../src/guide/index.js");
+  const reply = 'Here is how.\n```nou-steps\n[{"file": "src/x.ts", "line": 2, "code": "y();", "why": "calls y"}]\n```';
+  const parsed = stepsFromReply(reply);
+  check("other engines' steps are read from a nou-steps block, which is taken out of the reply", parsed?.steps[0]?.file === "src/x.ts" && parsed.steps[0].code === "y();" && parsed.rest === "Here is how.");
+  check("a reply without steps has none", stepsFromReply("no block here") === null && stepsFromReply("```nou-steps\nnot json\n```") === null);
+  check("engines without Nou's tools are asked for the block", showMePrompt("x", false).includes("nou-steps") && showMePrompt("x", true).includes("show_steps"));
 }
 
 console.log("Retrying passing failures");
