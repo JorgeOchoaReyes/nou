@@ -103,7 +103,7 @@ Every change is reviewed like a code review:
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
-| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes, together with anything else you queued, as one message (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
+| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes, together with anything else you queued, as one message; commands that only change the screen, like `/terminal`, `/games` or `/open`, run right away (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
 | <kbd>Esc</kbd> | stop Nou (anything queued goes back in the input) · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 

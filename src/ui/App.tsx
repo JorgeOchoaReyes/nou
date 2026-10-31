@@ -30,7 +30,7 @@ import { C } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
-import { SLASH_COMMANDS, type SlashCommand } from "./commands.js";
+import { SLASH_COMMANDS, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat, type ChatSelect } from "./Chat.js";
 import { copyToClipboard } from "./clipboard.js";
@@ -1646,7 +1646,7 @@ ${snippet}
   }, [busy]);
   /** From the chat: while Nou works, a message waits its turn, or (`now`) stops Nou and goes right away. */
   const submit = (text: string, now = false) => {
-    if (!busy) return send(text);
+    if (!busy || (text.startsWith("/") && runsWhileBusy(text))) return send(text);
     if (now) {
       stop();
       stopped.current = false; // this one is meant to go
