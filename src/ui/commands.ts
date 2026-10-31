@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 export function runsWhileBusy(text: string): boolean {
@@ -46,6 +46,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "new", description: "a new conversation tab: another agent, working alongside this one" },
   { name: "tab", args: "[n]", description: "list the conversation tabs, or switch to tab n" },
   { name: "close", description: "close this conversation tab (it stays saved for /resume)" },
+  { name: "fold", description: "fold every function and block in the open file to its first line (z toggles)" },
+  { name: "unfold", description: "open every fold in the open file" },
   { name: "redraw", description: "draw the whole screen again (Ctrl+L), if it ever looks shifted or clicks land a row off" },
   { name: "terminal", description: "a terminal under the code, like VS Code's (or press `)" },
   { name: "resume", args: "[number|last]", description: "pick up an earlier conversation in this folder (any engine)" },

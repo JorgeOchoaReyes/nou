@@ -22,7 +22,7 @@ import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
 import { setCodeTheme } from "../syntax/themes.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
-import { changedLines, lineCounts, loadFallbackHighlighter, type FileRef } from "./text.js";
+import { changedLines, lineCounts, loadFallbackHighlighter, splitLines, type FileRef } from "./text.js";
 import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useMouse } from "./mouse.js";
@@ -236,7 +236,10 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [git, setGit] = useState<GitStatus>(() => gitStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [starters, setStarters] = useState<PluginEntry[]>([]);
-  const [viewport, setViewport] = useState<{ top: number; bottom: number } | null>(null);
+  const [viewport, setViewport] = useState<{ top: number; bottom: number; lines?: number[] } | null>(null);
+  /** Folding in the code view: a click on a row's fold marker, and /fold, /unfold for the whole file. */
+  const [foldClick, setFoldClick] = useState<{ row: number; nonce: number } | null>(null);
+  const [foldAll, setFoldAll] = useState<{ fold: boolean; nonce: number } | null>(null);
   // The editor reports every keystroke; the app only re-renders when what it shows changes (line, unsaved, selection).
   const editorStateRef = useRef<EditorState | null>(null);
   const [editorState, setEditorState] = useState<{ line: number; dirty: boolean; selection: boolean } | null>(null);
@@ -1073,13 +1076,21 @@ export function App({ initialModel, permContext, resume }: Props) {
     const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
     lastClick.current = double ? null : { x: event.x, y: event.y, time: Date.now() };
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
+      // As the code view counts them (a last empty line after the final newline isn't shown).
+      const digits = String(splitLines(content).length).length;
       if (showEditor) {
         dragging.current = "editor";
         editorAt(event.x, event.y, double ? "double" : "press");
+      } else if (openFile && !diff && event.x - codeLeft - 1 === digits + 1) {
+        // The fold marker (▾/▸) beside the line number: fold or unfold that block.
+        lastClick.current = null;
+        setFoldClick((f) => ({ row: event.y - 3, nonce: (f?.nonce ?? 0) + 1 }));
       } else if (double && openFile && !diff && settleDraft(openFile)) {
         // Double-click in the code: edit right there.
-        const gutter = String(content.split("\n").length).length + 1;
-        setEditorStart((s) => ({ line: (viewport?.top ?? 1) + event.y - 3, col: Math.max(1, event.x - codeLeft - gutter), nonce: s.nonce + 1 }));
+        // The code view's gutter: the line number, a marker and the fold arrow; folds hide lines between rows.
+        const gutter = digits + 2;
+        const line = viewport?.lines?.[event.y - 3] ?? (viewport?.top ?? 1) + event.y - 3;
+        setEditorStart((s) => ({ line, col: Math.max(1, event.x - codeLeft - gutter), nonce: s.nonce + 1 }));
         setDiffMode("off");
         setEditing(true);
       }
@@ -1631,6 +1642,12 @@ ${snippet}
       return toggleTerminal();
     case "redraw":
       return redraw();
+    case "fold":
+    case "unfold":
+      if (!openFile) return info("Open a file first: /fold folds every function and block in it, /unfold opens them.", "error");
+      setEditing(false);
+      setFocus("code");
+      return setFoldAll((f) => ({ fold: command === "fold", nonce: (f?.nonce ?? 0) + 1 }));
     case "new":
       return newChatTab();
     case "close":
@@ -1879,7 +1896,8 @@ ${snippet}
   const onTreeHover = useEvent(() => {});
   const onJump = useEvent((file: string, line: number) => openAt(file, line));
   const onCloseProblems = useEvent(() => setCodePanel("code"));
-  const onViewport = useEvent((top: number, bottom: number) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom })));
+  const onViewport = useEvent((top: number, bottom: number, lines?: number[]) =>
+    setViewport((v) => (v?.top === top && v.bottom === bottom && v.lines?.join() === lines?.join() ? v : { top, bottom, ...(lines ? { lines } : {}) })));
   const onSend = useEvent(submit);
   const onChatMenu = useEvent((open: boolean) => {
     chatMenuOpen.current = open;
@@ -2239,6 +2257,8 @@ ${snippet}
             onDefine={onCodeDefine}
             onFinding={onCodeFinding}
             findRequest={findRequest}
+            foldClick={foldClick}
+            foldAll={foldAll}
           />
         )}
         <Chat

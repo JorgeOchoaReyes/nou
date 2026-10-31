@@ -101,6 +101,7 @@ Every change is reviewed like a code review:
 | <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
 | <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it; drag its top border (or <kbd>Alt</kbd>+↑/↓) to make it taller or shorter. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>z</kbd> | in the code view: fold every function and block to its first line, or open them all again (also `/fold`, `/unfold`); click a ▾/▸ beside a line number to fold or open just that one |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | draw the whole screen again (also `/redraw`), if it ever looks shifted or clicks land a row off. Output from libraries goes to `~/.nou/nou.log` instead of the screen |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | in the chat: open or fold every "▸ N steps" line (what the agent read and ran between replies folds into one; click one to open just it) |
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |

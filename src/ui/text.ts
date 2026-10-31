@@ -401,3 +401,42 @@ export function closeOpenMarkdown(text: string): string {
   else if ((last.match(/\*\*/g)?.length ?? 0) % 2) out += "**";
   return out;
 }
+
+/**
+ * Regions that can fold, from indentation (like VS Code without a language server): a line followed by
+ * more-indented lines folds them, and the closing bracket that ends the block. 1-based line -> last line.
+ */
+export function foldRanges(text: string): Map<number, number> {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const indent = (s: string) => s.match(/^[ \t]*/)![0].replace(/\t/g, "  ").length;
+  const blank = (s: string) => !s.trim();
+  const out = new Map<number, number>();
+  for (let i = 0; i < lines.length; i++) {
+    if (blank(lines[i]!)) continue;
+    const base = indent(lines[i]!);
+    let j = i + 1;
+    while (j < lines.length && blank(lines[j]!)) j++;
+    if (j >= lines.length || indent(lines[j]!) <= base) continue;
+    let end = j;
+    for (let k = j; k < lines.length; k++) {
+      if (blank(lines[k]!)) continue;
+      if (indent(lines[k]!) <= base) break;
+      end = k;
+    }
+    // The line that closes the block (`}`, `)`, `]`, `end`...) folds with it.
+    const next = end + 1;
+    if (next < lines.length && indent(lines[next]!) === base && /^\s*([}\])]|end\b|<\/)/.test(lines[next]!)) end = next;
+    if (end > i) out.set(i + 1, end + 1);
+  }
+  return out;
+}
+
+/** The file lines (1-based) left showing with `folded` regions (start lines) closed. */
+export function unfoldedLines(count: number, ranges: Map<number, number>, folded: Set<number>): number[] {
+  const out: number[] = [];
+  for (let n = 1; n <= count; n++) {
+    out.push(n);
+    if (folded.has(n) && ranges.has(n)) n = ranges.get(n)!;
+  }
+  return out;
+}

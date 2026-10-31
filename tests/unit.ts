@@ -366,6 +366,16 @@ console.log("Web links in the chat");
   check("[text](url) links its text to the page", md.find((sp) => sp.text === "the docs")?.link?.url === "https://example.com/x" && linkAt(md, 6)?.url === "https://example.com/x");
 }
 
+console.log("Folding");
+{
+  const { foldRanges, unfoldedLines } = await import("../src/ui/text.js");
+  const src = "class A {\n  run() {\n    go();\n  }\n\n  stop() {}\n}\ndef f():\n    return 1\nx = 2\n";
+  const r = foldRanges(src);
+  check("a block folds to its closing bracket, nested ones too", r.get(1) === 7 && r.get(2) === 4 && !r.has(6));
+  check("indentation alone folds (Python)", r.get(8) === 9);
+  check("folded lines are hidden, the first line stays", unfoldedLines(10, r, new Set([2])).join(",") === "1,2,5,6,7,8,9,10" && unfoldedLines(10, r, new Set([1])).join(",") === "1,8,9,10");
+}
+
 console.log("Retrying passing failures");
 {
   const { transientMessage } = await import("../src/agent/index.js");
