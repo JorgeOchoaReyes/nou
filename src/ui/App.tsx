@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
@@ -149,6 +149,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [termVersion, setTermVersion] = useState(0);
   /** Its height while its top border is being dragged (saved when you let go). */
   const [termDrag, setTermDrag] = useState<number | null>(null);
+  /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
+  const tabStripCache = useRef<{ key: string; strip: ReactNode } | null>(null);
   /**
    * "Show me how" (/showme): the steps Nou found, and the one you're on. While Nou looks for them,
    * `guideAsk` holds what you asked (and its edits are turned down: you're doing the typing).
@@ -1773,7 +1775,11 @@ ${snippet}
   const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
-  const tabStrip = tabs.length && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
+  const tabKey = tabs.length && openFile ? `${tabs.join("\0")}|${openFile}|${tabsWidth(codeWidth)}|${showEditor && !!editorState?.dirty}` : "";
+  if (tabStripCache.current?.key !== tabKey) {
+    tabStripCache.current = { key: tabKey, strip: tabKey ? <Tabs tabs={tabs} active={openFile!} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined };
+  }
+  const tabStrip = tabStripCache.current.strip;
   // The Games panel takes the bottom of its pane's column: up to 19 rows, and never more than half.
   const gameHeight = gamesOpen ? Math.min(GAME_PANEL.height, Math.floor(height / 2)) : 0;
   const heights: Record<Dock, number> = { tree: height, code: height, chat: height };

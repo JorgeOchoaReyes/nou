@@ -10,7 +10,7 @@ import { PLUGIN_DIRS, isEnabled, trustState, type PluginEntry } from "../plugins
 import { currentVersion } from "../update/index.js";
 import { describe, providers, rejectedKey, type ModelChoice, type Provider } from "../providers/index.js";
 import { ENGINES, isInstalled, type EngineId } from "../engines/index.js";
-import { C, SPINNER } from "./theme.js";
+import { C, SPINNER, ANIMATION_MS } from "./theme.js";
 
 type Props = {
   width: number;
@@ -66,7 +66,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   const [models, setModels] = useState<Record<string, string[] | { error: string } | "loading">>({});
   const [connecting, setConnecting] = useState<Connecting | null>(connectTo?.connect ? { step: 0, values: {} } : null);
   const [field, setField] = useState(() => (connectTo?.connect ? initialValue(connectTo.connect[0]!) : ""));
-  const { frame } = useAnimation({ interval: 80 });
+  const { frame } = useAnimation({ interval: ANIMATION_MS });
 
   const provider = providers[row] ?? providers[0]!;
   const listed = models[provider.id];

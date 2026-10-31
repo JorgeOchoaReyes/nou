@@ -6,7 +6,7 @@ import path from "path";
 import { closeOpenMarkdown, linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { copyToClipboard } from "./clipboard.js";
-import { C, SPINNER } from "./theme.js";
+import { C, SPINNER, ANIMATION_MS } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { matchCommands, type SlashCommand } from "./commands.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -116,12 +116,18 @@ type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
 export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, queued = [] }: Props) {
-  const [input, setInput] = useState("");
+  const [input, setInputText] = useState("");
+  const [menuRow, setMenuRow] = useState(0);
+  /** A new input also puts the command menu back on its first row, in the same render. */
+  const setInput = (text: string) => {
+    setInputText(text);
+    setMenuRow(0);
+  };
   useEffect(() => {
     if (prefill) setInput(prefill.text);
   }, [prefill?.nonce]);
   const [scrollBack, setScrollBack] = useState(0);
-  const { frame } = useAnimation({ interval: 80, isActive: !!busy });
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy });
   const inner = width - 3; // minus the borders and the scrollbar
 
   const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
@@ -175,8 +181,6 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   // Typing "/" opens a menu of commands with what each does; ↑↓ pick one, Tab completes, Enter runs it.
   const menuOpen = focused && !approval && input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
   const matches = useMemo(() => (menuOpen ? matchCommands(input, extraCommands) : []), [menuOpen, input, extraCommands]);
-  const [menuRow, setMenuRow] = useState(0);
-  useEffect(() => setMenuRow(0), [input]);
   const showMenu = matches.length > 0;
   useEffect(() => onMenu?.(showMenu), [showMenu]);
   const menuRows = Math.min(matches.length, Math.max(1, Math.min(7, height - 12)));
@@ -306,38 +310,46 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     </>
   );
 
+  // The messages, rebuilt only when they or the scroll position change: typing, the context chip and the
+  // spinner re-render the chat without touching its (often hundreds of) lines.
+  const messages = useMemo(() => (
+    <>
+      {empty ? (
+        <Box flexDirection="column" paddingX={1}>
+          <Text color={C.dim}>Try:</Text>
+          <Text color={C.text}>  “explain this file”</Text>
+          <Text color={C.text}>  “what changed since my last commit?”</Text>
+          <Text color={C.text}>  “add error handling here”</Text>
+          <Text> </Text>
+          <Text color={C.dim}>I can see the file you have open.</Text>
+        </Box>
+      ) : (
+        <Box flexDirection="row">
+          <Box width={2} flexShrink={0}>
+            <Text>{visible.map((line, i) => <Text key={i} color={line.leadColor ?? C.dim}>{`${line.lead ?? "  "}${i < visible.length - 1 ? "\n" : ""}`}</Text>)}</Text>
+          </Box>
+          <Box flexDirection="column" width={inner - 2} flexShrink={0}>
+            {visible.map((line, i) => {
+              const range = selectedIn(firstShown + i);
+              if (!range) return render(line, firstShown + i, false);
+              const t = lineText(line) || " ";
+              return (
+                <Text key={firstShown + i} wrap="truncate-end" color={C.text}>
+                  {t.slice(0, range[0])}<Text inverse>{t.slice(range[0], range[1]) || " "}</Text>{t.slice(range[1])}
+                </Text>
+              );
+            })}
+          </Box>
+        </Box>
+      )}
+    </>
+  ), [lines, firstShown, visible.length, selection, inner, empty]);
+
   return (
     <Pane title={title} width={width} height={height} focused={focused}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={inner} flexShrink={0}>
-          {empty ? (
-            <Box flexDirection="column" paddingX={1}>
-              <Text color={C.dim}>Try:</Text>
-              <Text color={C.text}>  “explain this file”</Text>
-              <Text color={C.text}>  “what changed since my last commit?”</Text>
-              <Text color={C.text}>  “add error handling here”</Text>
-              <Text> </Text>
-              <Text color={C.dim}>I can see the file you have open.</Text>
-            </Box>
-          ) : (
-            <Box flexDirection="row">
-              <Box width={2} flexShrink={0}>
-                <Text>{visible.map((line, i) => <Text key={i} color={line.leadColor ?? C.dim}>{`${line.lead ?? "  "}${i < visible.length - 1 ? "\n" : ""}`}</Text>)}</Text>
-              </Box>
-              <Box flexDirection="column" width={inner - 2} flexShrink={0}>
-                {visible.map((line, i) => {
-                  const range = selectedIn(firstShown + i);
-                  if (!range) return render(line, firstShown + i, false);
-                  const t = lineText(line) || " ";
-                  return (
-                    <Text key={firstShown + i} wrap="truncate-end" color={C.text}>
-                      {t.slice(0, range[0])}<Text inverse>{t.slice(range[0], range[1]) || " "}</Text>{t.slice(range[1])}
-                    </Text>
-                  );
-                })}
-              </Box>
-            </Box>
-          )}
+          {messages}
         </Box>
         <Scrollbar total={lines.length} top={firstShown} rows={rows} focused={focused} />
       </Box>

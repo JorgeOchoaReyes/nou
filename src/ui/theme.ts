@@ -14,6 +14,9 @@ export const C = {
   panel: "#1f2335",
 } as const;
 
+/** Every spinner and shimmer ticks on this one interval, so they redraw together in a single frame. */
+export const ANIMATION_MS = 100;
+
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 const GRADIENT = [C.accent, "#8c9cf7", C.accent2, "#c39af2", "#e08ad6", C.red, C.orange, C.yellow, C.green, C.cyan];

@@ -111,28 +111,28 @@ const CALLS = /^(call_expression|call|method_invocation|new_expression)$/;
 const isString = (n: Node) => n.isNamed && STRINGS.test(n.type);
 const hasSubstitution = (n: Node) => n.children.some((c) => c !== null && /substitution|interpolation/.test(c.type));
 
-function colorFor(node: Node): Color | null {
+/**
+ * The color of a leaf. Its `parent` and `grand`parent and whether it's `inString` come from the walk over
+ * the tree: asking the node for them (node.parent) crosses into wasm, and every token used to, several times.
+ */
+function colorFor(node: Node, parent: Node | null, grand: Node | null, inString: boolean): Color | null {
   const type = node.type;
   if (type.includes("comment")) return "comment";
   // Inside a string (but not inside ${...} substitutions)?
-  for (let p: Node | null = node; p; p = p.parent) {
-    if (/substitution|interpolation/.test(p.type)) break;
-    if (isString(p)) return "string";
-  }
+  if (inString || isString(node)) return "string";
   // Built-in type names (`number`, `string`) and Python annotations (`name: str`).
-  if (node.parent?.type === "predefined_type" || (node.parent?.type === "type" && /identifier$/.test(type))) return "type";
+  if (parent?.type === "predefined_type" || (parent?.type === "type" && /identifier$/.test(type))) return "type";
   if (NUMBERS.test(type)) return "number";
   if (CONSTANTS.test(type) || CONSTANTS.test(node.text)) return node.isNamed || /^[a-zA-Z]+$/.test(node.text) ? "constant" : null;
-  if (TYPES.test(type) && (node.isNamed || node.parent?.type === "predefined_type")) return "type";
+  if (TYPES.test(type) && (node.isNamed || parent?.type === "predefined_type")) return "type";
   if (/identifier$/.test(type)) {
-    const parent = node.parent;
     if (parent && FUNCTION_PARENTS.test(parent.type) && parent.childForFieldName("name")?.equals(node)) return "func";
     if (parent && CALLS.test(parent.type) && parent.childForFieldName("function")?.equals(node)) return "func";
     // obj.method(): only the method name, not the object.
     const member = parent && /member_expression|attribute|field_expression|selector_expression/.test(parent.type)
       ? parent.childForFieldName("property") ?? parent.childForFieldName("attribute") ?? parent.childForFieldName("field")
       : null;
-    if (member?.equals(node) && parent!.parent && CALLS.test(parent!.parent.type) && parent!.parent.childForFieldName("function")?.equals(parent!)) return "func";
+    if (member?.equals(node) && grand && CALLS.test(grand.type) && grand.childForFieldName("function")?.equals(parent!)) return "func";
   }
   if (PROPERTIES.test(type)) return "property";
   if (/tag_name|jsx_opening_element|jsx_closing_element/.test(type)) return "tag";
@@ -142,7 +142,7 @@ function colorFor(node: Node): Color | null {
     return null;
   }
   if (!node.isNamed) {
-    if (node.parent?.type === "predefined_type") return "type";
+    if (parent?.type === "predefined_type") return "type";
     return /^[a-z_]+$/i.test(type) ? "keyword" : "punctuation";
   }
   return null;
@@ -156,26 +156,27 @@ export function highlightTree(file: string, text: string): string[] | null {
   let out = "";
   let pos = 0;
   const cursor = tree.walk();
-  // Depth-first over leaves, coloring each span.
-  const visit = (): void => {
+  // Depth-first over leaves, coloring each span; each level knows its parent, grandparent and whether it's in a string.
+  const visit = (parent: Node | null, grand: Node | null, inString: boolean): void => {
     do {
       const node = cursor.currentNode;
       if (node.childCount === 0 || node.type.includes("comment") || (isString(node) && !hasSubstitution(node))) {
         if (node.startIndex >= pos) {
           out += themeColors().plain(text.slice(pos, node.startIndex));
-          const color = colorFor(node);
+          const color = colorFor(node, parent, grand, inString);
           const span = text.slice(node.startIndex, node.endIndex);
           // Color each line separately so styles don't bleed across line breaks.
           out += span.split("\n").map((part) => (color ? themeColors()[color](part) : themeColors().plain(part))).join("\n");
           pos = node.endIndex;
         }
       } else if (cursor.gotoFirstChild()) {
-        visit();
+        // A ${...} substitution inside a string starts code again.
+        visit(node, parent, /substitution|interpolation/.test(node.type) ? false : inString || isString(node));
         cursor.gotoParent();
       }
     } while (cursor.gotoNextSibling());
   };
-  if (cursor.gotoFirstChild()) visit();
+  if (cursor.gotoFirstChild()) visit(tree.rootNode, null, false);
   out += themeColors().plain(text.slice(pos));
   tree.delete();
   return out.split("\n");

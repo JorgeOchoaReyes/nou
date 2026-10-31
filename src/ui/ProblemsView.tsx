@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import type { Diagnostic } from "../diagnostics/index.js";
-import { C, SPINNER, fileIcon } from "./theme.js";
+import { C, SPINNER, fileIcon, ANIMATION_MS } from "./theme.js";
 import { Pane } from "./Pane.js";
 import type { Wheel } from "./scroll.js";
 
@@ -28,7 +28,7 @@ export const SEVERITY_STYLE = {
 export function ProblemsView({ width, height, focused, problems, checking, wheel, onJump, onClose }: Props) {
   const [cursor, setCursor] = useState(0);
   const [onlyErrors, setOnlyErrors] = useState(false);
-  const { frame } = useAnimation({ interval: 80, isActive: checking.length > 0 });
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: checking.length > 0 });
 
   const rows = useMemo(() => {
     const list = onlyErrors ? problems.filter((d) => d.severity === "error") : problems;

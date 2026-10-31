@@ -137,6 +137,11 @@ const commentFor = (file: string) => LINE_COMMENTS[path.extname(file).toLowerCas
 
 type Prompt = { kind: "find" | "line"; text: string };
 
+/** A line without the cursor or a selection: kept as is while you type on other lines. */
+const PlainRow = memo(function PlainRow({ num, numColor, text }: { num: string; numColor: string; text: string }) {
+  return <Text wrap="truncate-end"><Text color={numColor}>{num}</Text>{text || " "}</Text>;
+});
+
 /** A text editor: arrows and the mouse to move, Shift to select, Ctrl+C/X/V clipboard, Ctrl+S save, Ctrl+Z undo, Esc leave. */
 export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs, guide, onGuideDone }: Props) {
   const eol = useMemo(() => (baseline.includes("\r\n") ? "\r\n" : "\n"), [baseline]);
@@ -660,7 +665,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
             );
             const inSelection = sel && n >= sel.start.row && n <= sel.end.row;
             if (!isCursorLine && !inSelection) {
-              return <Text key={n} wrap="truncate-end">{num}{colored[i] || " "}</Text>;
+              return <PlainRow key={n} num={`${String(n + 1).padStart(gutter - 2)}${mark ? ` ${mark.icon}` : "  "}`} numColor={mark?.color ?? C.dim} text={colored[i] ?? ""} />;
             }
             // Lines with the cursor or a selection show plain text, so both can be drawn exactly.
             const shown = expand(line).slice(v.left, v.left + textWidth);
