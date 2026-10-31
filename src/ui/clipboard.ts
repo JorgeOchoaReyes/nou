@@ -67,7 +67,7 @@ export function openInBrowser(url: string): boolean {
   if (process.env.NOU_TEST_OPEN) return ((globalThis as any).__opened = url), true; // tests: note it, open nothing
   const [cmd, args] = process.platform === "darwin" ? ["open", [url]]
     : process.platform === "win32" ? ["cmd", ["/c", "start", "", url.replace(/&/g, "^&")]]
-    : ["xdg-open", [url]];
+      : ["xdg-open", [url]];
   try {
     const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.on("error", () => {});
