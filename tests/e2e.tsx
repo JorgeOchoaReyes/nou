@@ -300,13 +300,14 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.ctrlP, 200);
   await type("edit.ts");
   await press(KEY.enter, 800);
-  // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
+  // In the code view, text starts after the border (x=24), the 1-digit gutter, the marker and the fold
+  // column: column 0 is x=28. The editor has no fold column: there it's x=27.
   const up = (x: number, y: number) => `\x1b[<0;${x + 1};${y + 1}m`;
-  await press(click(27 + 8, 3 + 1) + up(27 + 8, 3 + 1), 600); // line 2, column 9: "alpha"
+  await press(click(28 + 8, 3 + 1) + up(28 + 8, 3 + 1), 600); // line 2, column 9: "alpha"
   check("a single click in the code doesn't start editing", !frame().includes("EDITING"));
   await delay(600); // too slow for a double-click
-  await press(click(27 + 8, 3 + 1) + up(27 + 8, 3 + 1), 50);
-  await press(click(27 + 8, 3 + 1) + up(27 + 8, 3 + 1), 400);
+  await press(click(28 + 8, 3 + 1) + up(28 + 8, 3 + 1), 50);
+  await press(click(28 + 8, 3 + 1) + up(28 + 8, 3 + 1), 400);
   check("double-clicking in the code starts editing right there", frame().includes("EDITING") && frame().includes("Ln 2, Col 9"));
   await press(SHIFT_RIGHT);
   await press(SHIFT_RIGHT);
@@ -452,16 +453,35 @@ console.log("Finding things for you: open_file and clickable paths");
     await type("/open imp.ts");
     await press(KEY.enter, 400);
     await until(() => frame().includes("console.log(a)"));
-    // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
+    // Code text starts after the border (x=24), the 1-digit gutter, the marker and the fold column: x=28.
     const ctrlClick = (x: number, y: number) => `\x1b[<16;${x + 1};${y + 1}M`;
-    await press(ctrlClick(27 + 12, 4), 400); // the "a" in console.log(a)
-    check("Ctrl+click on an imported name jumps to its import line", await until(() => /1▌import \{ a \}/.test(frame())));
-    await press(ctrlClick(27 + 20, 3), 400); // the path in the import
+    await press(ctrlClick(28 + 12, 4), 400); // the "a" in console.log(a)
+    check("Ctrl+click on an imported name jumps to its import line", await until(() => /1▌.import \{ a \}/.test(frame())));
+    await press(ctrlClick(28 + 20, 3), 400); // the path in the import
     check("Ctrl+click on the import's path opens that file", await until(() => frame().split("\n")[2]!.includes(" a.ts") && frame().includes("const a = 1;")));
-    await press(`\x1b[<2;${27 + 6 + 1};${3 + 1}M`, 400); // right-click the "a" of const a = 1
-    check("right-click goes to definitions too", await until(() => frame().includes("1▌const a = 1;")));
+    await press(`\x1b[<2;${28 + 6 + 1};${3 + 1}M`, 400); // right-click the "a" of const a = 1
+    check("right-click goes to definitions too", await until(() => /1▌.const a = 1;/.test(frame())));
   });
 }
+
+console.log("Folding");
+writeFileSync(path.join(dir, "fold.ts"), "function one() {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}\n\nfunction two() {\n  return 2;\n}\n");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/open fold.ts");
+  await press(KEY.enter, 400);
+  check("blocks that can fold have a ▾ by their line number", await until(() => /1▌?.?▾function one/.test(frame().replace(/ ▾/g, "▾")) || /▾function one/.test(frame())));
+  await type("/fold");
+  await press(KEY.enter, 300);
+  check("/fold folds every block to its first line", await until(() => frame().includes("⋯ 4 lines") && frame().includes("⋯ 2 lines") && !frame().includes("const a = 1")));
+  const rows = frame().split("\n");
+  const y = rows.findIndex((l) => l.includes("function one"));
+  await press(click(rows[y]!.indexOf("▸"), y), 300);
+  check("clicking a fold's ▸ opens just that one", await until(() => frame().includes("const a = 1") && frame().includes("⋯ 2 lines")));
+  await press("z", 300);
+  check("z folds or unfolds them all", await until(() => frame().includes("⋯ 4 lines")));
+  await press("z", 300);
+  check("and again opens them all", await until(() => !frame().includes("⋯")));
+});
 
 console.log("Tabs");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
@@ -650,6 +670,16 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(`\x1b[<32;${gx + 1};${top + 1 + 1}M`, 100);
   await press(`\x1b[<0;${gx + 1};${top + 1 + 1}m`, 100);
   check("dragging its top border makes it shorter", await until(() => gameTitle() === top + 2));
+  // As small as it goes: the game waits, saying how much room it needs, instead of crashing Nou.
+  const now = gameTitle();
+  await press(click(gx, now - 1), 100);
+  await press(`\x1b[<32;${gx + 1};${now + 15 + 1}M`, 100);
+  await press(`\x1b[<0;${gx + 1};${now + 15 + 1}m`, 200);
+  check("made too small, the game waits and says it needs more room", await until(() => frame().includes("needs more room")) && frame().includes("NOU"));
+  await press(click(gx, gameTitle() - 1), 100);
+  await press(`\x1b[<32;${gx + 1};${top + 2 + 1}M`, 100);
+  await press(`\x1b[<0;${gx + 1};${top + 2 + 1}m`, 200);
+  await until(() => frame().includes("✦ Pong") && !frame().includes("needs more room"));
   await press(KEY.esc, 300);
   check("Esc gives the keyboard back, and the game waits", !frame().split("\n").at(-1)!.includes("GAME") && frame().includes("click to play"));
   await type("/games");
@@ -885,9 +915,9 @@ console.log("Resuming a conversation");
     await type("/resume");
     await press(KEY.enter, 300);
     check("/resume lists earlier conversations here", frame().includes("just now)"));
-    await type("/resume 1");
+    await type("1");
     await press(KEY.enter, 400);
-    check("/resume 1 picks the latest back up", frame().includes("Resumed") && frame().includes("pineapple"));
+    check("then typing its number picks it back up (not sent to the agent)", await until(() => frame().includes("Resumed") && frame().includes("pineapple")) && !frame().includes("answer 2"));
   });
   // A new run of Nou in the same folder.
   await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {

@@ -14,6 +14,33 @@ import { lsp } from "./lsp/index.js";
 import { App } from "./ui/App.js";
 import { installFastOutput } from "./ui/fast-output.js";
 import { RENDER_OPTIONS } from "./ui/render-options.js";
+import { setScreenClear } from "./ui/redraw.js";
+import { appendFileSync, mkdirSync } from "fs";
+import path from "path";
+import { format } from "util";
+import { NOU_HOME } from "./config/index.js";
+
+/**
+ * Sends console output and stderr to `file` instead of the terminal, until the returned function puts them
+ * back. Nou draws the whole screen; a stray line from a library would scroll it out from under the mouse.
+ */
+function quietConsole(file: string): () => void {
+  const saved = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug, stderr: process.stderr.write };
+  const toFile = (text: string) => {
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      appendFileSync(file, text);
+    } catch {
+      // nowhere to keep it: dropping it still beats scrambling the screen
+    }
+  };
+  for (const name of ["log", "info", "warn", "error", "debug"] as const) console[name] = (...args: unknown[]) => toFile(`${new Date().toISOString()} ${name}: ${format(...args)}\n`);
+  process.stderr.write = ((chunk: string | Uint8Array) => (toFile(String(chunk)), true)) as typeof process.stderr.write;
+  return () => {
+    Object.assign(console, { log: saved.log, info: saved.info, warn: saved.warn, error: saved.error, debug: saved.debug });
+    process.stderr.write = saved.stderr;
+  };
+}
 
 const HELP = `nou ${currentVersion()}: an AI coding assistant for your terminal
 
@@ -114,8 +141,13 @@ async function main() {
   const permContext = await loadPermanentContext();
 
   await installFastOutput();
+  // While Nou is on screen, anything a library prints (console.log, warnings, stderr) goes to a log file:
+  // written into the terminal, it would scroll the screen out from under the mouse.
+  const restoreOutput = quietConsole(path.join(NOU_HOME, "nou.log"));
   const app = render(createElement(App, { initialModel: choice, permContext, ...(args.includes("--continue") || args.includes("-c") ? { resume: "last" as const } : args.includes("--resume") || args.includes("-r") ? { resume: "list" as const } : {}) }), RENDER_OPTIONS);
+  setScreenClear(() => app.clear());
   await app.waitUntilExit();
+  restoreOutput();
   lsp.stopAll();
 
   p.outro(chalk.cyan("Bye bye!"));

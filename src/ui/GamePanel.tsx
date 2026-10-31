@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { Component, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import { GAMES, gameById, type Game, type Input } from "../games/index.js";
 import { C } from "./theme.js";
@@ -14,6 +14,9 @@ type Props = {
   moving?: boolean;
   /** Games you've added in settings. */
   installed: string[];
+  /** Each game's best score so far, and where a new one is saved. */
+  best?: Record<string, number>;
+  onScore?(game: string, score: number): void;
   /** Esc: back to the code (the game pauses). */
   onLeave(): void;
   onOpenSettings(): void;
@@ -37,15 +40,38 @@ function Row({ line, colors }: { line: string; colors: Record<string, string> })
  * A panel for little games, docked under a pane (drag its title to another pane; × closes it). The app gives it
  * the keyboard while it's focused; a game only runs while it has the keyboard, so it pauses as you leave.
  */
-export const GamePanel = memo(function GamePanel({ width, height, focused, moving, installed, onLeave, onOpenSettings }: Props) {
-  const FIELD = { width: Math.max(10, width - 4), height: Math.max(3, height - 6) };
+/**
+ * Keeps a game that throws from taking Nou down with it: the panel says so, and you can pick another.
+ */
+export class GameGuard extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Box borderStyle="round" borderColor={C.red} flexDirection="column" paddingX={1}>
+        <Text color={C.red}>The game stopped: {this.state.error.slice(0, 80)}</Text>
+        <Text color={C.dim}>Close the panel (×) and open it again with /games.</Text>
+      </Box>
+    );
+  }
+}
+
+export const GamePanel = memo(function GamePanel({ width, height, focused, moving, installed, best = {}, onScore, onLeave, onOpenSettings }: Props) {
+  const FIELD = { width: Math.max(0, width - 4), height: Math.max(0, height - 6) };
+  const fits = (g: Game) => FIELD.width >= g.minWidth && FIELD.height >= g.minHeight;
   const games = installed.map(gameById).filter((g): g is Game => !!g);
   const [row, setRow] = useState(0);
   const [playing, setPlaying] = useState<{ game: Game; state: any } | null>(null);
   const [paused, setPaused] = useState(false);
   const inputs = useRef<Input[]>([]);
-  const view = playing ? playing.game.view(playing.state) : null;
-  const running = !!playing && focused && !paused && !view?.over;
+  // A game that doesn't fit the panel any more (it was made smaller) waits, saying how much room it needs.
+  const tooSmall = !!playing && !fits(playing.game);
+  const view = playing && !tooSmall ? playing.game.view(playing.state) : null;
+  const running = !!playing && !tooSmall && focused && !paused && !view?.over;
+  const tickMs = playing ? playing.game.speed?.(playing.state) ?? playing.game.tickMs : 100;
 
   useEffect(() => {
     if (!running) return;
@@ -53,15 +79,23 @@ export const GamePanel = memo(function GamePanel({ width, height, focused, movin
       const pressed = inputs.current;
       inputs.current = [];
       setPlaying((p) => (p ? { ...p, state: p.game.tick(p.state, pressed) } : p));
-    }, playing!.game.tickMs);
+    }, tickMs);
     return () => clearInterval(timer);
-  }, [running, playing?.game]);
-  // A different size (moved to another pane, or the window changed) starts the game over at that size.
+  }, [running, playing?.game, tickMs]);
+  // A different size (moved to another pane, or the window changed) starts the game over at that size,
+  // once it fits.
   useEffect(() => {
-    if (playing) setPlaying({ game: playing.game, state: playing.game.create(FIELD.width, FIELD.height) });
+    if (playing && fits(playing.game)) setPlaying({ game: playing.game, state: playing.game.create(FIELD.width, FIELD.height) });
   }, [FIELD.width, FIELD.height]);
+  // A finished game's score goes into the best scores.
+  const final = view?.over ? view.score ?? 0 : null;
+  const newBest = final !== null && playing !== null && final > (best[playing.game.id] ?? 0);
+  useEffect(() => {
+    if (newBest && playing) onScore?.(playing.game.id, final!);
+  }, [newBest]);
 
   const start = (game: Game) => {
+    if (!fits(game)) return;
     inputs.current = [];
     setPaused(false);
     setPlaying({ game, state: game.create(FIELD.width, FIELD.height) });
@@ -82,7 +116,7 @@ export const GamePanel = memo(function GamePanel({ width, height, focused, movin
       return;
     }
     if (input === " " || input === "p") return setPaused((p) => !p);
-    const pressed: Input | undefined = key.upArrow ? "up" : key.downArrow ? "down" : key.leftArrow ? "left" : key.rightArrow ? "right" : KEYS[input];
+    const pressed: Input | undefined = key.return ? "action" : key.upArrow ? "up" : key.downArrow ? "down" : key.leftArrow ? "left" : key.rightArrow ? "right" : KEYS[input];
     if (pressed) inputs.current.push(pressed);
   }, { isActive: focused });
 
@@ -102,12 +136,17 @@ export const GamePanel = memo(function GamePanel({ width, height, focused, movin
           <Text color={C.dim} wrap="wrap">Too small here: drag me to a bigger pane, or make this one wider.</Text>
         </Box>
       ) : null}
-      {small ? null : playing && view ? (
+      {small ? null : playing && tooSmall ? (
+        <Box flexDirection="column" paddingX={1} flexGrow={1}>
+          <Text color={C.yellow} wrap="wrap">{playing.game.title} needs more room: a field of {playing.game.minWidth}×{playing.game.minHeight}, and this one is {FIELD.width}×{FIELD.height}.</Text>
+          <Text color={C.dim} wrap="wrap">Drag the top edge up, move the panel to a wider pane, or q for another game.</Text>
+        </Box>
+      ) : playing && view ? (
         <Box flexDirection="column" paddingX={1} height={FIELD.height + 2}>
           {view.lines.map((line, i) => {
             // The end-of-game message goes over the middle of the field.
             if (view.over && i === Math.floor(FIELD.height / 2)) {
-              const msg = ` ${view.over} `;
+              const msg = ` ${view.over}${newBest ? " New best!" : ""} `;
               const left = Math.max(0, Math.floor((FIELD.width - msg.length) / 2));
               return <Text key={i}>{line.slice(0, left)}<Text backgroundColor={C.yellow} color="black" bold>{msg}</Text>{line.slice(left + msg.length)}</Text>;
             }
@@ -121,18 +160,26 @@ export const GamePanel = memo(function GamePanel({ width, height, focused, movin
           {games.length === 0 ? (
             <>
               <Text color={C.text}>No games yet.</Text>
-              <Text color={C.dim} wrap="wrap">Add some in settings → Games{focused ? " (press s)" : ""}: Pong, Snake and Breakout.</Text>
+              <Text color={C.dim} wrap="wrap">Add some in settings → Games{focused ? " (press s)" : ""}: {GAMES.map((g) => g.title).join(", ")}.</Text>
             </>
-          ) : games.map((g, i) => (
-            <Box key={g.id} flexDirection="column" marginBottom={1}>
-              <Text {...(i === row && focused ? { backgroundColor: C.panel } : {})}>
-                <Text color={i === row ? C.accent2 : C.dim}>{i === row ? "▸ " : "  "}</Text>
-                <Text color={C.text} bold={i === row}>{g.title}</Text>
-                <Text color={C.dim}>  {g.controls}</Text>
-              </Text>
-              <Text color={C.dim} wrap="truncate-end">    {g.blurb}</Text>
-            </Box>
-          ))}
+          ) : (
+            <>
+              {games.map((g, i) => (
+                <Text key={g.id} wrap="truncate-end" {...(i === row && focused ? { backgroundColor: C.panel } : {})}>
+                  <Text color={i === row ? C.accent2 : C.dim}>{i === row ? "▸ " : "  "}</Text>
+                  <Text color={fits(g) ? C.text : C.dim} bold={i === row}>{g.title}</Text>
+                  {best[g.id] ? <Text color={C.yellow}>  best {best[g.id]}</Text> : null}
+                  {fits(g) ? null : <Text color={C.dim}>  (needs more room)</Text>}
+                </Text>
+              ))}
+              {games[row] ? (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text color={C.dim} wrap="wrap">{games[row]!.blurb}</Text>
+                  <Text color={C.accent2} wrap="truncate-end">{games[row]!.controls}</Text>
+                </Box>
+              ) : null}
+            </>
+          )}
         </Box>
       )}
       <Text color={C.dim} wrap="truncate-end"> {hint}</Text>

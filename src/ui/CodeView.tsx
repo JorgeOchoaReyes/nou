@@ -4,7 +4,7 @@ import type { FileChange } from "../commands/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
-import { highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines } from "./text.js";
+import { foldRanges, highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines, unfoldedLines } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -36,7 +36,8 @@ type Props = {
   wheel?: Wheel | null;
   /** A click or drag on the scrollbar. */
   scrollTo?: ScrollTo | null;
-  onViewport(top: number, bottom: number): void;
+  /** The first and last file lines on screen, and every line shown (folds hide some in between). */
+  onViewport(top: number, bottom: number, lines?: number[]): void;
   /** A Ctrl/Alt+click or right-click on the code: `row` from the top of the code, `x` from its left edge. */
   defineAt?: { row: number; x: number; nonce: number } | null;
   /** Go to the definition of what's at `line`:`col` (1-based, in the file's own text). */
@@ -47,6 +48,10 @@ type Props = {
   onFinding?(open: boolean): void;
   /** Changes to open the find bar. */
   findRequest?: number;
+  /** A click on the fold marker of a row (0 = first row under the title): folds or unfolds it. */
+  foldClick?: { row: number; nonce: number } | null;
+  /** /fold, /unfold: every region in the file. */
+  foldAll?: { fold: boolean; nonce: number } | null;
 };
 
 /** The current match: a yellow background; the others are shown inverted. */
@@ -56,7 +61,7 @@ const CURRENT_MATCH = ["\x1b[43m\x1b[30m", "\x1b[49m\x1b[39m"] as const;
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest }: Props) {
+export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest, foldClick, foldAll }: Props) {
   const [top, setTop] = useState(0);
   // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
@@ -80,19 +85,38 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     return map;
   }, [problems]);
   const diffRows = useMemo(() => (diff ? sideBySide(diff.before, diff.after) : []), [diff]);
-  const total = diff ? diffRows.length : lines.length;
+  // Folding: regions from indentation, the ones folded, and the file lines left showing (rows map to these).
+  const ranges = useMemo(() => (filePath && !diff ? foldRanges(content) : new Map<number, number>()), [filePath, content, !!diff]);
+  const [folded, setFolded] = useState<Set<number>>(new Set());
+  useEffect(() => setFolded(new Set()), [filePath]);
+  const shown = useMemo(() => unfoldedLines(lines.length, ranges, folded), [lines.length, ranges, folded]);
+  /** The row a file line is on (a folded-away line: its fold's row). */
+  const rowOf = (line: number, list = shown) => {
+    let row = 0;
+    while (row + 1 < list.length && list[row + 1]! <= line) row++;
+    return row;
+  };
+  /** Opens any fold hiding `line`, and returns the rows with it open. */
+  const reveal = (line: number) => {
+    const hiding = [...folded].filter((s) => s < line && (ranges.get(s) ?? 0) >= line);
+    if (!hiding.length) return shown;
+    const next = new Set([...folded].filter((s) => !hiding.includes(s)));
+    setFolded(next);
+    return unfoldedLines(lines.length, ranges, next);
+  };
+  const total = diff ? diffRows.length : shown.length;
 
   // Jump to the first change whenever a new file or diff is shown.
   useEffect(() => {
     const first = diff
       ? diffRows.findIndex((r) => r.changed)
-      : marked.size ? Math.min(...marked) - 1 : 0;
+      : marked.size ? rowOf(Math.min(...marked)) : 0;
     setTop(Math.max(0, first - 3));
     setLeft(0);
   }, [filePath, diff, diffRows, marked]);
 
   useEffect(() => {
-    if (focusLine && !diff) setTop(Math.max(0, focusLine.line - Math.floor(rows / 3)));
+    if (focusLine && !diff) setTop(Math.max(0, rowOf(focusLine.line, reveal(focusLine.line)) + 1 - Math.floor(rows / 3)));
   }, [focusLine]);
 
   const maxTop = Math.max(0, total - rows);
@@ -112,7 +136,9 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   // Bring the current match into view (a third of the way down, like a jump), sideways too.
   useEffect(() => {
     if (!current) return;
-    if (current.line < start || current.line >= start + rows) setTop(Math.max(0, current.line - Math.floor(rows / 3)));
+    const list = reveal(current.line + 1);
+    const at = rowOf(current.line + 1, list);
+    if (at < start || at >= start + rows) setTop(Math.max(0, at - Math.floor(rows / 3)));
     const room = inner - String(lines.length).length - 2;
     if (current.col < left || current.col + (find?.query.length ?? 0) > left + room) setLeft(Math.max(0, current.col - Math.floor(room / 3)));
   }, [current?.line, current?.col]);
@@ -128,19 +154,37 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   }, [scrollTo?.nonce]);
 
   useEffect(() => {
-    if (filePath && !diff) onViewport(start + 1, Math.min(total, start + rows));
-  }, [filePath, diff, start, rows, total]);
+    if (filePath && !diff) {
+      const onScreen = shown.slice(start, start + rows);
+      onViewport(onScreen[0] ?? 1, onScreen[onScreen.length - 1] ?? 1, onScreen);
+    }
+  }, [filePath, diff, start, rows, total, shown]);
+  useEffect(() => {
+    if (!foldClick || diff) return;
+    const n = shown[start + foldClick.row];
+    if (n === undefined || !ranges.has(n)) return;
+    setFolded((f) => {
+      const next = new Set(f);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  }, [foldClick?.nonce]);
+  useEffect(() => {
+    if (foldAll && !diff) setFolded(foldAll.fold ? new Set(ranges.keys()) : new Set());
+  }, [foldAll?.nonce]);
 
   useEffect(() => {
     if (!defineAt || diff || !filePath) return;
-    const n = start + defineAt.row + 1;
+    const n = shown[start + defineAt.row];
+    if (n === undefined) return;
     const raw = content.replace(/\r\n/g, "\n").split("\n")[n - 1];
     if (raw === undefined) return;
     // Screen column to the file's own column: tabs are shown as two spaces.
-    const want = defineAt.x - (String(lines.length).length + 1) + left;
-    let shown = 0;
+    const want = defineAt.x - (String(lines.length).length + 2) + left;
+    let cells = 0;
     let col = 0;
-    while (col < raw.length && shown + (raw[col] === "\t" ? 2 : 1) <= want) shown += raw[col++] === "\t" ? 2 : 1;
+    while (col < raw.length && cells + (raw[col] === "\t" ? 2 : 1) <= want) cells += raw[col++] === "\t" ? 2 : 1;
     onDefine?.(n, col + 1);
   }, [defineAt?.nonce]);
 
@@ -163,6 +207,8 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     else if (key.pageDown || input === "d" || input === " ") setTop((t) => Math.min(maxTop, t + rows));
     else if (input === "g" || key.home) setTop(0);
     else if (input === "G" || key.end) setTop(maxTop);
+    // z: fold everything, or (when it already is) open everything.
+    else if (input === "z" && !diff && ranges.size) setFolded([...ranges.keys()].every((k) => folded.has(k)) ? new Set() : new Set(ranges.keys()));
     else if (key.leftArrow || input === "h") setLeft((l) => Math.max(0, l - SIDE_STEP));
     else if (key.rightArrow || input === "l") setLeft((l) => l + SIDE_STEP);
     else if (diff && !pending && (input === "n" || input === "N")) {
@@ -268,8 +314,10 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     <Pane title={title} width={width} height={height} focused={focused}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={inner} flexShrink={0}>
-          {lines.slice(start, start + rows).map((line, i) => {
-            const n = start + i + 1;
+          {shown.slice(start, start + rows).map((n) => {
+            const line = lines[n - 1] ?? "";
+            const fold = ranges.get(n);
+            const isFolded = fold !== undefined && folded.has(n);
             const isFound = !!found && n >= found.from && n <= found.to;
             const isMarked = marked.has(n);
             const here = problemsByLine.get(n);
@@ -279,6 +327,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
               <Text key={n} wrap="truncate-end">
                 <Text color={style?.color ?? (isMarked ? C.green : C.dim)}>{String(n).padStart(gutter)}</Text>
                 {style ? <Text color={style.color}>{style.icon}</Text> : isFound ? <Text color={C.cyan} bold>▌</Text> : <Text color={isMarked ? C.green : C.dim}>{isMarked ? "▎" : " "}</Text>}
+                <Text color={isFolded ? C.accent2 : C.dim}>{fold === undefined ? " " : isFolded ? "▸" : "▾"}</Text>
                 {(() => {
                   let text = line;
                   if (find?.query) {
@@ -291,6 +340,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
                   text = (left ? sliceAnsi(text, left) : text) || " ";
                   return isFound ? <Text backgroundColor={C.panel}>{text}</Text> : text;
                 })()}
+                {isFolded ? <Text color={C.accent2} backgroundColor={C.panel}>{` ⋯ ${fold - n} lines `}</Text> : null}
                 {worst && style ? <Text color={style.color} dimColor>{"   "}{style.icon} {worst.message}{here!.length > 1 ? ` (+${here!.length - 1})` : ""}</Text> : null}
               </Text>
             );
