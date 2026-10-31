@@ -385,6 +385,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const tabStore = useRef(new Map<string, TabState>());
   const [, setTabVersion] = useState(0);
   const tabHooks = useRef(new Map<string, AgentHooks>());
+  /** The tab strip's data, kept while it reads the same, so the chat doesn't redraw on every app render. */
+  const chatTabsCache = useRef<{ key: string; tabs: { items: ChatTabItem[]; active: string } } | null>(null);
   /** The hooks for tab `id`'s engine: on screen, they're the chat's own; in the background, its stored state. */
   function hooksFor(id: string): AgentHooks {
     const cached = tabHooks.current.get(id);
@@ -471,6 +473,12 @@ export function App({ initialModel, permContext, resume }: Props) {
       const label = first ? (first.length > 14 ? `${first.slice(0, 13)}…` : first) : `chat ${i + 1}`;
       return { id, label, state: t?.approval ? "waiting" : t?.busy ? "busy" : "idle" };
     });
+  }
+  function chatTabsProp() {
+    const items = chatTabItems();
+    const key = `${activeTabId}|${items.map((t) => `${t.id}:${t.label}:${t.state}`).join("|")}`;
+    if (chatTabsCache.current?.key !== key) chatTabsCache.current = { key, tabs: { items, active: activeTabId } };
+    return chatTabsCache.current.tabs;
   }
   function saveTab(t: TabState) {
     const first = t.entries.find((e) => e.kind === "user");
@@ -2234,7 +2242,7 @@ ${snippet}
           onAnswer={onAnswer}
           click={chatClick}
           select={chatSelect}
-          tabs={{ items: chatTabItems(), active: activeTabId }}
+          tabs={chatTabsProp()}
           onOpenRef={openRef}
         />
       </Box>
