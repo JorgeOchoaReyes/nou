@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { nouRulesOnly } from "../context/index.js";
@@ -38,6 +38,7 @@ import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
+import { showMePrompt, showStepsTool, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -148,6 +149,13 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [termVersion, setTermVersion] = useState(0);
   /** Its height while its top border is being dragged (saved when you let go). */
   const [termDrag, setTermDrag] = useState<number | null>(null);
+  /**
+   * "Show me how" (/showme): the steps Nou found, and the one you're on. While Nou looks for them,
+   * `guideAsk` holds what you asked (and its edits are turned down: you're doing the typing).
+   */
+  const [guide, setGuide] = useState<{ steps: GuideStep[]; at: number; task: string } | null>(null);
+  const guideAsk = useRef<string | null>(null);
+  const guideFound = useRef<GuideStep[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -338,6 +346,8 @@ export function App({ initialModel, permContext, resume }: Props) {
         }
       },
       approve: (request) => {
+        // Asked to show how, not to do it: edits are turned down (the model is told to hand back steps).
+        if (guideAsk.current && request.kind === "change") return Promise.resolve(false);
         const s = settingsRef.current;
         if ((request.kind === "change" && s.autoApproveEdits) || (request.kind !== "change" && s.autoApproveCommands)) {
           return Promise.resolve(true);
@@ -429,7 +439,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, ...mcpRef.current!.tools()], effort: settings.effort };
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
@@ -1465,6 +1475,8 @@ ${snippet}
       return;
     case "terminal":
       return toggleTerminal();
+    case "showme":
+      return showMe(rest.join(" "));
     case "resume":
       return resumeConversation(rest[0] ?? "");
     case "plugins":
@@ -1561,6 +1573,72 @@ ${snippet}
     setQueued(queued.slice(take));
     send(queued.slice(0, take).join("\n\n"));
   }, [busy, approval, queued]);
+  // When Nou has finished looking, the guide starts at its first step.
+  useEffect(() => {
+    if (busy || !guideAsk.current) return;
+    const task = guideAsk.current;
+    const steps = guideFound.current;
+    guideAsk.current = null;
+    guideFound.current = null;
+    if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /showme add a --verbose flag to the CLI", "error");
+    info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /showme next skips a step, /showme stop ends it.`);
+    setGuide({ steps, at: 0, task });
+  }, [busy]);
+  // Each step: open its file in the editor where the code goes, and say what to type and why.
+  useEffect(() => {
+    if (!guide) return;
+    const step = guide.steps[guide.at]!;
+    if (!existsSync(step.file)) {
+      // A step that starts a new file: it's created empty, for you to type into.
+      mkdirSync(path.dirname(path.resolve(step.file)), { recursive: true });
+      writeFileSync(step.file, "");
+      setTreeVersion((v) => v + 1);
+    }
+    info(`👉 Step ${guide.at + 1} of ${guide.steps.length}: ${step.file}:${step.line}\n${step.why}\n\n\`\`\`\n${step.code}\n\`\`\``);
+    openAt(step.file, step.line, true);
+  }, [guide?.at, guide?.steps]);
+  const guideStep = guide?.steps[guide.at] ?? null;
+  /** The step's code is all typed: save it, and go on to the next one. */
+  const onGuideDone = useEvent(() => {
+    if (!guide || !guideStep) return;
+    if (draft.current?.path === guideStep.file) saveFromEditor(draft.current.text, guideStep.file);
+    // Later steps in the same file further down move down by the lines just added.
+    const added = guideStep.code.split("\n").length;
+    const steps = guide.steps.map((s, i) => (i > guide.at && s.file === guideStep.file && s.line >= guideStep.line ? { ...s, line: s.line + added } : s));
+    if (guide.at + 1 < steps.length) {
+      info(`✓ Step ${guide.at + 1} done.`);
+      setGuide({ ...guide, steps, at: guide.at + 1 });
+    } else {
+      info(`🎉 That's it: all ${steps.length} step${steps.length > 1 ? "s" : ""} done and saved. Ask Nou to check it over if you like.`);
+      setGuide(null);
+    }
+  });
+  /** /showme <what you want>: Nou finds where the change goes and walks you through typing it. */
+  const showMe = (arg: string) => {
+    const words = arg.trim();
+    if (words === "stop" || words === "end") {
+      setGuide(null);
+      return info(guide ? "Stopped the guide. What you typed so far stays." : "No guide is running.");
+    }
+    if (words === "next" || words === "skip") {
+      if (!guide) return info("No guide is running.");
+      if (guide.at + 1 >= guide.steps.length) {
+        setGuide(null);
+        return info("That was the last step.");
+      }
+      return setGuide({ ...guide, at: guide.at + 1 });
+    }
+    if (!words) {
+      if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /showme next skips it, /showme stop ends it.`);
+      return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /showme add a --verbose flag to the CLI");
+    }
+    if (agentRef.current!.id !== "nou") return info("Show me how uses Nou's own engine: /engine nou, then /showme again.", "error");
+    if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
+    setGuide(null);
+    guideAsk.current = words;
+    guideFound.current = null;
+    send(showMePrompt(words));
+  };
   useEffect(() => {
     if (busy) stopped.current = false;
   }, [busy]);
@@ -1940,6 +2018,7 @@ ${snippet}
             onSave={onEditorSave}
             onExit={onEditorExit}
             onState={onEditorState}
+            {...(guideStep && openFile === guideStep.file ? { guide: { row: guideStep.line - 1, code: guideStep.code }, onGuideDone } : {})}
           />
         ) : (
           <CodeView

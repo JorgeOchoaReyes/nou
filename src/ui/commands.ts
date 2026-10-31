@@ -28,6 +28,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "copy", args: "[code|file]", description: "copy the last reply, its last code block, or the open file" },
   { name: "compact", description: "summarize the conversation to free up context" },
   { name: "clear", description: "start a fresh conversation" },
+  { name: "showme", args: "<what you want>", description: "Nou shows you how, step by step, and you type it (with the code shown ahead of your cursor)" },
   { name: "terminal", description: "a terminal under the code, like VS Code's (or press `)" },
   { name: "resume", args: "[number|last]", description: "pick up an earlier conversation in this folder (any engine)" },
   { name: "pull", args: "<model>", description: "download an Ollama model" },

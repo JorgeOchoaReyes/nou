@@ -337,6 +337,19 @@ console.log("Sessions from Claude Code's and Codex's own CLI");
     && externalEntries(x!).map((e) => e.text).join("|") === "add dark mode|Added it.");
 }
 
+console.log("Show me how");
+{
+  const { guideProgress, showStepsTool } = await import("../src/guide/index.js");
+  const code = "if (x) {\n  run();\n}";
+  check("typed text is matched against the step's code", guideProgress("if (", code) === 4 && guideProgress("if (x) {\n", code) === 9);
+  check("indentation doesn't have to match", guideProgress("if (x) {\n    run", code) === 14 && guideProgress("if (x) {\nrun();\n}", code) === code.length);
+  check("a typo doesn't match", guideProgress("if (y", code) === -1);
+  let got: any[] = [];
+  const tool = showStepsTool((steps) => (got = steps));
+  const said = await tool.run({ steps: [{ file: "./src/a.ts", line: 3, code: "x();\n\n", why: "because" }, { file: "b.ts", code: "" }] });
+  check("show_steps keeps the usable steps, tidied", got.length === 1 && got[0].file === "src/a.ts" && got[0].code === "x();" && said.includes("1 step"));
+}
+
 console.log("Retrying passing failures");
 {
   const { transientMessage } = await import("../src/agent/index.js");

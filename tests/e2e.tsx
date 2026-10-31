@@ -732,6 +732,43 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("Ctrl+Enter, Cmd+Enter and \\+Enter add lines instead of sending", inputLines().length === 4 && !frame().includes("◆ nou") && !frame().includes("line three\\"));
 });
 
+console.log("Show me how");
+{
+  writeFileSync(path.join(dir, "guided.ts"), "export function add(a: number, b: number) {\n  return a + b;\n}\n");
+  let calls = 0;
+  const teacher: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      calls++;
+      const last = messages[messages.length - 1];
+      if (last.role === "user") {
+        return { text: "", toolCalls: [{ id: `g${calls}`, name: "show_steps", args: { steps: [
+          { file: "guided.ts", line: 4, code: "export const double = (n: number) => add(n, n);", why: "A helper that reuses add." },
+          { file: "guided.ts", line: 1, code: "// math helpers", why: "Say what the file is for." },
+        ] } }] };
+      }
+      return { text: "Those are the steps.", toolCalls: [] };
+    },
+  };
+  await session({ provider: teacher, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/showme add a double helper");
+    await press(KEY.enter, 300);
+    check("/showme opens the first step in the editor, saying why", await until(() => frame().includes("Step 1 of 2") && frame().includes("EDITING") && frame().includes("A helper that reuses add")));
+    check("the code to type shows ahead of the cursor", frame().includes("xport const double"));
+    await type("export const dou");
+    check("typing follows the dim text", frame().includes("ble = (n: number)") && frame().includes("Type the dim text"));
+    await press(KEY.tab, 300);
+    check("Tab fills in the rest; the step is done, saved, and the next one opens", await until(() => frame().includes("Step 2 of 2"))
+      && readFileSync(path.join(dir, "guided.ts"), "utf-8").includes("export const double = (n: number) => add(n, n);"));
+    await type("// math helperz");
+    check("a typo is pointed out", await until(() => frame().includes("Not quite")));
+    await press("\x7f", 100); // Backspace
+    await type("s");
+    check("fixing it finishes the guide", await until(() => frame().includes("That's it: all 2 steps")) && readFileSync(path.join(dir, "guided.ts"), "utf-8").startsWith("// math helpers\nexport function add"));
+    check("Nou didn't edit anything itself", calls === 2);
+  });
+}
+
 console.log("Resuming a conversation");
 {
   let seen: any[] = [];
