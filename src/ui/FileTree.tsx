@@ -4,7 +4,7 @@ import path from "path";
 import { Box, Text, useAnimation, useInput } from "ink";
 import { IGNORED } from "../commands/index.js";
 import type { GitStatus } from "../git/index.js";
-import { C, GIT_COLORS, fileIcon, gradient } from "./theme.js";
+import { C, GIT_COLORS, fileIcon, gradient, ANIMATION_MS } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
@@ -184,7 +184,7 @@ export const FileTree = memo(function FileTree({ width, height, focused, openFil
     if (node.isDir) toggle(node.path);
     else onOpen(node.path);
   }, [click?.nonce]);
-  const { frame } = useAnimation({ interval: 120, isActive: !!working?.size });
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!working?.size });
   const inner = width - 3; // minus the borders and the scrollbar
   const title = changesOnly
     ? <> <Text color={C.yellow}>±</Text> Changes <Text color={C.dim}>({nodes.length})  c: all files</Text></>

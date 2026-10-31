@@ -52,6 +52,10 @@ export type Settings = {
   games: string[];
   /** The pane the Games panel docks under (it splits that pane's column); drag its title to another pane. */
   gameDock: "tree" | "code" | "chat";
+  /** The Games panel's height in rows, once you've dragged its top border (null: 19). */
+  gameRows: number | null;
+  /** The terminal panel's height in rows, once you've dragged its top border (null: a third of the code's column). */
+  terminalRows: number | null;
   /** Built-in plugin id -> enabled (built-ins are on unless switched off). */
   plugins: Record<string, boolean>;
   /**
@@ -78,6 +82,8 @@ export const DEFAULT_SETTINGS: Settings = {
   trustedFolders: [],
   games: [],
   gameDock: "chat",
+  terminalRows: null,
+  gameRows: null,
   plugins: {},
   trustedPlugins: {},
 };

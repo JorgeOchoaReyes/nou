@@ -337,6 +337,35 @@ console.log("Sessions from Claude Code's and Codex's own CLI");
     && externalEntries(x!).map((e) => e.text).join("|") === "add dark mode|Added it.");
 }
 
+console.log("Show me how");
+{
+  const { guideProgress, showStepsTool } = await import("../src/guide/index.js");
+  const code = "if (x) {\n  run();\n}";
+  check("typed text is matched against the step's code", guideProgress("if (", code) === 4 && guideProgress("if (x) {\n", code) === 9);
+  check("indentation doesn't have to match", guideProgress("if (x) {\n    run", code) === 14 && guideProgress("if (x) {\nrun();\n}", code) === code.length);
+  check("a typo doesn't match", guideProgress("if (y", code) === -1);
+  let got: any[] = [];
+  const tool = showStepsTool((steps) => (got = steps));
+  const said = await tool.run({ steps: [{ file: "./src/a.ts", line: 3, code: "x();\n\n", why: "because" }, { file: "b.ts", code: "" }] });
+  check("show_steps keeps the usable steps, tidied", got.length === 1 && got[0].file === "src/a.ts" && got[0].code === "x();" && said.includes("1 step"));
+  const { stepsFromReply, showMePrompt } = await import("../src/guide/index.js");
+  const reply = 'Here is how.\n```nou-steps\n[{"file": "src/x.ts", "line": 2, "code": "y();", "why": "calls y"}]\n```';
+  const parsed = stepsFromReply(reply);
+  check("other engines' steps are read from a nou-steps block, which is taken out of the reply", parsed?.steps[0]?.file === "src/x.ts" && parsed.steps[0].code === "y();" && parsed.rest === "Here is how.");
+  check("a reply without steps has none", stepsFromReply("no block here") === null && stepsFromReply("```nou-steps\nnot json\n```") === null);
+  check("engines without Nou's tools are asked for the block", showMePrompt("x", false).includes("nou-steps") && showMePrompt("x", true).includes("show_steps"));
+}
+
+console.log("Web links in the chat");
+{
+  const { renderMarkdown, linkAt } = await import("../src/ui/text.js");
+  const bare = renderMarkdown("See https://example.com/docs/README.md, then retry.", 80, () => true)[0]!.spans;
+  const url = bare.find((sp) => sp.link?.url);
+  check("a bare web address is a link, without the punctuation after it", url?.link?.url === "https://example.com/docs/README.md" && !bare.some((sp) => sp.link && !sp.link.url));
+  const md = renderMarkdown("Read [the docs](https://example.com/x).", 80)[0]!.spans;
+  check("[text](url) links its text to the page", md.find((sp) => sp.text === "the docs")?.link?.url === "https://example.com/x" && linkAt(md, 6)?.url === "https://example.com/x");
+}
+
 console.log("Retrying passing failures");
 {
   const { transientMessage } = await import("../src/agent/index.js");

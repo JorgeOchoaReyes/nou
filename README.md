@@ -50,7 +50,9 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🔀 **Live diffs** | Every edit Nou proposes shows up side by side, and the files it is editing shimmer in the file tree while it works. <kbd>y</kbd> accepts, <kbd>n</kbd> rejects. Nothing touches disk without you. |
 | ✍️ **Built-in editor** | Press <kbd>e</kbd> to edit the open file yourself, with undo/redo and **auto-save**. |
 | 📍 **Shows you where things are** | Ask "where is the LiveKit integration?" and Nou finds it and opens it in the middle panel, jumped to the exact lines and highlighted. Any file a reply mentions (`src/a.ts:12`) is a link: click it. `/open name[:line]` opens a file yourself. |
-| 🎮 **Games for a break** | Add Pong, Snake and Breakout in settings → Games, then `/games` opens a panel docked under the chat: it splits that column instead of covering anything. Drag its title onto the files, code or chat to dock it there, and × at its top right closes it. A game runs only while the panel has the keyboard: Esc goes back to your code and it waits. |
+| 🗂️ **Several agents at once** | `/new` (or **+** in the chat's title) opens another conversation tab while the first keeps working. Each tab has its own agent and history; a working tab shows ●, one waiting for your OK shows !, and a click (or `/tab 2`) switches. `/close` closes one; it stays in `/resume`. |
+| 🧑‍🏫 **Show me how** | `/showme add a --verbose flag` and Nou finds where the change goes, then walks you through typing it yourself: each step opens the file at the right line, says why, and shows the code to type dim ahead of your cursor, like autocomplete (<kbd>Tab</kbd> fills in a line). It moves on when what you typed matches, and saves as it goes. `/showme next` skips a step, `/showme stop` ends it. Works with every engine (Nou's, Claude Code, Codex and pi): any edit one makes anyway is put back. `/teach` does the same. |
+| 🎮 **Games for a break** | Add Pong, Snake and Breakout in settings → Games, then `/games` opens a panel docked under the chat: it splits that column instead of covering anything. Drag its title onto the files, code or chat to dock it there, and × at its top right closes it. Drag its top edge to make it taller or shorter. A game runs only while the panel has the keyboard: Esc goes back to your code and it waits. |
 | 🧠 **A capable engine** | Reads and searches in parallel, numbered reads for exact line references, edits that survive small whitespace mismatches, several edits to a file as one change, a plan for longer tasks, full command output (stderr too) with exit codes and timeouts, retries when a provider is overloaded or a connection drops (Codex too: it picks the turn back up instead of stopping at "Reconnecting..."), and conversation caching with Claude. It follows your repo's `AGENTS.md`, `CLAUDE.md` and `NOU.md` (and `~/.nou/NOU.md`). |
 | 🔎 **Finds its way around** | The agent searches your code (`grep`, `glob`) without asking, reads only what it needs, runs your tests to check its work, and summarizes long conversations to stay within the model's context (`/compact` does it on demand). |
 | ↶ **Undo anything** | Every change, Nou's or yours, is recorded. <kbd>u</kbd> undoes Nou's last edit, `/rewind` undoes its whole last turn, and your own later edits are kept. |
@@ -98,11 +100,12 @@ Every change is reviewed like a code review:
 | <kbd>c</kbd> | in the file tree: show only changed files |
 | <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
-| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it; drag its top border (or <kbd>Alt</kbd>+↑/↓) to make it taller or shorter. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | in the chat: open or fold every "▸ N steps" line (what the agent read and ran between replies folds into one; click one to open just it) |
 | <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
-| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes, together with anything else you queued, as one message (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
+| <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes, together with anything else you queued, as one message; commands that only change the screen, like `/terminal`, `/games` or `/open`, run right away (<kbd>Alt</kbd>+<kbd>Enter</kbd>: stop Nou and send it now) |
 | <kbd>Esc</kbd> | stop Nou (anything queued goes back in the input) · close a diff · back to chat |
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | stop Nou while it works · press twice to quit |
 
@@ -120,7 +123,7 @@ In the editor:
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/showme <what you want>` · `/help`
 
 New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol), or type `\` and press <kbd>Enter</kbd> in any terminal.
 

@@ -16,6 +16,7 @@ process.chdir(dir);
 process.env.NOU_NO_UPDATE_CHECK = "1";
 // Keep test runs out of the real ~/.nou (history, settings).
 process.env.HOME = process.env.USERPROFILE = mkdtempSync(path.join(os.tmpdir(), "nou-home-"));
+process.env.NOU_TEST_OPEN = "1"; // web links are noted, not opened in a browser
 process.env.NOU_ENGINE_DIR = mkdtempSync(path.join(os.tmpdir(), "nou-engines-"));
 
 // Imported after chdir: some modules read the working directory when loaded.
@@ -43,6 +44,11 @@ ink.Output.prototype.get = function (this: any) {
 };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Waits until `ok()` holds (up to `ms`), so a check doesn't race a slow machine; returns whether it does. */
+const until = async (ok: () => boolean, ms = 5000) => {
+  for (let waited = 0; waited < ms && !ok(); waited += 50) await delay(50);
+  return ok();
+};
 let failures = 0;
 const check = (label: string, ok: boolean) => {
   if (!ok) failures++;
@@ -219,11 +225,11 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   }
   await press(wheel("up", 80, 8), 200);
   await press(wheel("up", 80, 8), 200);
-  check("wheel over the chat scrolls it back", frame().includes("scrolled"));
+  check("wheel over the chat scrolls it back", await until(() => frame().includes("scrolled")));
   check("mouse events don't leak into the chat input", !frame().includes("[<"));
   await press(wheel("down", 80, 8), 200);
   await press(wheel("down", 80, 8), 200);
-  check("wheel down returns to the latest messages", !frame().includes("scrolled"));
+  check("wheel down returns to the latest messages", await until(() => !frame().includes("scrolled")));
   await press(click(5, 3 + 3), 800); // 4th row in the tree: many.ts
   check("clicking a file in the tree opens it", frame().includes("many.ts") && frame().includes("const line1 = 1;"));
   await press(wheel("down", 40, 10), 200);
@@ -264,13 +270,14 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("stray sideways steps while scrolling down are ignored (trackpads send them)", !/→\d/.test(frame()));
   await delay(200);
   await press(wheel("down", 40, 10, true), 200);
-  check("Shift+wheel scrolls sideways", frame().includes("→6") && !frame().includes("const line16"));
+  check("Shift+wheel scrolls sideways", await until(() => frame().includes("→6") && !frame().includes("const line16")));
   await press("h", 100);
+  await until(() => !/→\d/.test(frame()));
   await press(click(64, 21), 300); // the bottom of the code pane's scrollbar
-  check("clicking the scrollbar jumps there", frame().includes("/100") && frame().includes("const line100 = 100;"));
+  check("clicking the scrollbar jumps there", await until(() => frame().includes("/100") && frame().includes("const line100 = 100;")));
   await press(`\x1b[<32;${64 + 1};${3 + 1}M`, 200); // drag it to the top
   await press(`\x1b[<0;${64 + 1};${3 + 1}m`, 100);
-  check("dragging the scrollbar scrolls", frame().includes("const line1 = 1;"));
+  check("dragging the scrollbar scrolls", await until(() => frame().includes("const line1 = 1;")));
   await type("/help"); // from the code view: / goes to the chat's command box
   check("/ in the code view starts a command in the chat", frame().includes("❯ /help") && !frame().includes("EDITING"));
   await press(KEY.enter, 150);
@@ -420,7 +427,7 @@ console.log("Finding things for you: open_file and clickable paths");
       asked++;
       const last = messages[messages.length - 1];
       if (last.role === "user") return { text: "", toolCalls: [{ id: `o${asked}`, name: "open_file", args: { path: "many.ts", line: 40, end_line: 42 } }] };
-      return { text: "It's in many.ts:40-42, and a.ts has the other one.", toolCalls: [] };
+      return { text: "It's in many.ts:40-42, and a.ts has the other one. Docs: https://example.com/guide", toolCalls: [] };
     },
   };
   await session({ provider: finder, model: "fake" }, async ({ press, type, frame }) => {
@@ -435,20 +442,24 @@ console.log("Finding things for you: open_file and clickable paths");
     const x = rows[y]!.indexOf("a.ts has");
     await press(click(x + 1, y), 500);
     check("clicking a file named in a reply opens it", frame().split("\n")[2]!.includes(" a.ts"));
+    const urlRow = frame().split("\n").findIndex((l) => l.includes("https://"));
+    await press(click(frame().split("\n")[urlRow]!.indexOf("https://") + 2, urlRow), 300);
+    check("clicking a web address opens it in the browser", await until(() => (globalThis as any).__opened === "https://example.com/guide"));
     await type("/open long");
     await press(KEY.enter, 400);
     check("/open opens a file from part of its name", frame().split("\n")[2]!.includes("long.ts"));
     writeFileSync(path.join(dir, "imp.ts"), 'import { a } from "./a.js";\nconsole.log(a);\n');
     await type("/open imp.ts");
     await press(KEY.enter, 400);
+    await until(() => frame().includes("console.log(a)"));
     // Code text starts after the border (x=24) and the 1-digit gutter plus marker: column 0 is x=27.
     const ctrlClick = (x: number, y: number) => `\x1b[<16;${x + 1};${y + 1}M`;
     await press(ctrlClick(27 + 12, 4), 400); // the "a" in console.log(a)
-    check("Ctrl+click on an imported name jumps to its import line", /1▌import \{ a \}/.test(frame()));
+    check("Ctrl+click on an imported name jumps to its import line", await until(() => /1▌import \{ a \}/.test(frame())));
     await press(ctrlClick(27 + 20, 3), 400); // the path in the import
-    check("Ctrl+click on the import's path opens that file", frame().split("\n")[2]!.includes(" a.ts"));
+    check("Ctrl+click on the import's path opens that file", await until(() => frame().split("\n")[2]!.includes(" a.ts") && frame().includes("const a = 1;")));
     await press(`\x1b[<2;${27 + 6 + 1};${3 + 1}M`, 400); // right-click the "a" of const a = 1
-    check("right-click goes to definitions too", frame().includes("1▌const a = 1;"));
+    check("right-click goes to definitions too", await until(() => frame().includes("1▌const a = 1;")));
   });
 }
 
@@ -486,50 +497,61 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
 console.log("Queueing and interrupting");
 {
   const heard: string[] = [];
+  /** Replies to these stay open until the test lets them go, so what's typed meanwhile is queued however slow the machine. */
+  const held = new Set(["first", "busy now", "third"]);
+  let release: (() => void) | null = null;
   const slow: any = {
     id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
     async chat({ messages, signal }: any) {
       const last = messages[messages.length - 1];
       heard.push(typeof last.content === "string" ? last.content.replace(/<editor_context>[\s\S]*/, "").trim() : "");
-      await new Promise((r, reject) => {
+      await new Promise<void>((r, reject) => {
         // "later" is the turn the test interrupts: long enough that "never" is always typed while it runs.
-        // "busy now" stays busy until both messages queued behind it are in, however slow the machine.
-        const t = setTimeout(r, heard.at(-1) === "later" ? 8000 : heard.at(-1) === "busy now" ? 4000 : 800);
-        signal?.addEventListener("abort", () => (clearTimeout(t), reject(new Error("aborted"))));
+        const t = held.has(heard.at(-1)!) ? null : setTimeout(r, heard.at(-1) === "later" ? 8000 : 800);
+        if (!t) release = r;
+        signal?.addEventListener("abort", () => (t && clearTimeout(t), reject(new Error("aborted"))));
       });
       return { text: `ok ${heard.length}`, toolCalls: [] };
     },
   };
   await session({ provider: slow, model: "fake" }, async ({ press, type, frame }) => {
+    // Each step waits for the state it needs (slow machines take longer than any fixed delay).
+    const status = () => frame().split("\n").at(-1)!;
+    const idle = () => until(() => !status().includes("WORKING"));
     await type("first");
-    await press(KEY.enter, 200);
+    await press(KEY.enter, 100);
+    await until(() => heard.at(-1) === "first");
     await type("second");
     await press(KEY.enter, 100);
-    for (let waited = 0; waited < 1500 && !frame().includes("⏳ next: second"); waited += 50) await delay(50);
-    check("a message sent while Nou works waits its turn, shown as next", frame().includes("⏳ next: second"));
-    await delay(1800);
-    check("and goes when Nou finishes", heard.includes("second") && !frame().includes("⏳ next"));
+    check("a message sent while Nou works waits its turn, shown as next", await until(() => frame().includes("⏳ next: second")));
+    await type("/terminal");
+    await press(KEY.enter, 100);
+    check("commands that only change the screen run right away, not queued", await until(() => frame().includes("▸ Terminal")) && !frame().includes("next: /terminal"));
+    await press(KEY.esc, 100);
+    await type("/terminal");
+    await press(KEY.enter, 100);
+    await until(() => !frame().includes("▸ Terminal"));
+    release!();
+    check("and goes when Nou finishes", await until(() => heard.includes("second") && !frame().includes("⏳ next")));
+    await idle();
     await type("busy now");
-    await press(KEY.enter, 150);
-    for (let waited = 0; waited < 3000 && heard.at(-1) !== "busy now"; waited += 50) await delay(50);
+    await press(KEY.enter, 100);
+    await until(() => heard.at(-1) === "busy now");
     await type("also this");
     await press(KEY.enter, 80);
     await type("and that");
     await press(KEY.enter, 80);
-    for (let waited = 0; waited < 8000 && !heard.includes("also this\n\nand that"); waited += 50) await delay(50);
-    check("messages queued together go as one", heard.includes("also this\n\nand that") && !heard.includes("also this"));
-    for (let waited = 0; waited < 4000 && frame().split("\n").at(-1)!.includes("WORKING"); waited += 50) await delay(50);
+    await until(() => frame().includes("⏳ next: and that"));
+    release!();
+    check("messages queued together go as one", await until(() => heard.includes("also this\n\nand that")) && !heard.includes("also this"));
+    await idle();
     await type("third");
-    await press(KEY.enter, 200);
+    await press(KEY.enter, 100);
+    await until(() => heard.at(-1) === "third");
     await type("urgent");
-    await press("\x1b\r", 1200);
-    check("Alt+Enter stops Nou and sends right away", heard.at(-1) === "urgent" && frame().includes("Cancelled"));
-    // Each step waits for the state it needs (slow machines take longer than any fixed delay).
-    const status = () => frame().split("\n").at(-1)!;
-    const until = async (ok: () => boolean, ms = 5000) => {
-      for (let waited = 0; waited < ms && !ok(); waited += 50) await delay(50);
-    };
-    await until(() => !status().includes("WORKING"));
+    await press("\x1b\r", 100);
+    check("Alt+Enter stops Nou and sends right away", await until(() => heard.at(-1) === "urgent" && frame().includes("Cancelled")));
+    await idle();
     await type("later");
     await press(KEY.enter, 100);
     await until(() => status().includes("WORKING") && heard.at(-1) === "later");
@@ -621,6 +643,13 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const after = frame().split("\n");
   const moved = after.findIndex((l) => l.includes("✦ Pong"));
   check("letting go over the code docks it under the code", moved > 3 && after[moved]!.indexOf("✦ Pong") > 24 && after[moved]!.indexOf("✦ Pong") < 66);
+  const gameTitle = () => frame().split("\n").findIndex((l) => l.includes("✦ Pong"));
+  const top = gameTitle();
+  const gx = frame().split("\n")[top]!.indexOf("✦ Pong");
+  await press(click(gx, top - 1), 100); // its top border
+  await press(`\x1b[<32;${gx + 1};${top + 1 + 1}M`, 100);
+  await press(`\x1b[<0;${gx + 1};${top + 1 + 1}m`, 100);
+  check("dragging its top border makes it shorter", await until(() => gameTitle() === top + 2));
   await press(KEY.esc, 300);
   check("Esc gives the keyboard back, and the game waits", !frame().split("\n").at(-1)!.includes("GAME") && frame().includes("click to play"));
   await type("/games");
@@ -692,6 +721,15 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("cd sub");
   await press(KEY.enter, 300);
   check("cd sticks for the next command", frame().includes("sub $ "));
+  const titleRow = () => frame().split("\n").findIndex((l) => l.includes("▸ Terminal"));
+  const before = titleRow();
+  const x = frame().split("\n")[before]!.indexOf("▸ Terminal");
+  await press(click(x, before - 1), 100); // its top border
+  await press(`\x1b[<32;${x + 1};${before - 4 + 1}M`, 100);
+  await press(`\x1b[<0;${x + 1};${before - 4 + 1}m`, 100);
+  check("dragging its top border makes it taller", await until(() => titleRow() === before - 3));
+  await press("\x1b\x1b[B", 100); // Alt+↓
+  check("Alt+↓ makes it shorter", await until(() => titleRow() === before - 1));
   await press(KEY.esc, 200);
   check("Esc leaves it open and gives the keyboard back", frame().includes("▸ Terminal") && !frame().split("\n").at(-1)!.includes("TERMINAL"));
   const rows = frame().split("\n");
@@ -712,6 +750,118 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("line four");
   check("Ctrl+Enter, Cmd+Enter and \\+Enter add lines instead of sending", inputLines().length === 4 && !frame().includes("◆ nou") && !frame().includes("line three\\"));
 });
+
+console.log("Show me how");
+{
+  writeFileSync(path.join(dir, "guided.ts"), "export function add(a: number, b: number) {\n  return a + b;\n}\n");
+  let calls = 0;
+  const teacher: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      calls++;
+      const last = messages[messages.length - 1];
+      if (last.role === "user") {
+        return { text: "", toolCalls: [{ id: `g${calls}`, name: "show_steps", args: { steps: [
+          { file: "guided.ts", line: 4, code: "export const double = (n: number) => add(n, n);", why: "A helper that reuses add." },
+          { file: "guided.ts", line: 1, code: "// math helpers", why: "Say what the file is for." },
+        ] } }] };
+      }
+      return { text: "Those are the steps.", toolCalls: [] };
+    },
+  };
+  await session({ provider: teacher, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/showme add a double helper");
+    await press(KEY.enter, 300);
+    check("/showme opens the first step in the editor, saying why", await until(() => frame().includes("Step 1 of 2") && frame().includes("EDITING") && frame().includes("A helper that reuses add")));
+    check("the code to type shows ahead of the cursor", frame().includes("xport const double"));
+    await type("export const dou");
+    check("typing follows the dim text", frame().includes("ble = (n: number)") && frame().includes("Type the dim text"));
+    await press(KEY.tab, 300);
+    check("Tab fills in the rest; the step is done, saved, and the next one opens", await until(() => frame().includes("Step 2 of 2"))
+      && readFileSync(path.join(dir, "guided.ts"), "utf-8").includes("export const double = (n: number) => add(n, n);"));
+    await type("// math helperz");
+    check("a typo is pointed out", await until(() => frame().includes("Not quite")));
+    await press("\x7f", 100); // Backspace
+    await type("s");
+    check("fixing it finishes the guide", await until(() => frame().includes("That's it: all 2 steps")) && readFileSync(path.join(dir, "guided.ts"), "utf-8").startsWith("// math helpers\nexport function add"));
+    check("Nou didn't edit anything itself", calls === 2);
+  });
+}
+
+{
+  // Engines that can't call Nou's tools give the steps in a nou-steps block at the end of their reply.
+  writeFileSync(path.join(dir, "taught.ts"), "export const one = 1;\n");
+  const blockTeacher: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      return { text: 'Add it like this.\n```nou-steps\n[{"file": "taught.ts", "line": 2, "code": "export const two = 2;", "why": "The next number."}]\n```', toolCalls: [] };
+    },
+  };
+  await session({ provider: blockTeacher, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/teach add two");
+    await press(KEY.enter, 300);
+    check("/teach reads steps from the reply's block, and hides the block", await until(() => frame().includes("Step 1 of 1") && frame().includes("The next number.")) && !frame().includes("nou-steps"));
+  });
+}
+
+console.log("Steps fold into one line");
+{
+  let n = 0;
+  const reader: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat() {
+      n++;
+      if (n <= 3) return { text: "", toolCalls: [{ id: `s${n}`, name: "read_file", args: { path: ["a.ts", "b.ts", "long.ts"][n - 1] } }] };
+      return { text: "Read all three.", toolCalls: [] };
+    },
+  };
+  await session({ provider: reader, model: "fake" }, async ({ press, type, frame }) => {
+    await type("read them");
+    await press(KEY.enter, 300);
+    check("what the agent did folds into one line", await until(() => frame().includes("▸ 3 steps") && frame().includes("Read all three.")));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes("▸ 3 steps"));
+    await press(click(rows[y]!.indexOf("▸"), y), 300);
+    check("clicking it shows each step", await until(() => frame().includes("▾ 3 steps")) && frame().includes("long.ts"));
+    await press("\x0f", 200); // Ctrl+O: open every run (it's open), then fold them all
+    await press("\x0f", 200);
+    check("Ctrl+O opens and folds them all", await until(() => frame().includes("▸ 3 steps")));
+  });
+}
+
+console.log("Conversation tabs");
+{
+  let release: (() => void) | null = null;
+  const twoAtOnce: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      const last = String(messages[messages.length - 1].content).replace(/<editor_context>[\s\S]*/, "").trim();
+      if (last === "slow job") await new Promise<void>((r) => (release = r));
+      return { text: `done: ${last}`, toolCalls: [] };
+    },
+  };
+  await session({ provider: twoAtOnce, model: "fake" }, async ({ press, type, frame }) => {
+    await type("slow job");
+    await press(KEY.enter, 300);
+    await until(() => !!release);
+    await type("/new");
+    await press(KEY.enter, 300);
+    check("/new opens another conversation while the first keeps working", await until(() => frame().includes("● slow job") && frame().includes("chat 2") && !frame().includes("❯ slow job")));
+    await type("quick one");
+    await press(KEY.enter, 300);
+    check("the new tab answers on its own", await until(() => frame().includes("done: quick one")));
+    release!();
+    await delay(300);
+    check("the first tab finishes in the background", !frame().includes("● slow job") && !frame().includes("done: slow job"));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes(" slow job "));
+    await press(click(rows[y]!.indexOf("slow job"), y), 300);
+    check("clicking its tab shows it, reply and all", await until(() => frame().includes("done: slow job")) && !frame().includes("done: quick one"));
+    await type("/close");
+    await press(KEY.enter, 300);
+    check("/close closes the tab on screen", await until(() => frame().includes("done: quick one") && !frame().includes("chat 2")));
+  });
+}
 
 console.log("Resuming a conversation");
 {
@@ -772,6 +922,21 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 400);
   check("switching back to Nou's engine", frame().includes("Now using the Nou engine"));
   check("switching engines hands over the conversation so far", frame().includes("It has the conversation so"));
+});
+
+console.log("Show me how on another engine");
+writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/engine codex");
+  await press(KEY.enter, 600);
+  await until(() => frame().includes("Now using the Codex engine"));
+  await type("/showme change the greeting");
+  await press(KEY.enter, 300);
+  // The fake Codex edits greet.js whatever it's asked, and gives no steps.
+  check("an engine that edits anyway has its edit put back", await until(() => frame().includes("edited files anyway")) && readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Hello"));
+  check("and Nou says it didn't get steps", frame().includes("come back with"));
+  await type("/engine nou");
+  await press(KEY.enter, 400);
 });
 
 console.log("Connecting a provider");

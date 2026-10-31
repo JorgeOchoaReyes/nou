@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readFileSync, writeFileSync } from "fs";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { nouRulesOnly } from "../context/index.js";
@@ -30,14 +30,15 @@ import { C } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
-import { SLASH_COMMANDS, type SlashCommand } from "./commands.js";
+import { SLASH_COMMANDS, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
-import { Chat, type ChatSelect } from "./Chat.js";
-import { copyToClipboard } from "./clipboard.js";
+import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
+import { copyToClipboard, openInBrowser } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
+import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -63,6 +64,17 @@ const FOLLOW_STEP_MS: Record<string, number> = { slow: 2500, normal: 1200, fast:
 const MAX_FOLLOW_LAG = 12;
 /** Columns the tabs get in the code view's title, leaving room for the scroll position and badges. */
 const tabsWidth = (codeWidth: number) => Math.max(16, codeWidth - 3);
+
+/** A conversation tab while it's not on screen. */
+type TabState = {
+  entries: ChatEntry[];
+  streaming: string;
+  busy: string | null;
+  approval: { request: ApprovalRequest; resolve(ok: boolean): void } | null;
+  queued: string[];
+  conversationId: string;
+  agent: Engine;
+};
 
 type Props = {
   initialModel: ModelChoice;
@@ -146,6 +158,21 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** The terminal panel under the code (` or /terminal): its shell lives on while the panel is closed. */
   const [termOpen, setTermOpen] = useState(false);
   const [termVersion, setTermVersion] = useState(0);
+  /** Its height while its top border is being dragged (saved when you let go). */
+  const [termDrag, setTermDrag] = useState<number | null>(null);
+  /** The Games panel's height while its top border is being dragged (saved when you let go). */
+  const [gameSizeDrag, setGameSizeDrag] = useState<number | null>(null);
+  /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
+  const tabStripCache = useRef<{ key: string; strip: ReactNode } | null>(null);
+  /**
+   * "Show me how" (/showme): the steps Nou found, and the one you're on. While Nou looks for them,
+   * `guideAsk` holds what you asked (and its edits are turned down: you're doing the typing).
+   */
+  const [guide, setGuide] = useState<{ steps: GuideStep[]; at: number; task: string } | null>(null);
+  const guideAsk = useRef<string | null>(null);
+  /** Where the undo history stood when the steps were asked for: an engine that edits anyway is put back. */
+  const guideMark = useRef(0);
+  const guideFound = useRef<GuideStep[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -258,7 +285,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "chatText" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -309,33 +336,10 @@ export function App({ initialModel, permContext, resume }: Props) {
         openAtRef.current(filePath, line ?? 1, false, to);
       },
       onRead: (filePath, line, to) => followStepRef.current({ file: filePath, ...(line ? { line } : {}), ...(to ? { to } : {}) }),
-      onChange: (change, status, turn) => {
-        if (status === "applied") {
-          timelineRef.current!.record({ path: change.path, before: change.isNew ? null : change.before, after: change.after, source: "nou", turn });
-        }
-        const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
-        setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
-        setWorking((w) => {
-          if (status === "rejected") return w.has(change.path) ? new Set([...w].filter((p) => p !== change.path)) : w;
-          return w.has(change.path) ? w : new Set(w).add(change.path);
-        });
-        // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
-        if ((status === "pending" && !draftActiveRef.current) || followRef.current) {
-          clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
-          setOpenFile(change.path);
-          setContent(status === "applied" ? change.after : readText(change.path));
-          setDiffMode("off");
-          setReveal(change.path);
-        }
-        if (status === "applied") {
-          setTreeVersion((v) => v + 1);
-          setGit(gitStatus());
-          if (draft.current?.path === change.path) {
-            setEntries((prev) => [...prev, { kind: "info", text: `Heads up: you have unsaved edits in ${change.path}; saving them will overwrite Nou's change.` }]);
-          }
-        }
-      },
+      onChange: (change, status, turn) => applyChange(change, status, turn, false),
       approve: (request) => {
+        // Asked to show how, not to do it: edits are turned down (the model is told to hand back steps).
+        if (guideAsk.current && request.kind === "change") return Promise.resolve(false);
         const s = settingsRef.current;
         if ((request.kind === "change" && s.autoApproveEdits) || (request.kind !== "change" && s.autoApproveCommands)) {
           return Promise.resolve(true);
@@ -345,9 +349,144 @@ export function App({ initialModel, permContext, resume }: Props) {
       checkChange: (change) => problemsIntroduced(diagnosticsRef.current!, change),
     };
   }
+  /** A change an engine made or proposes; one from a tab in the background doesn't take over the code view. */
+  function applyChange(change: FileChange, status: ChangeStatus, turn: string, background: boolean) {
+    if (status === "applied") {
+          timelineRef.current!.record({ path: change.path, before: change.isNew ? null : change.before, after: change.after, source: "nou", turn });
+    }
+    const lines = status === "applied" ? changedLines(change.before, change.after) : NO_LINES;
+    setChanges((prev) => new Map(prev).set(change.path, { change, status, lines }));
+    setWorking((w) => {
+      if (status === "rejected") return w.has(change.path) ? new Set([...w].filter((p) => p !== change.path)) : w;
+      return w.has(change.path) ? w : new Set(w).add(change.path);
+    });
+    // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
+    if (!background && ((status === "pending" && !draftActiveRef.current) || followRef.current)) {
+      clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
+      setOpenFile(change.path);
+      setContent(status === "applied" ? change.after : readText(change.path));
+      setDiffMode("off");
+      setReveal(change.path);
+    }
+    if (status === "applied") {
+      setTreeVersion((v) => v + 1);
+      setGit(gitStatus());
+      if (draft.current?.path === change.path) {
+        setEntries((prev) => [...prev, { kind: "info", text: `Heads up: you have unsaved edits in ${change.path}; saving them will overwrite Nou's change.` }]);
+      }
+    }
+  }
+
+  // Conversation tabs: several agents at once. The one on screen uses the state above; the others keep
+  // theirs here, and each tab's engine reports through hooks that send it to the right place.
+  const activeTab = useRef("1");
+  const [activeTabId, setActiveTabId] = useState("1");
+  const [chatTabs, setChatTabs] = useState<string[]>(["1"]);
+  const tabStore = useRef(new Map<string, TabState>());
+  const [, setTabVersion] = useState(0);
+  const tabHooks = useRef(new Map<string, AgentHooks>());
+  /** The tab strip's data, kept while it reads the same, so the chat doesn't redraw on every app render. */
+  const chatTabsCache = useRef<{ key: string; tabs: { items: ChatTabItem[]; active: string } } | null>(null);
+  /** The hooks for tab `id`'s engine: on screen, they're the chat's own; in the background, its stored state. */
+  function hooksFor(id: string): AgentHooks {
+    const cached = tabHooks.current.get(id);
+    if (cached) return cached;
+    const live = () => hooksRef.current!;
+    const shown = () => activeTab.current === id;
+    const stored = (fn: (t: TabState) => void) => {
+      const t = tabStore.current.get(id);
+      if (!t) return;
+      fn(t);
+      setTabVersion((v) => v + 1);
+    };
+    const hooks: AgentHooks = {
+      onEntry: (entry) => (shown() ? live().onEntry(entry) : stored((t) => (t.entries = [...t.entries, entry]))),
+      onStream: (text) => (shown() ? live().onStream(text) : void (tabStore.current.get(id) && (tabStore.current.get(id)!.streaming = text))),
+      onBusy: (label) => {
+        if (shown()) return live().onBusy(label);
+        stored((t) => {
+          t.busy = label;
+          if (!label) saveTab(t); // it finished in the background: keep it for /resume
+        });
+      },
+      onOpen: (...args) => (shown() ? live().onOpen?.(...args) : undefined),
+      onRead: (...args) => (shown() ? live().onRead(...args) : undefined),
+      onChange: (change, status, turn) => applyChange(change, status, turn, !shown()),
+      approve: (request) => {
+        if (shown()) return live().approve(request);
+        const s = settingsRef.current;
+        if ((request.kind === "change" && s.autoApproveEdits) || (request.kind !== "change" && s.autoApproveCommands)) return Promise.resolve(true);
+        // It waits for you: its tab says so, and the question is there when you switch to it.
+        return new Promise<boolean>((resolve) => stored((t) => (t.approval = { request, resolve })));
+      },
+      checkChange: (change) => live().checkChange?.(change) ?? Promise.resolve(null),
+    };
+    tabHooks.current.set(id, hooks);
+    return hooks;
+  }
+  /** Puts tab `id` on screen, keeping the one there now (and whatever it's doing) in the background. */
+  function switchChatTab(id: string) {
+    if (id === activeTab.current || !tabStore.current.has(id)) return;
+    tabStore.current.set(activeTab.current, { entries, streaming: streamed.current.text, busy, approval, queued, conversationId, agent: agentRef.current! });
+    const t = tabStore.current.get(id)!;
+    tabStore.current.delete(id);
+    activeTab.current = id;
+    setActiveTabId(id);
+    agentRef.current = t.agent;
+    setEntries(t.entries);
+    showStream(t.streaming);
+    setBusy(t.busy);
+    setApproval(t.approval);
+    setQueued(t.queued);
+    setConversationId(t.conversationId);
+    setFocus("chat");
+  }
+  /** A new conversation tab, with the same engine and model, next to the others. */
+  function newChatTab() {
+    const id = String(Date.now());
+    const agent = createEngine(agentRef.current!.id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksFor(id));
+    agent.configure(engineConfig.current);
+    tabStore.current.set(id, { entries: [], streaming: "", busy: null, approval: null, queued: [], conversationId: newSessionId(), agent });
+    setChatTabs((tabs) => [...tabs, id]);
+    switchChatTab(id);
+  }
+  /** Closes the conversation tab on screen (stopping its engine); the conversation stays saved for /resume. */
+  function closeChatTab() {
+    if (chatTabs.length < 2) return info("That's the only conversation tab. /clear starts a fresh conversation in it.");
+    const id = activeTab.current;
+    const at = chatTabs.indexOf(id);
+    const next = chatTabs[at + 1] ?? chatTabs[at - 1]!;
+    const agent = agentRef.current!;
+    approval?.resolve(false);
+    switchChatTab(next);
+    agent.cancel();
+    agent.dispose?.();
+    tabStore.current.delete(id);
+    tabHooks.current.delete(id);
+    setChatTabs((tabs) => tabs.filter((t) => t !== id));
+  }
+  /** The tabs as the chat's title row shows them: named for what you asked first, marked when working or waiting. */
+  function chatTabItems(): ChatTabItem[] {
+    return chatTabs.map((id, i) => {
+      const t = id === activeTab.current ? { entries, busy, approval } : tabStore.current.get(id);
+      const first = t?.entries.find((e) => e.kind === "user")?.text.replace(/\s+/g, " ");
+      const label = first ? (first.length > 14 ? `${first.slice(0, 13)}…` : first) : `chat ${i + 1}`;
+      return { id, label, state: t?.approval ? "waiting" : t?.busy ? "busy" : "idle" };
+    });
+  }
+  function chatTabsProp() {
+    const items = chatTabItems();
+    const key = `${activeTabId}|${items.map((t) => `${t.id}:${t.label}:${t.state}`).join("|")}`;
+    if (chatTabsCache.current?.key !== key) chatTabsCache.current = { key, tabs: { items, active: activeTabId } };
+    return chatTabsCache.current.tabs;
+  }
+  function saveTab(t: TabState) {
+    const first = t.entries.find((e) => e.kind === "user");
+    if (first) saveConversation({ id: t.conversationId, title: first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: t.agent.id, entries: t.entries, state: t.agent.snapshot?.() });
+  }
   if (!agentRef.current) {
     const saved = loadSettings().engine;
-    agentRef.current = createEngine(isEngineId(saved) ? saved : "nou", initialModel, buildSystemPrompt(permContext), hooksRef.current);
+    agentRef.current = createEngine(isEngineId(saved) ? saved : "nou", initialModel, buildSystemPrompt(permContext), hooksFor(activeTab.current));
   }
 
   useEffect(() => diagnostics.subscribe(() => setDiagVersion((v) => v + 1)), []);
@@ -427,7 +566,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, ...mcpRef.current!.tools()], effort: settings.effort };
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
@@ -492,7 +631,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       info(`Installed ${target.label} (${target.package}).`);
     }
     agentRef.current!.dispose?.();
-    const engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+    const engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksFor(activeTab.current));
     engine.configure(engineConfig.current);
     agentRef.current = engine;
     updateSettings({ engine: id });
@@ -544,7 +683,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     let engine = agentRef.current!;
     if (id && id !== engine.id && isInstalled(engineInfo(id))) {
       engine.dispose?.();
-      engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksRef.current!);
+      engine = createEngine(id, choice, engineConfig.current.system ?? buildSystemPrompt(permContext), hooksFor(activeTab.current));
       engine.configure(engineConfig.current);
       agentRef.current = engine;
       updateSettings({ engine: id });
@@ -773,10 +912,24 @@ export function App({ initialModel, permContext, resume }: Props) {
     // The Games panel sits under a pane: it takes the clicks that land on it, × on its title closes it,
     // and dragging its title docks it under the pane you let go over.
     const term = layout.current.terminal;
+    // Dragging the terminal's top border makes it taller or shorter; its bottom stays put.
+    if (term && dragging.current === "terminal") {
+      const rows = Math.max(4, term.y + term.height - event.y);
+      if (event.kind === "release") {
+        dragging.current = null;
+        setTermDrag(null);
+        updateSettings({ terminalRows: rows });
+      } else if (event.kind === "drag") setTermDrag(rows);
+      return;
+    }
     if (term && event.x >= term.x && event.x < term.x + term.width && event.y >= term.y && event.y < term.y + term.height && !dragging.current) {
       if (event.kind === "wheel") return queueWheel("terminal", event.dir, false);
       if (event.kind !== "click") return;
       if (event.y === term.y + 1 && event.x >= term.x + term.width - 5) return toggleTerminal(false); // ×
+      if (event.y === term.y) {
+        dragging.current = "terminal"; // its top border: drag to resize
+        return;
+      }
       if (focus !== "terminal") beforeTerm.current = focus;
       setFocus("terminal");
       return;
@@ -784,6 +937,16 @@ export function App({ initialModel, permContext, resume }: Props) {
     const game = layout.current.game;
     if (gamesOpen && game) {
       const drag = dragging.current;
+      // Its top border makes it taller or shorter (its bottom stays put); its title moves it.
+      if (drag === "gameSize") {
+        const rows = Math.max(GAME_PANEL.minHeight, game.y + game.height - event.y);
+        if (event.kind === "release") {
+          dragging.current = null;
+          setGameSizeDrag(null);
+          updateSettings({ gameRows: rows });
+        } else if (event.kind === "drag") setGameSizeDrag(rows);
+        return;
+      }
       if (drag === "game") {
         const { treeWidth, codeWidth } = layout.current;
         const over: Dock = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
@@ -805,7 +968,8 @@ export function App({ initialModel, permContext, resume }: Props) {
         }
         if (focus !== "game") beforeGame.current = focus;
         setFocus("game");
-        if (event.y <= game.y + 1) dragging.current = "game";
+        if (event.y === game.y) dragging.current = "gameSize";
+        else if (event.y === game.y + 1) dragging.current = "game";
         return;
       }
     }
@@ -858,6 +1022,14 @@ export function App({ initialModel, permContext, resume }: Props) {
       dragging.current = { scroll: pane };
       scrollPane(pane, event.y);
       return;
+    }
+    // The chat's title row holds the conversation tabs: a click switches, + opens a new one.
+    if (event.kind === "click" && pane === "chat" && event.y === 2) {
+      const at = event.x - treeWidth - codeWidth - 1;
+      const { zones, plus } = chatTabZones(chatTabItems());
+      if (Math.abs(at - plus) <= 1) return newChatTab();
+      const zone = zones.find((z) => at >= z.from && at < z.to);
+      if (zone) return switchChatTab(zone.id);
     }
     // The code view's title row holds the tabs: a click switches, the × closes.
     if (event.kind === "click" && pane === "code" && event.y === 2 && tabs.length && !diff) {
@@ -1129,6 +1301,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   openAtRef.current = openAt;
   /** A file named in the chat (clicked, or shown by Nou): open it there, highlighting the lines it names. */
   const openRef = useEvent((ref: FileRef) => {
+    if (ref.url) return openInBrowser(ref.url);
     clearFollow();
     const file = path.relative(process.cwd(), path.resolve(ref.path)).replace(/\\/g, "/");
     openAt(file, ref.line ?? 1, false, ref.line ? ref.to ?? ref.line : undefined);
@@ -1449,6 +1622,18 @@ ${snippet}
       return;
     case "terminal":
       return toggleTerminal();
+    case "new":
+      return newChatTab();
+    case "close":
+      return closeChatTab();
+    case "tab": {
+      const n = Number(arg);
+      if (!n || !chatTabs[n - 1]) return info(`Conversation tabs: ${chatTabItems().map((t, i) => `${i + 1}. ${t.label}${t.state !== "idle" ? ` (${t.state === "busy" ? "working" : "waiting on you"})` : ""}`).join("  ")}. /tab <n> switches, /new opens one, /close closes this one.`);
+      return switchChatTab(chatTabs[n - 1]!);
+    }
+    case "showme":
+    case "teach":
+      return showMe(rest.join(" "));
     case "resume":
       return resumeConversation(rest[0] ?? "");
     case "plugins":
@@ -1545,12 +1730,94 @@ ${snippet}
     setQueued(queued.slice(take));
     send(queued.slice(0, take).join("\n\n"));
   }, [busy, approval, queued]);
+  // When Nou has finished looking, the guide starts at its first step.
+  useEffect(() => {
+    if (busy || !guideAsk.current) return;
+    const task = guideAsk.current;
+    let steps = guideFound.current;
+    guideAsk.current = null;
+    guideFound.current = null;
+    // Other engines hand their steps back in a ```nou-steps block at the end of the reply: read it, and
+    // show the reply without it.
+    if (!steps?.length) {
+      const reply = [...entries].reverse().find((e) => e.kind === "assistant");
+      const found = reply && stepsFromReply(reply.text);
+      if (found) {
+        steps = found.steps;
+        setEntries((prev) => prev.map((e) => (e === reply ? { ...e, text: found.rest || "Here's how." } : e)));
+      }
+    }
+    // Asked not to, an engine that edited anyway (Codex can't be stopped before it does) is put back.
+    const edited = timeline.all.slice(guideMark.current).filter((c) => c.source === "nou" && !c.undone);
+    if (edited.length) {
+      undoCheckpoints([...edited].reverse() as ReturnType<typeof timeline.lastTurn>);
+      info("It edited files anyway, so those changes were put back: you're the one typing them.");
+    }
+    if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /showme add a --verbose flag to the CLI", "error");
+    info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /showme next skips a step, /showme stop ends it.`);
+    setGuide({ steps, at: 0, task });
+  }, [busy]);
+  // Each step: open its file in the editor where the code goes, and say what to type and why.
+  useEffect(() => {
+    if (!guide) return;
+    const step = guide.steps[guide.at]!;
+    if (!existsSync(step.file)) {
+      // A step that starts a new file: it's created empty, for you to type into.
+      mkdirSync(path.dirname(path.resolve(step.file)), { recursive: true });
+      writeFileSync(step.file, "");
+      setTreeVersion((v) => v + 1);
+    }
+    info(`👉 Step ${guide.at + 1} of ${guide.steps.length}: ${step.file}:${step.line}\n${step.why}\n\n\`\`\`\n${step.code}\n\`\`\``);
+    openAt(step.file, step.line, true);
+  }, [guide?.at, guide?.steps]);
+  const guideStep = guide?.steps[guide.at] ?? null;
+  /** The step's code is all typed: save it, and go on to the next one. */
+  const onGuideDone = useEvent(() => {
+    if (!guide || !guideStep) return;
+    if (draft.current?.path === guideStep.file) saveFromEditor(draft.current.text, guideStep.file);
+    // Later steps in the same file further down move down by the lines just added.
+    const added = guideStep.code.split("\n").length;
+    const steps = guide.steps.map((s, i) => (i > guide.at && s.file === guideStep.file && s.line >= guideStep.line ? { ...s, line: s.line + added } : s));
+    if (guide.at + 1 < steps.length) {
+      info(`✓ Step ${guide.at + 1} done.`);
+      setGuide({ ...guide, steps, at: guide.at + 1 });
+    } else {
+      info(`🎉 That's it: all ${steps.length} step${steps.length > 1 ? "s" : ""} done and saved. Ask Nou to check it over if you like.`);
+      setGuide(null);
+    }
+  });
+  /** /showme <what you want>: Nou finds where the change goes and walks you through typing it. */
+  const showMe = (arg: string) => {
+    const words = arg.trim();
+    if (words === "stop" || words === "end") {
+      setGuide(null);
+      return info(guide ? "Stopped the guide. What you typed so far stays." : "No guide is running.");
+    }
+    if (words === "next" || words === "skip") {
+      if (!guide) return info("No guide is running.");
+      if (guide.at + 1 >= guide.steps.length) {
+        setGuide(null);
+        return info("That was the last step.");
+      }
+      return setGuide({ ...guide, at: guide.at + 1 });
+    }
+    if (!words) {
+      if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /showme next skips it, /showme stop ends it.`);
+      return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /showme add a --verbose flag to the CLI");
+    }
+    if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
+    setGuide(null);
+    guideAsk.current = words;
+    guideFound.current = null;
+    guideMark.current = timeline.all.length;
+    send(showMePrompt(words, agentRef.current!.id === "nou"));
+  };
   useEffect(() => {
     if (busy) stopped.current = false;
   }, [busy]);
   /** From the chat: while Nou works, a message waits its turn, or (`now`) stops Nou and goes right away. */
   const submit = (text: string, now = false) => {
-    if (!busy) return send(text);
+    if (!busy || (text.startsWith("/") && runsWhileBusy(text))) return send(text);
     if (now) {
       stop();
       stopped.current = false; // this one is meant to go
@@ -1679,13 +1946,17 @@ ${snippet}
   const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
-  const tabStrip = tabs.length && openFile ? <Tabs tabs={tabs} active={openFile} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined;
+  const tabKey = tabs.length && openFile ? `${tabs.join("\0")}|${openFile}|${tabsWidth(codeWidth)}|${showEditor && !!editorState?.dirty}` : "";
+  if (tabStripCache.current?.key !== tabKey) {
+    tabStripCache.current = { key: tabKey, strip: tabKey ? <Tabs tabs={tabs} active={openFile!} width={tabsWidth(codeWidth)} dirty={showEditor && !!editorState?.dirty} /> : undefined };
+  }
+  const tabStrip = tabStripCache.current.strip;
   // The Games panel takes the bottom of its pane's column: up to 19 rows, and never more than half.
-  const gameHeight = gamesOpen ? Math.min(GAME_PANEL.height, Math.floor(height / 2)) : 0;
+  const gameHeight = gamesOpen ? Math.max(GAME_PANEL.minHeight, Math.min(gameSizeDrag ?? settings.gameRows ?? GAME_PANEL.height, height - 6)) : 0;
   const heights: Record<Dock, number> = { tree: height, code: height, chat: height };
   heights[gameDock] -= gameHeight;
   // The terminal takes the bottom third of the code's column (above the Games panel when that's there too).
-  const termHeight = termOpen ? Math.max(6, Math.min(Math.floor(height / 3), heights.code - 6)) : 0;
+  const termHeight = termOpen ? Math.max(4, Math.min(termDrag ?? settings.terminalRows ?? Math.floor(height / 3), heights.code - 4)) : 0;
   heights.code -= termHeight;
   const dockLeft = gameDock === "tree" ? 0 : gameDock === "code" ? treeWidth : treeWidth + codeWidth;
   const dockWidth = gameDock === "tree" ? treeWidth : gameDock === "code" ? codeWidth : chatWidth;
@@ -1712,6 +1983,11 @@ ${snippet}
       if (focus !== "terminal") beforeTerm.current = focus;
       setFocus("terminal");
     } else if (focus === "terminal") setFocus(beforeTerm.current === "terminal" ? "code" : beforeTerm.current);
+  }
+  /** Alt+↑/↓ in the terminal: taller or shorter by a couple of rows. */
+  function resizeTerminal(by: number) {
+    const now = layout.current.terminal?.height ?? 0;
+    if (now) updateSettings({ terminalRows: Math.max(4, now + by) });
   }
   function leaveTerminal() {
     setFocus(beforeTerm.current === "terminal" ? "code" : beforeTerm.current);
@@ -1919,6 +2195,7 @@ ${snippet}
             onSave={onEditorSave}
             onExit={onEditorExit}
             onState={onEditorState}
+            {...(guideStep && openFile === guideStep.file ? { guide: { row: guideStep.line - 1, code: guideStep.code }, onGuideDone } : {})}
           />
         ) : (
           <CodeView
@@ -1965,6 +2242,7 @@ ${snippet}
           onAnswer={onAnswer}
           click={chatClick}
           select={chatSelect}
+          tabs={chatTabsProp()}
           onOpenRef={openRef}
         />
       </Box>
@@ -1985,7 +2263,7 @@ ${snippet}
       </Box>
       {layout.current.terminal && shellRef.current && (
         <Box position="absolute" marginLeft={layout.current.terminal.x} marginTop={layout.current.terminal.y}>
-          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} />
+          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onResize={resizeTerminal} />
         </Box>
       )}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}

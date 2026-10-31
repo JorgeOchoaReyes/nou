@@ -1,7 +1,7 @@
 import { memo } from "react";
 import path from "path";
 import { Box, Text, useAnimation } from "ink";
-import { C, SPINNER, gradient } from "./theme.js";
+import { C, SPINNER, gradient, ANIMATION_MS } from "./theme.js";
 import { currentVersion } from "../update/index.js";
 
 const VERSION = `v${currentVersion()}`;
@@ -18,7 +18,7 @@ type Props = {
 };
 
 export const Header = memo(function Header({ width, branch, changes, model, local, busy, update }: Props) {
-  const { frame } = useAnimation({ interval: 120, isActive: !!busy });
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy });
   const project = path.basename(process.cwd());
   return (
     <Box width={width} justifyContent="space-between">

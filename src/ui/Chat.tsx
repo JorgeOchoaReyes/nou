@@ -3,10 +3,10 @@ import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
 import { statSync } from "fs";
 import path from "path";
-import { closeOpenMarkdown, linkAt, linkFileRefs, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
+import { closeOpenMarkdown, linkAt, linkFileRefs, linkUrls, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { copyToClipboard } from "./clipboard.js";
-import { C, SPINNER } from "./theme.js";
+import { C, SPINNER, ANIMATION_MS } from "./theme.js";
 import { Pane } from "./Pane.js";
 import { matchCommands, type SlashCommand } from "./commands.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -38,6 +38,8 @@ type Props = {
   queued?: string[];
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
+  /** Conversation tabs (several agents at once): shown in the title row, with + for a new one. */
+  tabs?: { items: ChatTabItem[]; active: string } | null;
   /** Pressing, dragging and letting go over the messages: selects text, copied when you let go. */
   select?: ChatSelect | null;
   /** A click in the conversation: `row` from the top of the messages, `col` from where their text starts. */
@@ -51,7 +53,22 @@ type Props = {
  * in a column of its own: the rest of the line is then usually plain ASCII, which Ink measures far
  * faster than text with symbols in it, and that's most of the cost of every streamed frame.
  */
-type Line = { text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[] };
+type Line = {
+  text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[];
+  /** The header of a collapsed run of steps: clicking it opens or closes the run. */
+  toggle?: ChatEntry;
+};
+
+/**
+ * What the agent did between replies (files read, commands run...) folds into one line, like Claude's
+ * "▸ 5 steps": click it (or Ctrl+O for all of them) to see each step. `open` holds the runs shown open.
+ */
+function stepLines(steps: ChatEntry[], open: boolean, live: boolean, inner: number): Line[] {
+  const last = steps[steps.length - 1]!.text.replace(/\s+/g, " ");
+  const summary = `${open ? "▾" : "▸"} ${steps.length} steps${open ? "" : ` · ${live ? "now: " : "last: "}${last}`}`;
+  const head: Line = { text: ` ${summary.length > inner - 4 ? `${summary.slice(0, inner - 5)}…` : summary}`, color: open ? C.accent2 : C.dim, lead: " ⚙", leadColor: C.dim, toggle: steps[0]! };
+  return open ? [head, ...steps.flatMap((e) => cachedLines(e, inner).map((l) => (l.lead === " ⚙" ? { ...l, lead: "  " } : l)))] : [head];
+}
 const BAR = "▌ ";
 
 // Whether a path in a message is a file in the project, remembered so each one is checked once.
@@ -93,7 +110,7 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
       ? { icon: "⚙", color: C.dim }
       : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
     wrap(entry.text, inner - 4).forEach((line, i) => {
-      const spans = links && entry.kind !== "user" ? linkFileRefs([{ text: ` ${line}` }], isProjectFile) : [];
+      const spans = links && entry.kind !== "user" ? linkFileRefs(linkUrls([{ text: ` ${line}` }]), isProjectFile) : [];
       out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color, ...(spans.some((sp) => sp.link) ? { spans } : {}) });
     });
   }
@@ -111,20 +128,66 @@ function cachedLines(entry: ChatEntry, inner: number): Line[] {
   return lines;
 }
 
+/** A conversation tab over the chat: what it's called, and whether it's working or waiting on you. */
+export type ChatTabItem = { id: string; label: string; state: "idle" | "busy" | "waiting" };
+
+/**
+ * Where each tab sits in the chat's title row (columns from the pane's inner left edge), and the "+"
+ * that opens a new one: shared by the drawing and the clicks.
+ */
+export function chatTabZones(tabs: ChatTabItem[]): { zones: { id: string; from: number; to: number }[]; plus: number; width: number } {
+  // One tab: just "Chat +", to leave the title row its room.
+  if (tabs.length === 1) return { zones: [{ id: tabs[0]!.id, from: 3, to: 7 }], plus: 8, width: 9 };
+  let x = 3; // " ◆ "
+  const zones = tabs.map((t) => {
+    const w = tabText(t).length;
+    const zone = { id: t.id, from: x, to: x + w };
+    x += w + 1;
+    return zone;
+  });
+  return { zones, plus: x + 1, width: x + 3 };
+}
+const tabText = (t: ChatTabItem) => ` ${t.state === "busy" ? "● " : t.state === "waiting" ? "! " : ""}${t.label} `;
+
 export type ChatSelect = { row: number; col: number; kind: "press" | "drag" | "release"; nonce: number };
 type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, queued = [] }: Props) {
-  const [input, setInput] = useState("");
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [] }: Props) {
+  const [input, setInputText] = useState("");
+  const [menuRow, setMenuRow] = useState(0);
+  /** A new input also puts the command menu back on its first row, in the same render. */
+  const setInput = (text: string) => {
+    setInputText(text);
+    setMenuRow(0);
+  };
   useEffect(() => {
     if (prefill) setInput(prefill.text);
   }, [prefill?.nonce]);
   const [scrollBack, setScrollBack] = useState(0);
-  const { frame } = useAnimation({ interval: 80, isActive: !!busy });
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy });
   const inner = width - 3; // minus the borders and the scrollbar
 
-  const history = useMemo(() => entries.flatMap((e) => cachedLines(e, inner)), [entries, inner]);
+  const [openSteps, setOpenSteps] = useState<Set<ChatEntry>>(new Set());
+  const [allOpen, setAllOpen] = useState(false);
+  const history = useMemo(() => {
+    const out: Line[] = [];
+    for (let i = 0; i < entries.length; ) {
+      if (entries[i]!.kind !== "tool") {
+        out.push(...cachedLines(entries[i]!, inner));
+        i++;
+        continue;
+      }
+      // A run of steps: one alone is shown as is, two or more fold into a line.
+      let j = i;
+      while (j < entries.length && entries[j]!.kind === "tool") j++;
+      const steps = entries.slice(i, j);
+      if (steps.length === 1) out.push(...cachedLines(steps[0]!, inner));
+      else out.push(...stepLines(steps, allOpen || openSteps.has(steps[0]!), !!busy && j === entries.length, inner));
+      i = j;
+    }
+    return out;
+  }, [entries, inner, openSteps, allOpen, !!busy]);
   const lines = useMemo(
     () => (streaming ? [...history, ...entryLines({ kind: "assistant", text: closeOpenMarkdown(streaming) }, inner, false)] : history),
     [history, streaming, inner],
@@ -175,8 +238,6 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   // Typing "/" opens a menu of commands with what each does; ↑↓ pick one, Tab completes, Enter runs it.
   const menuOpen = focused && !approval && input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
   const matches = useMemo(() => (menuOpen ? matchCommands(input, extraCommands) : []), [menuOpen, input, extraCommands]);
-  const [menuRow, setMenuRow] = useState(0);
-  useEffect(() => setMenuRow(0), [input]);
   const showMenu = matches.length > 0;
   useEffect(() => onMenu?.(showMenu), [showMenu]);
   const menuRows = Math.min(matches.length, Math.max(1, Math.min(7, height - 12)));
@@ -204,6 +265,17 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   useEffect(() => {
     if (!click) return;
     const line = visible[click.row];
+    const run = line?.toggle;
+    if (run) {
+      setOpenSteps((open) => {
+        const next = new Set(open);
+        if (next.has(run) || allOpen) next.delete(run);
+        else next.add(run);
+        return next;
+      });
+      if (allOpen) setAllOpen(false);
+      return;
+    }
     const ref = line?.spans ? linkAt(line.spans, click.col) : null;
     if (ref) onOpenRef?.(ref);
   }, [click?.nonce]);
@@ -257,10 +329,15 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     else if (typed && typed >= " ") setInput(typed); // printable, not a control key
   }, { isActive: focused && !!approval && !input });
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.pageUp || (key.upArrow && key.shift)) setScrollBack((b) => Math.min(maxBack, Math.min(b, maxBack) + Math.max(1, rows - 2)));
     else if (key.pageDown || (key.downArrow && key.shift)) setScrollBack((b) => Math.max(0, Math.min(b, maxBack) - Math.max(1, rows - 2)));
     else if (key.ctrl && key.home) setScrollBack(maxBack);
+    else if (key.ctrl && input === "o") {
+      // Open every run of steps, or fold them all (the ones opened by a click too).
+      setAllOpen(!allOpen);
+      if (allOpen) setOpenSteps(new Set());
+    }
     else if (key.ctrl && key.end) setScrollBack(0);
   }, { isActive: focused });
 
@@ -297,7 +374,20 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const empty = entries.length === 0 && !streaming;
   const title = (
     <>
-      {" "}<Text color={C.accent2}>◆</Text> Chat
+      {" "}<Text color={C.accent2}>◆</Text>{" "}
+      {tabs && tabs.items.length > 1 ? (
+        <>
+          {tabs.items.map((t) => (
+            <Text key={t.id}>
+              <Text {...(t.id === tabs.active ? { backgroundColor: C.panel, color: C.text, bold: true } : { color: t.state === "waiting" ? C.yellow : C.dim })}>
+                {tabText(t)}
+              </Text>
+              {" "}
+            </Text>
+          ))}
+          <Text color={C.accent2} bold> + </Text>
+        </>
+      ) : <>Chat{tabs ? <Text color={C.accent2} bold> +</Text> : null}</>}
       {flash ? <Text color={C.green} bold>  {flash}</Text> : back
         ? unread
           ? <Text color={C.green} bold>  ↓ {unread} new lines below<Text color={C.dim}> · PgDn / wheel / Ctrl+End</Text></Text>
@@ -306,38 +396,46 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     </>
   );
 
+  // The messages, rebuilt only when they or the scroll position change: typing, the context chip and the
+  // spinner re-render the chat without touching its (often hundreds of) lines.
+  const messages = useMemo(() => (
+    <>
+      {empty ? (
+        <Box flexDirection="column" paddingX={1}>
+          <Text color={C.dim}>Try:</Text>
+          <Text color={C.text}>  “explain this file”</Text>
+          <Text color={C.text}>  “what changed since my last commit?”</Text>
+          <Text color={C.text}>  “add error handling here”</Text>
+          <Text> </Text>
+          <Text color={C.dim}>I can see the file you have open.</Text>
+        </Box>
+      ) : (
+        <Box flexDirection="row">
+          <Box width={2} flexShrink={0}>
+            <Text>{visible.map((line, i) => <Text key={i} color={line.leadColor ?? C.dim}>{`${line.lead ?? "  "}${i < visible.length - 1 ? "\n" : ""}`}</Text>)}</Text>
+          </Box>
+          <Box flexDirection="column" width={inner - 2} flexShrink={0}>
+            {visible.map((line, i) => {
+              const range = selectedIn(firstShown + i);
+              if (!range) return render(line, firstShown + i, false);
+              const t = lineText(line) || " ";
+              return (
+                <Text key={firstShown + i} wrap="truncate-end" color={C.text}>
+                  {t.slice(0, range[0])}<Text inverse>{t.slice(range[0], range[1]) || " "}</Text>{t.slice(range[1])}
+                </Text>
+              );
+            })}
+          </Box>
+        </Box>
+      )}
+    </>
+  ), [lines, firstShown, visible.length, selection, inner, empty]);
+
   return (
     <Pane title={title} width={width} height={height} focused={focused}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={inner} flexShrink={0}>
-          {empty ? (
-            <Box flexDirection="column" paddingX={1}>
-              <Text color={C.dim}>Try:</Text>
-              <Text color={C.text}>  “explain this file”</Text>
-              <Text color={C.text}>  “what changed since my last commit?”</Text>
-              <Text color={C.text}>  “add error handling here”</Text>
-              <Text> </Text>
-              <Text color={C.dim}>I can see the file you have open.</Text>
-            </Box>
-          ) : (
-            <Box flexDirection="row">
-              <Box width={2} flexShrink={0}>
-                <Text>{visible.map((line, i) => <Text key={i} color={line.leadColor ?? C.dim}>{`${line.lead ?? "  "}${i < visible.length - 1 ? "\n" : ""}`}</Text>)}</Text>
-              </Box>
-              <Box flexDirection="column" width={inner - 2} flexShrink={0}>
-                {visible.map((line, i) => {
-                  const range = selectedIn(firstShown + i);
-                  if (!range) return render(line, firstShown + i, false);
-                  const t = lineText(line) || " ";
-                  return (
-                    <Text key={firstShown + i} wrap="truncate-end" color={C.text}>
-                      {t.slice(0, range[0])}<Text inverse>{t.slice(range[0], range[1]) || " "}</Text>{t.slice(range[1])}
-                    </Text>
-                  );
-                })}
-              </Box>
-            </Box>
-          )}
+          {messages}
         </Box>
         <Scrollbar total={lines.length} top={firstShown} rows={rows} focused={focused} />
       </Box>

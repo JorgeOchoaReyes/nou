@@ -9,6 +9,7 @@ import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 import { copyToClipboard, readClipboard } from "./clipboard.js";
+import { guideProgress } from "../guide/index.js";
 
 export type EditorState = { line: number; col: number; dirty: boolean; lines: string[]; selection: boolean };
 
@@ -48,6 +49,13 @@ type Props = {
   onDefinition(text: string, line: number, col: number): void;
   /** The open files as tabs, shown in the title row instead of the file's path. */
   tabs?: ReactNode;
+  /**
+   * "Show me how": code for you to type before line `row` (0-based). A new line opens there, the code
+   * still to type shows dim ahead of the cursor (Tab fills in the rest of the line), and `onGuideDone`
+   * runs once it's all typed.
+   */
+  guide?: { row: number; code: string } | null;
+  onGuideDone?(): void;
 };
 
 type Pos = { row: number; col: number };
@@ -129,13 +137,25 @@ const commentFor = (file: string) => LINE_COMMENTS[path.extname(file).toLowerCas
 
 type Prompt = { kind: "find" | "line"; text: string };
 
+/** A line without the cursor or a selection: kept as is while you type on other lines. */
+const PlainRow = memo(function PlainRow({ num, numColor, text }: { num: string; numColor: string; text: string }) {
+  return <Text wrap="truncate-end"><Text color={numColor}>{num}</Text>{text || " "}</Text>;
+});
+
 /** A text editor: arrows and the mouse to move, Shift to select, Ctrl+C/X/V clipboard, Ctrl+S save, Ctrl+Z undo, Esc leave. */
-export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs }: Props) {
+export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs, guide, onGuideDone }: Props) {
   const eol = useMemo(() => (baseline.includes("\r\n") ? "\r\n" : "\n"), [baseline]);
   const indentUnit = useMemo(() => (/^\t/m.test(initial) ? "\t" : "  "), [initial]);
   const comment = useMemo(() => commentFor(filePath), [filePath]);
   const [buf, setBuf] = useState<Buffer>(() => {
     const lines = initial.replace(/\r\n/g, "\n").split("\n");
+    if (guide) {
+      // A fresh line for the guided code, indented like its first line.
+      const row = Math.max(0, Math.min(lines.length, guide.row));
+      const indent = guide.code.match(/^[ \t]*/)![0];
+      lines.splice(row, 0, indent);
+      return { lines, row, col: indent.length, anchor: null };
+    }
     const row = Math.max(0, Math.min(lines.length - 1, (startLine ?? 1) - 1));
     const col = startCol ? Math.min(lines[row]!.length, startCol - 1) : lines[row]!.match(/^\s*/)![0].length;
     return { lines, row, col, anchor: null };
@@ -530,6 +550,12 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
       }
       return insert(`\n${indent}${opens ? indentUnit : ""}`);
     }
+    if (key.tab && !key.shift && !hasSelection && guide && ghost) {
+      // Guided: Tab types the rest of the line for you (and the next line's indentation).
+      const end = ghost.indexOf("\n");
+      const chunk = end < 0 ? ghost : ghost.slice(0, end + 1) + ghost.slice(end + 1).match(/^[ \t]*/)![0];
+      return insert(chunk);
+    }
     if (key.tab) {
       // With a selection, or Shift+Tab: indent or outdent whole lines.
       if (key.shift) return eachLine((line) => line.replace(new RegExp(`^(\\t| {1,${indentUnit === "\t" ? 2 : indentUnit.length}})`), ""));
@@ -594,16 +620,32 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
     return map;
   }, [problems]);
   const sel = selection(buf);
+  // Guided typing: how much of the step's code is typed (from its line's start to the cursor).
+  const guideRow = guide ? Math.max(0, Math.min(buf.lines.length - 1, guide.row)) : -1;
+  const typed = guide && (buf.row > guideRow || (buf.row === guideRow)) ? [...buf.lines.slice(guideRow, buf.row), buf.lines[buf.row]!.slice(0, buf.col)].join("\n") : null;
+  const progress = guide && typed !== null ? guideProgress(typed, guide.code) : -1;
+  const ghost = guide && progress >= 0 ? guide.code.slice(progress) : "";
+  const guideDone = useRef(false);
+  useEffect(() => {
+    if (guide && progress === guide.code.length && !guideDone.current) {
+      guideDone.current = true;
+      onGuideDone?.();
+    }
+  }, [progress]);
   const cursorProblem = byLine.get(buf.row + 1)?.[0];
   const selectedCount = sel ? selectedText(buf).length : 0;
-  const status = confirmExit
+  const guideStatus = !guide ? null
+    : progress < 0 ? "Not quite: that doesn't match the step's code. Backspace and try again (the dim text shows what goes here)."
+      : ghost ? `Type the dim text${ghost.includes("\n") ? ` (${ghost.split("\n").length} lines to go)` : ""} · Tab fills in the rest of the line · Esc stop`
+        : "✓ Step done";
+  const status = guideStatus && !confirmExit && !prompt ? guideStatus : confirmExit
     ? "Unsaved changes! Ctrl+S save & close · Esc discard · any key keep editing"
     : prompt
       ? prompt.kind === "find" ? `Find: ${prompt.text}▏  Enter/↓ next · Shift+Enter/↑ previous · Esc close` : `Go to line: ${prompt.text}▏  Enter go · Esc cancel`
       : flash ?? (cursorProblem
         ? `${SEVERITY_STYLE[cursorProblem.severity].icon} ${cursorProblem.message} (${cursorProblem.source})`
         : `Ln ${buf.row + 1}, Col ${buf.col + 1}${sel ? `  (${selectedCount} selected · Ctrl+C copy · Ctrl+X cut)` : ""}${dirty ? "  ● modified" : ""}   Ctrl+F find · Ctrl+/ comment · Esc done`);
-  const statusColor = confirmExit ? C.red : prompt ? C.accent : flash ? C.green : cursorProblem ? SEVERITY_STYLE[cursorProblem.severity].color : C.dim;
+  const statusColor = guideStatus && !confirmExit && !prompt ? (progress < 0 ? C.red : C.accent2) : confirmExit ? C.red : prompt ? C.accent : flash ? C.green : cursorProblem ? SEVERITY_STYLE[cursorProblem.severity].color : C.dim;
   const hoverLines = hover ? hover.split("\n").filter((l) => l.trim()).slice(0, 6) : [];
   const cursorVisible = buf.row >= v.top && buf.row < v.top + rows;
 
@@ -623,7 +665,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
             );
             const inSelection = sel && n >= sel.start.row && n <= sel.end.row;
             if (!isCursorLine && !inSelection) {
-              return <Text key={n} wrap="truncate-end">{num}{colored[i] || " "}</Text>;
+              return <PlainRow key={n} num={`${String(n + 1).padStart(gutter - 2)}${mark ? ` ${mark.icon}` : "  "}`} numColor={mark?.color ?? C.dim} text={colored[i] ?? ""} />;
             }
             // Lines with the cursor or a selection show plain text, so both can be drawn exactly.
             const shown = expand(line).slice(v.left, v.left + textWidth);
@@ -638,12 +680,17 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
               if (last && !cell.cursor && !last.cursor && last.selected === cell.selected) last.text += ch;
               else cells.push(cell);
             }
+            // The code still to type, dim, from the cursor to the end of its line (only past the line's text).
+            const ghostLine = isCursorLine && ghost && buf.col >= line.length ? ghost.split("\n")[0]! : "";
+            const ghostMore = isCursorLine && ghost && buf.col >= line.length ? ghost.split("\n").length - 1 : 0;
             return (
               <Text key={n} wrap="truncate-end">
                 {num}
                 {cells.map((c, j) => c.cursor
-                  ? <Text key={j} inverse color={C.green}>{c.text}</Text>
+                  ? <Text key={j} inverse color={C.green}>{ghostLine ? ghostLine[0] : c.text}</Text>
                   : <Text key={j} color={C.text} {...(c.selected ? { backgroundColor: "#364a82" } : {})}>{c.text}</Text>)}
+                {ghostLine.length > 1 ? <Text color={C.dim} italic>{expand(ghostLine.slice(1))}</Text> : null}
+                {ghostMore ? <Text color={C.accent2}>{ghostLine ? "  " : ""}⏎{ghostMore > 1 ? ` +${ghostMore - 1} line${ghostMore > 2 ? "s" : ""}` : ""}</Text> : null}
               </Text>
             );
           })}
