@@ -2,6 +2,7 @@ import { memo } from "react";
 import path from "path";
 import { Box, Text, useAnimation } from "ink";
 import { C, SPINNER, gradient, ANIMATION_MS } from "./theme.js";
+import { useTerminalFocused } from "./focus.js";
 import { currentVersion } from "../update/index.js";
 
 const VERSION = `v${currentVersion()}`;
@@ -18,7 +19,9 @@ type Props = {
 };
 
 export const Header = memo(function Header({ width, branch, changes, model, local, busy, update }: Props) {
-  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy });
+  // The spinner stops while Nou's window is in the background: nobody sees it, and each frame is a redraw.
+  const windowFocused = useTerminalFocused();
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy && windowFocused });
   const project = path.basename(process.cwd());
   return (
     <Box width={width} justifyContent="space-between">

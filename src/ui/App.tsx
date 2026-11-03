@@ -25,6 +25,7 @@ import { checkForUpdate, currentVersion } from "../update/index.js";
 import { changedLines, lineCounts, loadFallbackHighlighter, splitLines, type FileRef } from "./text.js";
 import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
+import { useFocusReporting, useTerminalFocused } from "./focus.js";
 import { useMouse } from "./mouse.js";
 import { C } from "./theme.js";
 import { FileTree } from "./FileTree.js";
@@ -578,11 +579,17 @@ export function App({ initialModel, permContext, resume }: Props) {
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
-  // Pick up changes made outside Nou (other editors, git commands).
+  // Pick up changes made outside Nou (other editors, git commands). Not while Nou's window is in the
+  // background (in a big repo each `git status` costs real CPU); coming back checks right away.
   const polling = useRef(false);
+  const wasFocused = useRef(true);
+  const windowFocused = useTerminalFocused();
+  useFocusReporting(true);
   useEffect(() => {
-    if (!repo) return;
-    const timer = setInterval(() => {
+    const cameBack = windowFocused && !wasFocused.current;
+    wasFocused.current = windowFocused;
+    if (!repo || !windowFocused) return;
+    const poll = () => {
       if (busy || polling.current) return;
       polling.current = true;
       void gitStatusAsync().then((next) => {
@@ -590,9 +597,11 @@ export function App({ initialModel, permContext, resume }: Props) {
         // Only redraw when something changed.
         setGit((prev) => (sameStatus(prev, next) ? prev : next));
       });
-    }, 4000);
+    };
+    if (cameBack) poll();
+    const timer = setInterval(poll, 4000);
     return () => clearInterval(timer);
-  }, [repo, busy]);
+  }, [repo, busy, windowFocused]);
 
   useEffect(() => {
     if (busy) return;

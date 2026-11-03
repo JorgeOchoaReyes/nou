@@ -66,10 +66,12 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   const [models, setModels] = useState<Record<string, string[] | { error: string } | "loading">>({});
   const [connecting, setConnecting] = useState<Connecting | null>(connectTo?.connect ? { step: 0, values: {} } : null);
   const [field, setField] = useState(() => (connectTo?.connect ? initialValue(connectTo.connect[0]!) : ""));
-  const { frame } = useAnimation({ interval: ANIMATION_MS });
 
   const provider = providers[row] ?? providers[0]!;
   const listed = models[provider.id];
+  // Only "loading models…" animates; a timer running the whole time settings is open would redraw it 10
+  // times a second for nothing.
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: listed === "loading" });
 
   // Load the model list for the highlighted provider.
   useEffect(() => {

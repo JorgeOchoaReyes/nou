@@ -1049,5 +1049,20 @@ console.log("Engines");
   check("clearing ends the pi session", engines().pi.disposed === true);
 }
 
+console.log("Saving power");
+{
+  const { parseFocus, setTerminalFocused, terminalFocused, onTerminalFocus } = await import("../src/ui/focus.js");
+  check("focus reports are read from terminal input", parseFocus("\x1b[O") === false && parseFocus("\x1b[I") === true && parseFocus("abc") === null);
+  check("the last focus report in a chunk wins", parseFocus("\x1b[O\x1b[I") === true && parseFocus("\x1b[I\x1b[O") === false);
+  let told = 0;
+  const off = onTerminalFocus(() => told++);
+  setTerminalFocused(false);
+  setTerminalFocused(false);
+  check("leaving the window pauses spinners and polling (told once)", terminalFocused() === false && told === 1);
+  setTerminalFocused(true);
+  off();
+  check("coming back resumes them", terminalFocused() === true && told === 2);
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);
