@@ -1,5 +1,6 @@
 import { execFileSync } from "child_process";
-import { statSync } from "fs";
+import { realpathSync, statSync } from "fs";
+import path from "path";
 import { transientMessage, type AgentHooks } from "../agent/index.js";
 import type { ModelChoice } from "../providers/index.js";
 import { listAllFiles } from "../ui/QuickOpen.js";
@@ -11,6 +12,26 @@ const MAX_FILES = 5000;
 const MAX_BYTES = 512 * 1024;
 /** Times a turn that failed for a passing reason (a dropped stream, a failing server) is picked up again. */
 const RESUMES = 5;
+
+/**
+ * The repo's git folders. Codex's "workspace-write" sandbox keeps `.git` read-only inside the folder it may
+ * write to, so `git commit`, `git stash` and `git pull` fail ("cannot write to .git"). Handing it the git folder
+ * as a folder of its own makes it writable (the read-only rule is for a `.git` inside a writable folder).
+ * Worktrees keep their state in the main repo's git folder, so that one goes too.
+ */
+export function gitDirs(cwd = process.cwd()): string[] {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--absolute-git-dir", "--git-common-dir"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+    // Real paths, so one folder reached two ways (macOS's /var is /private/var, Windows' short RUNNER~1 names)
+    // is listed once.
+    const real = (d: string) => { try { return realpathSync.native(d); } catch { return d; } };
+    const dirs = out.split("\n").map((d) => d.trim()).filter(Boolean).map((d) => real(path.resolve(cwd, d)));
+    const key = (d: string) => (process.platform === "win32" ? d.toLowerCase() : d);
+    return dirs.filter((d, i) => dirs.findIndex((e) => key(e) === key(d)) === i);
+  } catch {
+    return []; // not a git repo, or git isn't installed
+  }
+}
 
 /** Project files small enough to keep a copy of (git's list when there is one, so ignored files are skipped). */
 function projectFiles(): string[] {
@@ -86,6 +107,7 @@ export class CodexEngine extends ExternalEngine {
       // resolve registry.npmjs.org"); Nou's other engines can reach it, so Codex can too.
       networkAccessEnabled: true,
       approvalPolicy: "never",
+      additionalDirectories: gitDirs(),
       ...(this.choice.provider.id === "openai" ? { model: this.choice.model } : {}),
       ...(this.effort && EFFORTS.has(this.effort) ? { modelReasoningEffort: this.effort } : {}),
     };

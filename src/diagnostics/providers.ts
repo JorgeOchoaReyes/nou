@@ -1,5 +1,7 @@
-import { existsSync } from "fs";
+import { createHash } from "crypto";
+import { existsSync, mkdirSync } from "fs";
 import path from "path";
+import { NOU_HOME } from "../config/index.js";
 import { onPath, projectBin, run } from "./process.js";
 import type { Diagnostic, DiagnosticsProvider } from "./types.js";
 
@@ -42,6 +44,19 @@ export const eslintProvider: DiagnosticsProvider = {
 };
 
 /** The TypeScript compiler over the whole project (type errors need the full picture). */
+/**
+ * tsc runs after every edit, and a full check of a mid-sized project is many CPU-seconds (on a laptop,
+ * battery). Incremental checks reuse what didn't change. The build info lives in ~/.nou/cache, one file per
+ * project, so the project's own files (and any tsBuildInfoFile it sets) are left alone.
+ */
+let incremental = true;
+function buildInfoFile(): string {
+  const id = createHash("sha1").update(process.cwd()).digest("hex").slice(0, 16);
+  const dir = path.join(NOU_HOME, "cache", "tsc");
+  mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${id}.tsbuildinfo`);
+}
+
 export const typescriptProvider: DiagnosticsProvider = {
   id: "typescript",
   name: "TypeScript",
@@ -52,7 +67,14 @@ export const typescriptProvider: DiagnosticsProvider = {
   async check() {
     const bin = projectBin("typescript", "tsc");
     if (!bin) return [];
-    const result = await run(process.execPath, [bin, "--noEmit", "-p", ".", "--pretty", "false"], { timeout: 180_000 });
+    const args = [bin, "--noEmit", "-p", ".", "--pretty", "false"];
+    let result = await run(process.execPath, incremental ? [...args, "--incremental", "--tsBuildInfoFile", buildInfoFile()] : args, { timeout: 180_000 });
+    // An option this project's tsconfig rules out (a TS5xxx/TS6xxx error that names no file): check it the
+    // plain way from now on.
+    if (incremental && /^error TS[56]\d{3}:/m.test(result.stdout)) {
+      incremental = false;
+      result = await run(process.execPath, args, { timeout: 180_000 });
+    }
     const diagnostics: Diagnostic[] = [];
     for (const line of result.stdout.split(/\r?\n/)) {
       const m = line.match(/^(.+?)\((\d+),(\d+)\): (error|warning) (TS\d+): (.*)$/);

@@ -67,6 +67,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🛞 **Pick your agent** | Nou's own, or Claude Code, Codex or pi, switchable like models, with the same diffs, approvals and undo. |
 | 🧩 **Plugins** | Add your own tools and slash commands with a single file. |
 | 🔎 **Quick open** | <kbd>Ctrl</kbd>+<kbd>P</kbd> fuzzy-finds any file. |
+| 🔋 **Easy on your battery** | Idle, Nou uses next to no CPU. When its window is in the background (in terminals that report focus: iTerm2, Terminal.app, kitty, Ghostty, WezTerm, Windows Terminal, VS Code), spinners and git polling pause until you come back, and TypeScript checks are incremental. |
 
 Every change is reviewed like a code review:
 
@@ -171,6 +172,8 @@ The engine is the agent that answers in the chat. Nou's own works with every mod
 | `claude-code` (Claude Agent SDK) | Claude; your API key or Claude login | ✅ |
 | `pi` | your Nou model, local or cloud | ✅ |
 | `codex` (Codex SDK) | OpenAI; your API key or ChatGPT login | ❌ edits in its sandbox; review and undo after |
+
+Codex's sandbox can write to the project and the repo's `.git` (so it can commit, stash and pull) and reach the network.
 
 Other engines install on first use into `~/.nou/engines/`, so Nou itself stays small. Switching engines starts a new conversation. Compare them on the same tasks with `npm run eval -- --engine nou --engine claude-code`.
 

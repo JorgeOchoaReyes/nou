@@ -7,6 +7,7 @@ import { closeOpenMarkdown, linkAt, linkFileRefs, linkUrls, renderMarkdown, wrap
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { copyToClipboard } from "./clipboard.js";
 import { C, SPINNER, ANIMATION_MS } from "./theme.js";
+import { useTerminalFocused } from "./focus.js";
 import { Pane } from "./Pane.js";
 import { matchCommands, type SlashCommand } from "./commands.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -169,7 +170,9 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     if (prefill) setInput(prefill.text);
   }, [prefill?.nonce]);
   const [scrollBack, setScrollBack] = useState(0);
-  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy });
+  // Spinners stop while Nou's window is in the background: nobody sees them, and each frame is a redraw.
+  const windowFocused = useTerminalFocused();
+  const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy && windowFocused });
   const inner = width - 3; // minus the borders and the scrollbar
 
   const [openSteps, setOpenSteps] = useState<Set<ChatEntry>>(new Set());
