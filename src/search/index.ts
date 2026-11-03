@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { readdirSync, readFileSync, statSync } from "fs";
 import path from "path";
 import { IGNORED, isInProject, toRelative } from "../commands/index.js";
@@ -172,4 +172,120 @@ export function grep(options: GrepOptions): string {
     return `${matchedFiles.slice(0, limit).join("\n")}${matchedFiles.length > limit ? `\n[${matchedFiles.length - limit} more files]` : ""}`;
   }
   return `${out.join("\n")}${total > shownMatches ? `\n[${total} matches in ${matchedFiles.length} files; showing the first ${limit}. Narrow the pattern, path or glob, or use files_only.]` : ""}`;
+}
+
+/** One hit of a codebase search: the file, its 1-based line, and the line's text (long ones cut). */
+export type CodeSearchMatch = { file: string; line: number; text: string };
+
+export type CodeSearchResult = {
+  matches: CodeSearchMatch[];
+  /** Every match, including the ones past `limit` (which only the `matches` array leaves out). */
+  total: number;
+  /** What ran: ripgrep when it's installed, otherwise Nou's own search over the project's files. */
+  engine: "ripgrep" | "built-in";
+};
+
+export type CodeSearchOptions = {
+  pattern: string;
+  /** Force case-insensitive. By default smart case: insensitive unless the pattern has capitals. */
+  ignoreCase?: boolean;
+  /** Folder (or file) to search; the whole project when left out. */
+  path?: string;
+  /** Matches kept in `matches`; the rest are still counted in `total`. Default 100. */
+  limit?: number;
+};
+
+/** The rg flags a codebase search needs: literal text, no color, one `file:line:text` per line. */
+function rgArgs(options: CodeSearchOptions): string[] {
+  const caseFlag = options.ignoreCase ? "--ignore-case" : "--smart-case";
+  return [
+    "--line-number", "--no-heading", "--color=never", "--fixed-strings", caseFlag,
+    "--max-filesize=1M", "--no-messages",
+    ...[...IGNORED].map((dir) => ["-g", `!${dir}`]).flat(),
+    "--", options.pattern, options.path ?? ".",
+  ];
+}
+
+/**
+ * A codebase search for the UI (Ctrl+F from the chat or files, /search): matches as file, line and text.
+ * Runs ripgrep when it's installed (fast, and .gitignore respected), otherwise the built-in search below.
+ */
+export async function codeSearch(options: CodeSearchOptions): Promise<CodeSearchResult> {
+  if (!options.pattern) return { matches: [], total: 0, engine: "ripgrep" };
+  const under = options.path ?? ".";
+  if (!isInProject(under)) return { matches: [], total: 0, engine: "ripgrep" };
+  try {
+    return await new Promise((resolve, reject) => {
+      const child = spawn("rg", rgArgs(options), { cwd: process.cwd(), stdio: ["ignore", "pipe", "ignore"] });
+      const limit = options.limit ?? 100;
+      const matches: CodeSearchMatch[] = [];
+      let total = 0;
+      let buffer = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop()!;
+        for (const line of lines) {
+          // `file:line:text`, with the file as short as one character: lazy, so Windows drives ("C:\") survive.
+          const m = line.match(/^(.+?):(\d+):(.*)$/);
+          if (!m) continue;
+          total++;
+          // Searching "." makes rg prefix every file with "./"; the tree and tabs say "src/a.ts".
+          if (matches.length < limit) matches.push({ file: m[1]!.replace(/^\.\//, ""), line: Number(m[2]), text: m[3]! });
+        }
+      });
+      child.on("error", reject); // rg isn't installed (or couldn't run): the built-in search takes over.
+      child.on("close", (code) => {
+        // rg's exit code 1 means no matches; 2 means it couldn't search (bad path and the like), which falls back.
+        if (code && code > 1) return reject(new Error(`rg exited with ${code}`));
+        resolve({ matches, total, engine: "ripgrep" });
+      });
+    });
+  } catch {
+    return { ...codeSearchFallback(options), engine: "built-in" };
+  }
+}
+
+/** The same search without ripgrep: the project's files (git's list where possible) read and matched here. */
+export function codeSearchFallback(options: CodeSearchOptions): CodeSearchResult {
+  const { pattern, ignoreCase = false } = options;
+  const limit = options.limit ?? 100;
+  if (!pattern) return { matches: [], total: 0, engine: "built-in" };
+  const under = options.path ?? ".";
+  if (!isInProject(under)) return { matches: [], total: 0, engine: "built-in" };
+  // Smart case like rg: capitals in the pattern make the search case-sensitive.
+  const insensitive = ignoreCase || pattern === pattern.toLowerCase();
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), insensitive ? "i" : "");
+  } catch {
+    return { matches: [], total: 0, engine: "built-in" };
+  }
+  let files: string[];
+  try {
+    files = statSync(under).isFile() ? [toRelative(under)] : projectFiles(under);
+  } catch {
+    return { matches: [], total: 0, engine: "built-in" };
+  }
+  const matches: CodeSearchMatch[] = [];
+  let total = 0;
+  for (const file of files) {
+    let text: string;
+    try {
+      if (statSync(file).size > MAX_FILE_BYTES) continue;
+      text = readFileSync(file, "utf-8");
+    } catch {
+      continue;
+    }
+    if (text.includes("\0")) continue; // binary
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!regex.test(lines[i]!)) continue;
+      total++;
+      if (matches.length >= limit) continue;
+      const line = lines[i]!.replace(/\r$/, "");
+      matches.push({ file, line: i + 1, text: line.length > MAX_LINE ? `${line.slice(0, MAX_LINE)}...` : line });
+    }
+  }
+  return { matches, total, engine: "built-in" };
 }
