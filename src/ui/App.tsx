@@ -42,6 +42,7 @@ import { forgetScreen } from "./redraw.js";
 import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
+import { CodeSearch } from "./CodeSearch.js";
 import { Settings } from "./Settings.js";
 
 /** "game": the Games panel has the keyboard (it isn't one of the panes Tab moves between). */
@@ -110,7 +111,7 @@ Keys:
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
   e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
-  Ctrl+F  find in the open file (Enter/↓ next, ↑ previous)
+  Ctrl+F  find in the open file (Enter/↓ next, ↑ previous); from the chat or files: search the whole codebase
   b  back to the previous file (Ctrl+P lists recent files first)   [ ]  previous/next tab · x close tab
   Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
@@ -149,6 +150,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [setupReason, setSetupReason] = useState<string | null>(null);
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
+  /** The codebase search (Ctrl+F from the chat or files, /search): closed (null), or open with this query. */
+  const [codeSearchOpen, setCodeSearchOpen] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
   /** The Games panel: whether it's open, the pane it's being dragged over, and the pane to go back to. */
   const [gamesOpen, setGamesOpen] = useState(false);
@@ -1366,6 +1369,11 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (showEditor && focus === "code") return; // the editor owns the keyboard
     if (focus === "code" && codeFinding.current) return; // so does the find bar
     if (focus === "game" || focus === "terminal") return; // and the Games panel and the terminal
+    if (key.ctrl && input === "f" && focus !== "code") {
+      // Codebase search from the chat or the files; the code pane's own Ctrl+F finds in the open file.
+      setCodeSearchOpen("");
+      return;
+    }
     if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
@@ -1412,7 +1420,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       refreshGit();
       setTreeVersion((v) => v + 1);
     } else if (input === "q") requestQuit();
-  }, { isActive: view === "main" && quickOpen === null && !(codePanel === "problems" && focus === "code") });
+  }, { isActive: view === "main" && quickOpen === null && codeSearchOpen === null && !(codePanel === "problems" && focus === "code") });
 
   /** What the user is looking at, attached to each message so "this file" / "here" make sense. */
   const editorContext = (): string | null => {
@@ -1544,6 +1552,10 @@ ${snippet}
       if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
       return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
     }
+    case "search":
+      // The codebase search: type text, Enter opens the match. With none given, just open it.
+      setCodeSearchOpen(arg);
+      return;
     case "games":
       return toggleGames();
     case "cancel":
@@ -2060,6 +2072,7 @@ ${snippet}
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
     { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
+    { title: "Search the codebase", keys: "Ctrl+F", run: () => setCodeSearchOpen("") },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
     { title: "Cancel your last message (edit it and resend)", keys: "/cancel", run: cancelLast },
@@ -2184,7 +2197,7 @@ ${snippet}
         <FileTree
           width={treeWidth}
           height={heights.tree}
-          focused={focus === "tree"}
+          focused={focus === "tree" && codeSearchOpen === null}
           openFile={openFile}
           reveal={reveal}
           version={treeVersion}
@@ -2202,7 +2215,7 @@ ${snippet}
           <ProblemsView
             width={codeWidth}
             height={heights.code}
-            focused={focus === "code"}
+            focused={focus === "code" && codeSearchOpen === null}
             problems={diagnostics.all()}
             checking={checking}
             wheel={wheelFor("code")}
@@ -2215,7 +2228,7 @@ ${snippet}
             {...(tabStrip ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={heights.code}
-            focused={focus === "code"}
+            focused={focus === "code" && codeSearchOpen === null}
             filePath={openFile}
             initial={draft.current?.path === openFile ? draft.current.text : content}
             baseline={draft.current?.path === openFile ? draft.current.baseline : content}
@@ -2239,7 +2252,7 @@ ${snippet}
             {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={heights.code}
-            focused={focus === "code"}
+            focused={focus === "code" && codeSearchOpen === null}
             filePath={openFile}
             content={content}
             diff={diff}
@@ -2264,7 +2277,7 @@ ${snippet}
         <Chat
           width={chatWidth}
           height={heights.chat}
-          focused={focus === "chat"}
+          focused={focus === "chat" && codeSearchOpen === null}
           entries={entries}
           streaming={streaming}
           busy={busy}
@@ -2333,6 +2346,20 @@ ${snippet}
             action.run();
           }}
           onClose={() => setQuickOpen(null)}
+        />
+      )}
+      {codeSearchOpen !== null && (
+        <CodeSearch
+          width={columns}
+          top={3}
+          initialQuery={codeSearchOpen}
+          onPick={(match) => {
+            setCodeSearchOpen(null);
+            clearFollow();
+            openRef({ path: match.file, line: match.line });
+            setFocus("code");
+          }}
+          onClose={() => setCodeSearchOpen(null)}
         />
       )}
     </Box>

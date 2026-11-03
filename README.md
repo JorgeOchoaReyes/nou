@@ -66,7 +66,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🔌 **Any model** | Local (Ollama, LM Studio, llama.cpp) or cloud (Claude, OpenAI, Gemini, OpenRouter, Groq, DeepSeek). Switch mid-conversation. |
 | 🛞 **Pick your agent** | Nou's own, or Claude Code, Codex or pi, switchable like models, with the same diffs, approvals and undo. |
 | 🧩 **Plugins** | Add your own tools and slash commands with a single file. |
-| 🔎 **Quick open** | <kbd>Ctrl</kbd>+<kbd>P</kbd> fuzzy-finds any file. |
+| 🔎 **Quick open** | <kbd>Ctrl</kbd>+<kbd>P</kbd> fuzzy-finds any file. <kbd>Ctrl</kbd>+<kbd>F</kbd> (from the chat or files) or `/search text` searches the whole codebase: type text, matches list as `file:line`, Enter opens one. |
 
 Every change is reviewed like a code review:
 
@@ -90,7 +90,7 @@ Every change is reviewed like a code review:
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
 | <kbd>b</kbd> | back to the previous file (press again to flip back) |
-| <kbd>Ctrl</kbd>+<kbd>F</kbd> | find in the open file: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | in the code, find in the open file: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close · from the chat or files, search the whole codebase (like `/search`): type text, <kbd>↑</kbd>/<kbd>↓</kbd> choose, <kbd>Enter</kbd> opens the match, <kbd>Esc</kbd> close |
 | 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, any tab's × to close it, ‹ › for ones that don't fit · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> or <kbd>Ctrl</kbd>+<kbd>W</kbd> close |
 | <kbd>Ctrl</kbd>+click | on a name in the code (or <kbd>Option</kbd>+click, or right-click): go to its definition; an imported name goes to its import, and the import's path opens that file |
 | <kbd>e</kbd> or a double-click | edit the open file (see the editor keys below) |
@@ -125,7 +125,7 @@ In the editor:
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/showme <what you want>` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/search [text]` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/showme <what you want>` · `/help`
 
 New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol), or type `\` and press <kbd>Enter</kbd> in any terminal.
 
