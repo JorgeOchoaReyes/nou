@@ -22,10 +22,12 @@ const RESUMES = 5;
 export function gitDirs(cwd = process.cwd()): string[] {
   try {
     const out = execFileSync("git", ["rev-parse", "--absolute-git-dir", "--git-common-dir"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
-    // Real paths, so one folder reached two ways (macOS's /var is /private/var) is listed once.
-    const real = (d: string) => { try { return realpathSync(d); } catch { return d; } };
+    // Real paths, so one folder reached two ways (macOS's /var is /private/var, Windows' short RUNNER~1 names)
+    // is listed once.
+    const real = (d: string) => { try { return realpathSync.native(d); } catch { return d; } };
     const dirs = out.split("\n").map((d) => d.trim()).filter(Boolean).map((d) => real(path.resolve(cwd, d)));
-    return [...new Set(dirs)];
+    const key = (d: string) => (process.platform === "win32" ? d.toLowerCase() : d);
+    return dirs.filter((d, i) => dirs.findIndex((e) => key(e) === key(d)) === i);
   } catch {
     return []; // not a git repo, or git isn't installed
   }
