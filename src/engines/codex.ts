@@ -1,5 +1,5 @@
 import { execFileSync } from "child_process";
-import { statSync } from "fs";
+import { realpathSync, statSync } from "fs";
 import path from "path";
 import { transientMessage, type AgentHooks } from "../agent/index.js";
 import type { ModelChoice } from "../providers/index.js";
@@ -22,7 +22,9 @@ const RESUMES = 5;
 export function gitDirs(cwd = process.cwd()): string[] {
   try {
     const out = execFileSync("git", ["rev-parse", "--absolute-git-dir", "--git-common-dir"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
-    const dirs = out.split("\n").map((d) => d.trim()).filter(Boolean).map((d) => path.resolve(cwd, d));
+    // Real paths, so one folder reached two ways (macOS's /var is /private/var) is listed once.
+    const real = (d: string) => { try { return realpathSync(d); } catch { return d; } };
+    const dirs = out.split("\n").map((d) => d.trim()).filter(Boolean).map((d) => real(path.resolve(cwd, d)));
     return [...new Set(dirs)];
   } catch {
     return []; // not a git repo, or git isn't installed
