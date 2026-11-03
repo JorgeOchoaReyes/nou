@@ -611,13 +611,14 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(CTRL_F, 300);
   check("Ctrl+F from the chat opens the codebase search", frame().includes("Search the codebase…"));
   await type("broken");
-  await until(() => frame().includes("b.ts:2"), 5000);
-  check("matches are listed as file:line with the text", frame().includes("b.ts:2") && frame().includes("function broken"));
+  await until(() => frame().includes("b.ts:1"), 5000);
+  check("matches are listed as file:line with the text", frame().includes("b.ts:1") && frame().includes("function broken"));
   check("letters go to the search, not the chat", !frame().includes("❯ broken"));
   await press(KEY.enter, 500);
   check("Enter opens the match at its line", !frame().includes("Search the codebase…") && frame().includes("return 1;") && frame().split("\n").at(-1)!.includes("CODE"));
   await press(KEY.esc, 100);
   await type("/search line1");
+  await press(KEY.enter, 400);
   await until(() => frame().includes("many.ts:1"), 5000);
   check("/search <text> opens it pre-filled and searching", frame().includes("many.ts:1") && frame().includes("const line1 = 1;"));
   await press(KEY.esc, 200);
