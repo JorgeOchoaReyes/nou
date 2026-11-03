@@ -2,7 +2,7 @@
  * Unit tests for logic that's easy to get subtly wrong. Run: npm test
  */
 import { execFileSync } from "child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
@@ -902,6 +902,55 @@ console.log("Search tools");
     check("glob without a slash matches names anywhere", globFiles("*.test.ts") === "src/util/math.test.ts");
     check("glob {a,b}", globToRegex("*.{md,txt}").test("README.md") && globToRegex("*.{md,txt}").test("a/many.txt") && !globToRegex("*.{md,txt}").test("x.ts"));
     check("glob says when nothing matches", globFiles("*.py").startsWith("No files"));
+  } finally {
+    process.chdir(home);
+  }
+}
+
+console.log("Codebase search (the Ctrl+F / /search one)");
+{
+  const { codeSearch, codeSearchFallback } = await import("../src/search/index.js");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "nou-codesearch-"));
+  const home = process.cwd();
+  process.chdir(dir);
+  try {
+    mkdirSync("src/util", { recursive: true });
+    mkdirSync("node_modules/lib", { recursive: true });
+    writeFileSync("src/app.ts", "import { add } from './util/math';\nexport const total = add(1, 2);\n");
+    writeFileSync("src/util/math.ts", "export function add(a: number, b: number) {\n  return a + b;\n}\n");
+    writeFileSync("node_modules/lib/add.js", "function add() {}\n");
+    writeFileSync("README.md", "Call ADD to sum.\n");
+    writeFileSync("many.txt", Array.from({ length: 300 }, () => "hit").join("\n"));
+    const found = await codeSearch({ pattern: "function add" });
+    check("codeSearch finds matches as file, line and text", found.matches[0]?.file === "src/util/math.ts" && found.matches[0]?.line === 1 && found.matches[0]?.text.includes("export function add") && found.total === 1);
+    check("codeSearch skips node_modules", !(await codeSearch({ pattern: "add" })).matches.some((m) => m.file.includes("node_modules")));
+    check("codeSearch is smart about case", (await codeSearch({ pattern: "ADD" })).matches[0]?.file === "README.md" && (await codeSearch({ pattern: "add" })).matches.some((m) => m.file === "src/util/math.ts"));
+    check("codeSearch ignoreCase searches without case", (await codeSearch({ pattern: "ADD", ignoreCase: true })).matches.some((m) => m.file === "src/util/math.ts"));
+    check("codeSearch searches a folder only", (await codeSearch({ pattern: "add", path: "src/util" })).matches.every((m) => m.file.startsWith("src/util/")));
+    check("codeSearch caps the matches but counts them all", (({ matches, total }) => matches.length === 100 && total === 300)(await codeSearch({ pattern: "hit", limit: 100 })));
+    const bare = codeSearchFallback({ pattern: "function add" });
+    check("the built-in search finds the same things", bare.engine === "built-in" && bare.matches[0]?.file === "src/util/math.ts" && bare.matches[0]?.line === 1 && !bare.matches.some((m) => m.file.includes("node_modules")));
+    check("the built-in search is smart about case too", codeSearchFallback({ pattern: "ADD" }).matches[0]?.file === "README.md" && codeSearchFallback({ pattern: "ADD", ignoreCase: true }).matches.some((m) => m.file === "src/util/math.ts"));
+    // Without rg on the PATH (a temp bin dir with everything but it), the built-in search takes over.
+    const bin = mkdtempSync(path.join(os.tmpdir(), "nou-bin-"));
+    const savedPath = process.env.PATH;
+    for (const part of (savedPath ?? "").split(path.delimiter)) {
+      let entries: string[];
+      try {
+        entries = readdirSync(part);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        try {
+          if (entry !== "rg" && statSync(path.join(part, entry)).isFile()) symlinkSync(path.join(part, entry), path.join(bin, entry));
+        } catch { /* already there, or not a plain file */ }
+      }
+    }
+    process.env.PATH = bin;
+    const withoutRg = await codeSearch({ pattern: "function add" });
+    process.env.PATH = savedPath;
+    check("without ripgrep, the built-in search takes over", withoutRg.engine === "built-in" && withoutRg.matches[0]?.file === "src/util/math.ts");
   } finally {
     process.chdir(home);
   }
