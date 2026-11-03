@@ -195,6 +195,11 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
     while (first > 0 && used + cost(first - 1) <= room) used += cost(--first);
     return { first, last };
   })();
+  const gameWindow = (() => {
+    const fit = Math.max(1, Math.floor((boxHeight - 4) / 3));
+    const first = Math.max(0, Math.min((tab === "Games" ? row : 0) - fit + 1, GAMES.length - fit));
+    return { first, last: first + fit };
+  })();
   const toggle = (on: boolean, warn?: boolean) => (
     <Text color={on ? (warn ? C.orange : C.green) : C.dim} bold>{on ? "● ON " : "○ OFF"}</Text>
   );
@@ -370,9 +375,10 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
     if (tab === "Games") {
       return (
         <Box flexDirection="column" height={boxHeight} borderStyle="round" borderColor={C.accent} paddingX={1}>
-          <Text color={C.dim}>Little games for a break while Nou works. Added ones show in the Games panel: /games, or ? then "games".</Text>
+          <Text color={C.dim} wrap="truncate-end">Little games for a break while Nou works. Added ones show in the Games panel: /games.</Text>
           <Text> </Text>
-          {GAMES.map((g, i) => {
+          {/* Three rows a game: the ones around the selected one that fit, so none gets squashed. */}
+          {GAMES.map((g, i) => ({ g, i })).slice(gameWindow.first, gameWindow.last).map(({ g, i }) => {
             const selected = i === row;
             const added = settings.games.includes(g.id);
             return (

@@ -10,6 +10,9 @@ export const RENDER_OPTIONS: RenderOptions = {
   incrementalRendering: true,
   // Up to 60 frames a second, so scrolling and typing keep up with the keyboard and mouse.
   maxFps: 60,
+  // Library output goes to ~/.nou/nou.log instead (see cli.ts): Ink's console patch would print it into
+  // the full-screen app, scrolling it so clicks land a row off.
+  patchConsole: false,
   // Terminals that speak the kitty keyboard protocol (kitty, Ghostty, WezTerm, iTerm2, foot...) then tell
   // Enter from Ctrl+Enter, Cmd+Enter and Shift+Enter, so those can add a line in the chat. Others just
   // don't answer the query and keys work as before.

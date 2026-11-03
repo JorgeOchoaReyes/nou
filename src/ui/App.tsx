@@ -22,7 +22,7 @@ import { lsp } from "../lsp/index.js";
 import { onGrammarLoaded, preload } from "../syntax/index.js";
 import { setCodeTheme } from "../syntax/themes.js";
 import { checkForUpdate, currentVersion } from "../update/index.js";
-import { changedLines, lineCounts, loadFallbackHighlighter, type FileRef } from "./text.js";
+import { changedLines, lineCounts, loadFallbackHighlighter, splitLines, type FileRef } from "./text.js";
 import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useMouse } from "./mouse.js";
@@ -36,8 +36,9 @@ import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
 import { Header } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
-import { GAME_PANEL, GamePanel } from "./GamePanel.js";
+import { GAME_PANEL, GameGuard, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
+import { forgetScreen } from "./redraw.js";
 import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
@@ -160,6 +161,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [termVersion, setTermVersion] = useState(0);
   /** Its height while its top border is being dragged (saved when you let go). */
   const [termDrag, setTermDrag] = useState<number | null>(null);
+  /** Bumped to draw every line again after the screen is cleared (/redraw, Ctrl+L). */
+  const [, setRepaint] = useState(0);
   /** The Games panel's height while its top border is being dragged (saved when you let go). */
   const [gameSizeDrag, setGameSizeDrag] = useState<number | null>(null);
   /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
@@ -172,6 +175,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const guideAsk = useRef<string | null>(null);
   /** Where the undo history stood when the steps were asked for: an engine that edits anyway is put back. */
   const guideMark = useRef(0);
+  /** /resume just listed the conversations: the next message, if it's a number, picks one. */
+  const pickingResume = useRef(false);
   const guideFound = useRef<GuideStep[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
@@ -231,7 +236,10 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [git, setGit] = useState<GitStatus>(() => gitStatus());
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [starters, setStarters] = useState<PluginEntry[]>([]);
-  const [viewport, setViewport] = useState<{ top: number; bottom: number } | null>(null);
+  const [viewport, setViewport] = useState<{ top: number; bottom: number; lines?: number[] } | null>(null);
+  /** Folding in the code view: a click on a row's fold marker, and /fold, /unfold for the whole file. */
+  const [foldClick, setFoldClick] = useState<{ row: number; nonce: number } | null>(null);
+  const [foldAll, setFoldAll] = useState<{ fold: boolean; nonce: number } | null>(null);
   // The editor reports every keystroke; the app only re-renders when what it shows changes (line, unsaved, selection).
   const editorStateRef = useRef<EditorState | null>(null);
   const [editorState, setEditorState] = useState<{ line: number; dirty: boolean; selection: boolean } | null>(null);
@@ -651,7 +659,8 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (!list.length) return info("No earlier conversations in this folder yet: Nou's are saved after each reply, and Claude Code's and Codex's own sessions here show up too.");
     if (!arg) {
       const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${"file" in c ? `${engineInfo(c.engine).label} CLI` : engineInfo(isEngineId(c.engine) ? c.engine : "nou").label} · ${ago(c.updated)})`);
-      return info(`Earlier conversations here. /resume <number> picks one up (or /resume last):\n${rows.join("\n")}`);
+      pickingResume.current = true; // a bare number, typed next, picks one
+      return info(`Earlier conversations here. Type a number to pick one up (or /resume last):\n${rows.join("\n")}`);
     }
     const pick = arg === "last" ? list[0] : list[Number(arg) - 1] ?? list.find((c) => c.id === arg);
     if (!pick) return info(`There's no conversation ${arg}: /resume lists them.`, "error");
@@ -1067,13 +1076,21 @@ export function App({ initialModel, permContext, resume }: Props) {
     const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
     lastClick.current = double ? null : { x: event.x, y: event.y, time: Date.now() };
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
+      // As the code view counts them (a last empty line after the final newline isn't shown).
+      const digits = String(splitLines(content).length).length;
       if (showEditor) {
         dragging.current = "editor";
         editorAt(event.x, event.y, double ? "double" : "press");
+      } else if (openFile && !diff && event.x - codeLeft - 1 === digits + 1) {
+        // The fold marker (▾/▸) beside the line number: fold or unfold that block.
+        lastClick.current = null;
+        setFoldClick((f) => ({ row: event.y - 3, nonce: (f?.nonce ?? 0) + 1 }));
       } else if (double && openFile && !diff && settleDraft(openFile)) {
         // Double-click in the code: edit right there.
-        const gutter = String(content.split("\n").length).length + 1;
-        setEditorStart((s) => ({ line: (viewport?.top ?? 1) + event.y - 3, col: Math.max(1, event.x - codeLeft - gutter), nonce: s.nonce + 1 }));
+        // The code view's gutter: the line number, a marker and the fold arrow; folds hide lines between rows.
+        const gutter = digits + 2;
+        const line = viewport?.lines?.[event.y - 3] ?? (viewport?.top ?? 1) + event.y - 3;
+        setEditorStart((s) => ({ line, col: Math.max(1, event.x - codeLeft - gutter), nonce: s.nonce + 1 }));
         setDiffMode("off");
         setEditing(true);
       }
@@ -1364,6 +1381,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       else setFocus("chat");
       return;
     }
+    if (key.ctrl && input === "l") return redraw(); // (the editor and terminal use Ctrl+L themselves)
     if (focus === "chat") return; // letters belong to the text box
     if (input === "?") setQuickOpen(">"); // every action, searchable
     else if (input === "/") {
@@ -1622,6 +1640,14 @@ ${snippet}
       return;
     case "terminal":
       return toggleTerminal();
+    case "redraw":
+      return redraw();
+    case "fold":
+    case "unfold":
+      if (!openFile) return info("Open a file first: /fold folds every function and block in it, /unfold opens them.", "error");
+      setEditing(false);
+      setFocus("code");
+      return setFoldAll((f) => ({ fold: command === "fold", nonce: (f?.nonce ?? 0) + 1 }));
     case "new":
       return newChatTab();
     case "close":
@@ -1825,6 +1851,10 @@ ${snippet}
     } else setQueued((q) => [...q, text]);
   };
   const send = (text: string) => {
+    // Right after /resume lists them, a number picks a conversation instead of being sent to the agent.
+    const picking = pickingResume.current;
+    pickingResume.current = false;
+    if (picking && /^\s*\d+\s*$/.test(text)) return void resumeConversation(text.trim());
     if (text.startsWith("/")) {
       void runCommand(text);
       return;
@@ -1866,7 +1896,8 @@ ${snippet}
   const onTreeHover = useEvent(() => {});
   const onJump = useEvent((file: string, line: number) => openAt(file, line));
   const onCloseProblems = useEvent(() => setCodePanel("code"));
-  const onViewport = useEvent((top: number, bottom: number) => setViewport((v) => (v?.top === top && v.bottom === bottom ? v : { top, bottom })));
+  const onViewport = useEvent((top: number, bottom: number, lines?: number[]) =>
+    setViewport((v) => (v?.top === top && v.bottom === bottom && v.lines?.join() === lines?.join() ? v : { top, bottom, ...(lines ? { lines } : {}) })));
   const onSend = useEvent(submit);
   const onChatMenu = useEvent((open: boolean) => {
     chatMenuOpen.current = open;
@@ -1975,6 +2006,11 @@ ${snippet}
     updateSettings({ mouse: !settings.mouse });
     info(settings.mouse ? "Mouse off: drag to select text and copy it as usual in your terminal. m turns it back on." : "Mouse on: wheel scrolls, click focuses, drag borders to resize.");
   };
+  /** /redraw, Ctrl+L: draws the whole screen again, in case anything else wrote to the terminal and shifted it. */
+  function redraw() {
+    forgetScreen();
+    setRepaint((n) => n + 1);
+  }
   /** Opens the terminal panel (starting its shell the first time) and gives it the keyboard, or closes it. */
   function toggleTerminal(open = !termOpen) {
     shellRef.current ??= new Shell(() => setTermVersion((v) => v + 1));
@@ -2001,6 +2037,7 @@ ${snippet}
     } else if (focus === "game") setFocus(beforeGame.current);
   };
   // Plain functions, not hooks: this runs after the settings screen's early return.
+  const onGameScore = (game: string, score: number) => updateSettings({ gameBest: { ...(settings.gameBest ?? {}), [game]: score } });
   const leaveGames = () => setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
   const gamesSettings = () => {
     setFocus(beforeGame.current === "game" ? "chat" : beforeGame.current);
@@ -2032,7 +2069,7 @@ ${snippet}
     { title: "MCP servers: tools from other programs", keys: "/mcp", run: () => void runCommand("/mcp") },
     { title: "Browser control (Playwright MCP)", keys: "/mcp add browser", run: () => void runCommand("/mcp add browser") },
     { title: "Import MCP servers from Claude Code, Cursor, Codex...", keys: "/mcp import", run: () => void runCommand("/mcp import") },
-    { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout", keys: "/games", run: () => toggleGames() },
+    { title: gamesOpen ? "Close the Games panel" : "Games: Pong, Snake, Breakout, Dodge, Hop, Pairs", keys: "/games", run: () => toggleGames() },
     { title: "Next tab", keys: "]", run: () => cycleTab(1) },
     { title: "Previous tab", keys: "[", run: () => cycleTab(-1) },
     { title: "Close the tab", keys: "x", run: () => closeTab() },
@@ -2220,6 +2257,8 @@ ${snippet}
             onDefine={onCodeDefine}
             onFinding={onCodeFinding}
             findRequest={findRequest}
+            foldClick={foldClick}
+            foldAll={foldAll}
           />
         )}
         <Chat
@@ -2269,7 +2308,9 @@ ${snippet}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}
       {layout.current.game && (
         <Box position="absolute" marginLeft={layout.current.game.x} marginTop={layout.current.game.y}>
-          <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+          <GameGuard>
+            <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} best={settings.gameBest ?? {}} onScore={onGameScore} onLeave={leaveGames} onOpenSettings={gamesSettings} />
+          </GameGuard>
         </Box>
       )}
       {quickOpen !== null && (
