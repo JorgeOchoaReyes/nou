@@ -2,7 +2,7 @@
  * Unit tests for logic that's easy to get subtly wrong. Run: npm test
  */
 import { execFileSync } from "child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
@@ -1010,6 +1010,23 @@ console.log("Engines");
   const codex = await runEngine("codex", "openai:gpt-5");
   check("Codex runs in its sandbox without asking", engines().codex.threads[0].sandboxMode === "workspace-write" && engines().codex.threads[0].approvalPolicy === "never" && codex.asked.length === 0);
   check("Codex can reach the network (npm install, fetching tests)", engines().codex.threads[0].networkAccessEnabled === true);
+  {
+    // Codex's sandbox keeps .git read-only, so git stash/commit/pull fail unless the git folder is handed over.
+    const { gitDirs } = await import("../src/engines/codex.js");
+    const same = (a: string) => { const r = realpathSync.native(a); return process.platform === "win32" ? r.toLowerCase() : r; };
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" });
+    const repo = mkdtempSync(path.join(os.tmpdir(), "nou-gitdir-"));
+    git(repo, "init", "-q");
+    git(repo, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init");
+    mkdirSync(path.join(repo, "src"));
+    check("Codex may write to the repo's .git (stash, commit, pull)", gitDirs(path.join(repo, "src")).map(same).join() === same(path.join(repo, ".git")));
+    const tree = path.join(mkdtempSync(path.join(os.tmpdir(), "nou-worktree-")), "wt");
+    git(repo, "worktree", "add", "-q", tree);
+    const dirs = gitDirs(tree).map(same);
+    check("in a worktree, Codex may write to its git folder and the main repo's", dirs.length === 2 && dirs.includes(same(path.join(repo, ".git"))) && dirs.some((d) => d.startsWith(same(path.join(repo, ".git", "worktrees")))));
+    check("outside a repo, Codex gets no extra folders", gitDirs(mkdtempSync(path.join(os.tmpdir(), "nou-norepo-"))).length === 0);
+    check("Codex's thread is given the git folder", Array.isArray(engines().codex.threads[0].additionalDirectories));
+  }
   check("Codex's edit is recorded for undo with the file as it was", codex.changes.some((c) => c.path === "greet.js" && c.status === "applied" && c.before.includes("Hello") && c.after.includes("Howdy")));
   check("files Codex creates are recorded as new", codex.changes.some((c) => c.path === "notes.md" && c.before === "" && c.status === "applied"));
   check("Nou's project context goes with Codex's first message", engines().codex.inputs[0].includes("be brief") && codex.entries.some((e) => e.text === "Ran: ls"));

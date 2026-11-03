@@ -172,6 +172,8 @@ The engine is the agent that answers in the chat. Nou's own works with every mod
 | `pi` | your Nou model, local or cloud | ✅ |
 | `codex` (Codex SDK) | OpenAI; your API key or ChatGPT login | ❌ edits in its sandbox; review and undo after |
 
+Codex's sandbox can write to the project and the repo's `.git` (so it can commit, stash and pull) and reach the network.
+
 Other engines install on first use into `~/.nou/engines/`, so Nou itself stays small. Switching engines starts a new conversation. Compare them on the same tasks with `npm run eval -- --engine nou --engine claude-code`.
 
 ## 🔄 Updating
