@@ -1553,6 +1553,9 @@ ${snippet}
       if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
       return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
     }
+    case "now":
+      if (!queued.length) return info(busy ? "Nothing is queued. Type a message and press Alt+Enter to stop Nou and send it now." : "Nothing is queued.");
+      return sendNow();
     case "games":
       return toggleGames();
     case "cancel":
@@ -1850,9 +1853,19 @@ ${snippet}
   useEffect(() => {
     if (busy) stopped.current = false;
   }, [busy]);
-  /** From the chat: while Nou works, a message waits its turn, or (`now`) stops Nou and goes right away. */
-  const submit = (text: string, now = false) => {
+  /** Stops Nou and sends what's queued right away (a click on the queue, or /now). */
+  const sendNow = () => {
+    if (!queued.length) return;
+    stop();
+    stopped.current = false; // what's queued is meant to go
+  };
+  /**
+   * From the chat: while Nou works, a message waits its turn, or (`now`: Alt+Enter) stops Nou and goes right
+   * away. The "Send while Nou works" setting swaps the two, so Enter sends now and Alt+Enter queues.
+   */
+  const submit = (text: string, alt = false) => {
     if (!busy || (text.startsWith("/") && runsWhileBusy(text))) return send(text);
+    const now = settings.sendNowWhileBusy ? !alt : alt;
     if (now) {
       stop();
       stopped.current = false; // this one is meant to go
@@ -2287,6 +2300,8 @@ ${snippet}
           onMenu={onChatMenu}
           onSubmit={onSend}
           queued={queued}
+          sendNowFirst={settings.sendNowWhileBusy}
+          onSendNow={sendNow}
           onAnswer={onAnswer}
           click={chatClick}
           select={chatSelect}

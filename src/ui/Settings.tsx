@@ -48,6 +48,7 @@ const PREFS: Pref[] = [
   { key: "mouse", label: "Mouse", help: "Wheel scrolls the pane under the pointer; click to focus or open files. Hold Shift to select text." },
   { key: "followMode", label: "Follow mode on start", help: "The code view jumps to files Nou reads and edits." },
   { key: "reuseToolConfig", label: "Use Claude Code / Codex keys", help: "Use the API keys from Claude Code's or Codex's settings when you haven't set one. Applies on restart." },
+  { key: "sendNowWhileBusy", label: "Send while Nou works", help: "On: Enter stops Nou and sends your message now (Alt+Enter queues it). Off: Enter queues it for when Nou finishes." },
   { key: "gitContext", label: "Git context", help: "Give the model your branch, changes and commits, plus git tools." },
   { key: "autoApproveEdits", label: "Auto-approve edits", help: "Apply file edits without asking (diffs are still shown).", warn: true },
   { key: "autoApproveCommands", label: "Auto-approve commands", help: "Run shell commands without asking. Only turn on if you trust the model.", warn: true },
