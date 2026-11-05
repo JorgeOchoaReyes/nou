@@ -36,6 +36,8 @@ export type Settings = {
   autoApproveCommands: boolean;
   /** Give the model the git branch/status/log and git tools. */
   gitContext: boolean;
+  /** Enter while Nou works stops it and sends right away (Alt+Enter then queues); off: Enter queues. */
+  sendNowWhileBusy: boolean;
   /** Editor auto-save: shortly after you stop typing, when you leave the editor, or never. */
   autoSave: AutoSave;
   /** Colors for code: syntax highlighting in the code view, editor and diffs. */
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoApproveEdits: false,
   autoApproveCommands: false,
   gitContext: true,
+  sendNowWhileBusy: false,
   autoSave: "delay",
   codeTheme: "one-dark",
   mouse: true,

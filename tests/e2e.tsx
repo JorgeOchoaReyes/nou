@@ -583,6 +583,27 @@ console.log("Queueing and interrupting");
     const ok = !heard.includes("never") && frame().includes("❯ never");
     if (!ok) console.log(frame());
     check("Esc stops Nou and puts what was queued back in the input", ok);
+    await press("\x15", 50); // Ctrl+U clears the input
+    await idle();
+    await type("again");
+    await press(KEY.enter, 100);
+    await until(() => status().includes("WORKING") && heard.at(-1) === "again");
+    await type("by command");
+    await press(KEY.enter, 100);
+    check("what's queued says it can be sent now", await until(() => frame().includes("⏳ next: by command") && frame().includes("click to send now")));
+    await type("/now");
+    await press(KEY.enter, 100);
+    check("/now stops Nou and sends what's queued", await until(() => heard.at(-1) === "by command"));
+    await idle();
+    await type("once more");
+    await press(KEY.enter, 100);
+    await until(() => status().includes("WORKING") && heard.at(-1) === "once more");
+    await type("by click");
+    await press(KEY.enter, 100);
+    await until(() => frame().includes("⏳ next: by click"));
+    const row = frame().split("\n").findIndex((l) => l.includes("⏳ next: by click"));
+    await press(click(96, row), 100); // the chat is the right-hand pane of the 100-column screen
+    check("clicking a queued message sends it now", await until(() => heard.at(-1) === "by click"));
   });
 }
 

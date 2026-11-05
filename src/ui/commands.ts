@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 export function runsWhileBusy(text: string): boolean {
@@ -28,6 +28,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "models", args: "[provider]", description: "list the models a provider offers" },
   { name: "connect", args: "<provider>", description: "enter an API key (and URL) for a provider" },
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
+  { name: "now", description: "stop Nou and send your queued messages right away (or click them)" },
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },
   { name: "engine", args: "[name]", description: "which agent answers: nou, claude-code, codex or pi" },

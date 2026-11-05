@@ -37,6 +37,10 @@ type Props = {
   onSubmit(text: string, now?: boolean): void;
   /** Messages waiting to be sent when Nou finishes. */
   queued?: string[];
+  /** Enter while Nou works sends right away (Alt+Enter queues) instead of the other way round. */
+  sendNowFirst?: boolean;
+  /** Stop Nou and send what's queued right away (a click on the queued messages). */
+  onSendNow?(): void;
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
   /** Conversation tabs (several agents at once): shown in the title row, with + for a new one. */
@@ -58,6 +62,8 @@ type Line = {
   text: string; color?: string; bold?: boolean; dim?: boolean; lead?: string; leadColor?: string; spans?: Span[];
   /** The header of a collapsed run of steps: clicking it opens or closes the run. */
   toggle?: ChatEntry;
+  /** A queued message under the chat: clicking it stops Nou and sends what's queued now. */
+  sendNow?: boolean;
 };
 
 /**
@@ -154,7 +160,7 @@ export type ChatSelect = { row: number; col: number; kind: "press" | "drag" | "r
 type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [] }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [], sendNowFirst = false, onSendNow }: Props) {
   const [input, setInputText] = useState("");
   // Whether the chat has the keyboard right now: a key handler from a render before focus moved away can
   // still be attached for a moment (on a busy machine), and its keys belong to the pane that has focus.
@@ -238,9 +244,9 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   } else if (busy) {
     footer.push({ text: `${SPINNER[frame % SPINNER.length]} ${busy}`, color: C.accent2 });
   }
-  for (const text of queued) {
-    footer.push({ text: `⏳ next: ${text.replace(/\s+/g, " ")}`, color: C.dim });
-  }
+  // Click what's queued (or /now) to stop Nou and send it right away.
+  for (const text of queued) footer.push({ text: `⏳ next: ${text.replace(/\s+/g, " ")}`, color: C.dim, sendNow: true });
+  if (queued.length && busy) footer.push({ text: "   ↳ click to send now, or /now", color: C.accent2, sendNow: true });
 
   // Typing "/" opens a menu of commands with what each does; ↑↓ pick one, Tab completes, Enter runs it.
   const menuOpen = focused && !approval && input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
@@ -271,6 +277,11 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   // Clicking a file named in a message opens it in the code view.
   useEffect(() => {
     if (!click) return;
+    if (click.row >= rows) {
+      // Under the messages: a click on what's queued sends it now.
+      if (footer[click.row - rows]?.sendNow) onSendNow?.();
+      return;
+    }
     const line = visible[click.row];
     const run = line?.toggle;
     if (run) {
@@ -477,7 +488,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
         width={inner + 1}
         history={sent}
         arrowsTaken={showMenu}
-        placeholder={busy ? (inner >= 44 ? "Enter queues · Alt+Enter sends now · Esc stops" : "Enter queues · Esc stops") : showMenu ? "↑↓ choose · Tab complete · Enter run" : inner >= 44 ? "Ask anything · / for commands · ↑ history" : "Ask anything · / commands"}
+        placeholder={busy ? (inner >= 44 ? (sendNowFirst ? "Enter sends now · Alt+Enter queues · Esc stops" : "Enter queues · Alt+Enter sends now · Esc stops") : sendNowFirst ? "Enter sends now · Esc stops" : "Enter queues · Esc stops") : showMenu ? "↑↓ choose · Tab complete · Enter run" : inner >= 44 ? "Ask anything · / for commands · ↑ history" : "Ask anything · / commands"}
       />
     </Pane>
   );
