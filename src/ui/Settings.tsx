@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { AUTO_SAVE, CODE_THEMES, EFFORTS, FOLLOW_SPEEDS, type Settings as SettingsType } from "../config/index.js";
+import { AUTO_SAVE, CODE_THEMES, EFFORT_LABELS, EFFORTS, FOLLOW_SPEEDS, type Settings as SettingsType } from "../config/index.js";
 import { highlightLines } from "./text.js";
 import { GAMES } from "../games/index.js";
 import { saveCredentials } from "../config/credentials.js";
@@ -41,7 +41,7 @@ type Tab = (typeof TABS)[number];
 
 type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boolean };
 const PREFS: Pref[] = [
-  { key: "effort", label: "Reasoning effort", help: "How hard Claude thinks (low → max). Higher is smarter but slower and pricier." },
+  { key: "effort", label: "Speed vs smarts", help: "How hard the model thinks before it answers (Claude, Codex, pi and Nou's engine with Claude)." },
   { key: "followSpeed", label: "Follow mode speed", help: "How long each file Nou reads stays on screen in follow mode (f): slow, normal, fast, or as it happens." },
   { key: "codeTheme", label: "Code colors", help: "The theme for code. ←/→ to try them; github-light is for light terminals." },
   { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
@@ -359,11 +359,13 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                   <Text color={C.text} bold={selected}>{pref.label.padEnd(26)}</Text>
                   {pref.key === "codeTheme"
                     ? <Text><Text color={C.dim}>‹ </Text><Text color={C.accent2} bold>{String(value)}</Text><Text color={C.dim}> ›  {CODE_THEMES.indexOf(value as never) + 1}/{CODE_THEMES.length}</Text></Text>
-                    : pref.key === "effort" || pref.key === "autoSave" || pref.key === "followSpeed"
-                      ? <Text>{(pref.key === "effort" ? EFFORTS : pref.key === "autoSave" ? AUTO_SAVE : FOLLOW_SPEEDS).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
-                      : toggle(value as boolean, pref.warn)}
+                    : pref.key === "effort"
+                      ? <Text>{EFFORTS.map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${EFFORT_LABELS[e].name}]` : ` ${EFFORT_LABELS[e].name} `}</Text>)}</Text>
+                      : pref.key === "autoSave" || pref.key === "followSpeed"
+                        ? <Text>{(pref.key === "autoSave" ? AUTO_SAVE : FOLLOW_SPEEDS).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
+                        : toggle(value as boolean, pref.warn)}
                 </Text>
-                <Text color={C.dim} wrap="truncate-end">    {pref.help}</Text>
+                <Text color={C.dim} wrap="truncate-end">    {pref.key === "effort" ? `${EFFORT_LABELS[settings.effort].tradeoff}` : pref.help}</Text>
                 {pref.key === "codeTheme" && selected
                   ? highlightLines("preview.ts", THEME_PREVIEW).map((line, n) => <Text key={n} wrap="truncate-end">{"    "}{line}</Text>)
                   : null}
