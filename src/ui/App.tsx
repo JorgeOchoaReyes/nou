@@ -13,7 +13,7 @@ import { harness, problemsIntroduced } from "../agent/harness.js";
 import { describe, providers, resolveModel, saveModel, setupProblem, type ModelChoice, type Provider } from "../providers/index.js";
 import { sameModel } from "../providers/ollama.js";
 import type { FileChange } from "../commands/index.js";
-import { FOLLOW_SPEEDS, isTrustedFolder, loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
+import { EFFORT_LABELS, EFFORTS, FOLLOW_SPEEDS, effortFrom, isTrustedFolder, loadSettings, saveSettings, type Settings as SettingsType } from "../config/index.js";
 import { branch as gitBranch, diffAgainstHead, isRepo, sameStatus, status as gitStatus, statusAsync as gitStatusAsync, type GitStatus } from "../git/index.js";
 import { BUILTIN_PLUGINS, addStarter, discoverPlugins, isEnabled, loadPlugin, scaffoldPlugin, starterPlugins, trustPatch, trustState, type PluginEntry } from "../plugins/index.js";
 import { DiagnosticsManager, formatDiagnostic, newProblems } from "../diagnostics/index.js";
@@ -1552,6 +1552,15 @@ ${snippet}
         .sort((a, b) => b.m!.score - a.m!.score)[0]?.f;
       if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
       return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
+    }
+    case "effort": {
+      // Speed vs smarts, by name: /effort smarter (or the effort itself: /effort xhigh).
+      const options = EFFORTS.map((e) => EFFORT_LABELS[e].name.toLowerCase()).join(", ");
+      if (!arg) return info(`Now: ${EFFORT_LABELS[settings.effort].name}. ${EFFORT_LABELS[settings.effort].tradeoff} Change it with /effort ${options}.`);
+      const next = effortFrom(arg);
+      if (!next) return info(`No such level: "${arg}". Try one of: ${options}.`, "error");
+      updateSettings({ effort: next });
+      return info(`Now: ${EFFORT_LABELS[next].name}. ${EFFORT_LABELS[next].tradeoff}`);
     }
     case "now":
       if (!queued.length) return info(busy ? "Nothing is queued. Type a message and press Alt+Enter to stop Nou and send it now." : "Nothing is queued.");

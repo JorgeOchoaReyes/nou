@@ -1064,5 +1064,13 @@ console.log("Saving power");
   check("coming back resumes them", terminalFocused() === true && told === 2);
 }
 
+console.log("Speed vs smarts");
+{
+  const { effortFrom, EFFORT_LABELS, EFFORTS } = await import("../src/config/index.js");
+  check("every effort has a plain name and what it trades", EFFORTS.every((e) => EFFORT_LABELS[e].name && EFFORT_LABELS[e].tradeoff));
+  check("an effort is found by its name or itself, any case", effortFrom("Smarter") === "xhigh" && effortFrom("fastest") === "low" && effortFrom("MAX") === "max" && effortFrom("balanced") === "high");
+  check("an unknown level isn't", effortFrom("turbo") === null);
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);

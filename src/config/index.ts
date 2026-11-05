@@ -8,6 +8,24 @@ const CONFIG_PATH = path.join(NOU_HOME, "config.json");
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+/**
+ * What each effort means for you, since "xhigh" says little: a short name for the picker and what it trades.
+ * The saved value stays the effort itself (low...max), which is what the engines are given.
+ */
+export const EFFORT_LABELS: Record<Effort, { name: string; tradeoff: string }> = {
+  low: { name: "Fastest", tradeoff: "Cheapest + fastest: quick answers, little thinking. Good for small edits and questions." },
+  medium: { name: "Fast", tradeoff: "Cheaper + faster: some thinking, for everyday changes." },
+  high: { name: "Balanced", tradeoff: "Balanced: thinks things through without taking long. The default." },
+  xhigh: { name: "Smarter", tradeoff: "Smarter: thinks longer, for trickier bugs and bigger changes. Slower, costs more." },
+  max: { name: "Smartest", tradeoff: "Smartest: thinks as long as it needs, for the hardest problems. Slowest, costs the most." },
+};
+
+/** An effort from its name or its label ("smarter", "xhigh"), any case. */
+export function effortFrom(text: string): Effort | null {
+  const t = text.trim().toLowerCase();
+  return EFFORTS.find((e) => e === t || EFFORT_LABELS[e].name.toLowerCase() === t) ?? null;
+}
+
 export const AUTO_SAVE = ["delay", "focus", "off"] as const;
 export type AutoSave = (typeof AUTO_SAVE)[number];
 

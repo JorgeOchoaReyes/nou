@@ -607,6 +607,18 @@ console.log("Queueing and interrupting");
   });
 }
 
+console.log("Speed vs smarts (/effort)");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  await type("/effort smarter");
+  await press(KEY.enter, 300);
+  check("/effort sets it by its plain name", await until(() => frame().includes("Now: Smarter")));
+  await type("/effort turbo");
+  await press(KEY.enter, 300);
+  check("an unknown level is refused", await until(() => frame().includes("No such level")));
+  await type("/effort balanced");
+  await press(KEY.enter, 300);
+});
+
 console.log("Find in the open file");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("/open many.ts");
