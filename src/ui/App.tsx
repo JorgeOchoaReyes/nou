@@ -40,7 +40,7 @@ import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GameGuard, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
 import { forgetScreen } from "./redraw.js";
-import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
+import { SHOW_PLACES_NOTE, explainPrompt, showMePrompt, showPlacesTool, showStepsTool, stepsFromReply, stopsFromReply, type GuideStep, type TourStop } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -171,7 +171,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
   const tabStripCache = useRef<{ key: string; strip: ReactNode } | null>(null);
   /**
-   * "Show me how" (/showme): the steps Nou found, and the one you're on. While Nou looks for them,
+   * "Teach me" (/teach): the steps Nou found, and the one you're on. While Nou looks for them,
    * `guideAsk` holds what you asked (and its edits are turned down: you're doing the typing).
    */
   const [guide, setGuide] = useState<{ steps: GuideStep[]; at: number; task: string } | null>(null);
@@ -181,6 +181,12 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** /resume just listed the conversations: the next message, if it's a number, picks one. */
   const pickingResume = useRef(false);
   const guideFound = useRef<GuideStep[] | null>(null);
+  /**
+   * "Show me" (/showme, or any explanation that points at code): the places the agent pointed at, and the
+   * one open in the code view. `tourFound` holds what Nou's engine passed to show_places during a turn.
+   */
+  const [tour, setTour] = useState<{ stops: TourStop[]; at: number } | null>(null);
+  const tourFound = useRef<TourStop[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -577,7 +583,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), ...mcpRef.current!.tools()], effort: settings.effort };
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext), SHOW_PLACES_NOTE].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), showPlacesTool((stops) => (tourFound.current = stops)), ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
@@ -1686,7 +1692,9 @@ ${snippet}
       return switchChatTab(chatTabs[n - 1]!);
     }
     case "showme":
+      return showPlaces(rest.join(" "));
     case "teach":
+    case "teachme":
       return showMe(rest.join(" "));
     case "resume":
       return resumeConversation(rest[0] ?? "");
@@ -1789,6 +1797,50 @@ ${snippet}
     setQueued(queued.slice(take));
     send(queued.slice(0, take).join("\n\n"));
   }, [busy, approval, queued]);
+  // When a reply points at places in the code (Nou's engine with show_places, the others with a ```nou-show
+  // block, which is taken out of the reply), the first one opens highlighted and the rest are listed.
+  useEffect(() => {
+    if (busy || guideAsk.current) return;
+    let stops = tourFound.current;
+    tourFound.current = null;
+    const reply = [...entries].reverse().find((e) => e.kind === "assistant");
+    const found = reply && stopsFromReply(reply.text);
+    if (found) {
+      stops = stops?.length ? stops : found.stops;
+      setEntries((prev) => prev.map((e) => (e === reply ? { ...e, text: found.rest || "Here's where." } : e)));
+    }
+    stops = (stops ?? []).filter((s) => existsSync(s.file));
+    if (!stops.length) return;
+    const list = stops.map((s, i) => `${i + 1}. ${s.file}:${s.line}${s.end > s.line ? `-${s.end}` : ""}${s.note ? ` · ${s.note}` : ""}`).join("\n");
+    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}):\n${list}`);
+    setTour({ stops, at: 0 });
+  }, [busy]);
+  // Each place: open it in the code view with its lines highlighted.
+  useEffect(() => {
+    const stop = tour?.stops[tour.at];
+    if (!stop) return;
+    openRef({ path: stop.file, line: stop.line, ...(stop.end > stop.line ? { to: stop.end } : {}) });
+  }, [tour?.at, tour?.stops]);
+  /** /showme <question>: explains it and opens the places in the code; /showme next|back|stop steps through them. */
+  const showPlaces = (arg: string) => {
+    const words = arg.trim();
+    if (/^(stop|end|done)$/.test(words)) {
+      setTour(null);
+      return info(tour ? "Done showing." : "Nothing is being shown.");
+    }
+    if (/^(next|back|prev|previous)$/.test(words)) {
+      if (!tour) return info("Nothing is being shown. Ask with /showme <question>, e.g. /showme where do we check the login?");
+      const at = tour.at + (words === "next" ? 1 : -1);
+      if (at < 0 || at >= tour.stops.length) return info(at < 0 ? "That's the first place." : "That was the last place.");
+      const stop = tour.stops[at]!;
+      info(`📍 ${at + 1} of ${tour.stops.length}: ${stop.file}:${stop.line}${stop.end > stop.line ? `-${stop.end}` : ""}${stop.note ? ` · ${stop.note}` : ""}`);
+      return setTour({ ...tour, at });
+    }
+    if (!words) return info("Ask how something works or where it happens, and Nou explains it and opens the places in the code, highlighted: /showme where do we check the login? (To be walked through typing a change yourself: /teach.)");
+    if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
+    setTour(null);
+    send(explainPrompt(words, agentRef.current!.id === "nou"));
+  };
   // When Nou has finished looking, the guide starts at its first step.
   useEffect(() => {
     if (busy || !guideAsk.current) return;
@@ -1812,8 +1864,8 @@ ${snippet}
       undoCheckpoints([...edited].reverse() as ReturnType<typeof timeline.lastTurn>);
       info("It edited files anyway, so those changes were put back: you're the one typing them.");
     }
-    if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /showme add a --verbose flag to the CLI", "error");
-    info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /showme next skips a step, /showme stop ends it.`);
+    if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /teach add a --verbose flag to the CLI", "error");
+    info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /teach next skips a step, /teach stop ends it.`);
     setGuide({ steps, at: 0, task });
   }, [busy]);
   // Each step: open its file in the editor where the code goes, and say what to type and why.
@@ -1845,7 +1897,7 @@ ${snippet}
       setGuide(null);
     }
   });
-  /** /showme <what you want>: Nou finds where the change goes and walks you through typing it. */
+  /** /teach <what you want>: Nou finds where the change goes and walks you through typing it. */
   const showMe = (arg: string) => {
     const words = arg.trim();
     if (words === "stop" || words === "end") {
@@ -1861,8 +1913,8 @@ ${snippet}
       return setGuide({ ...guide, at: guide.at + 1 });
     }
     if (!words) {
-      if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /showme next skips it, /showme stop ends it.`);
-      return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /showme add a --verbose flag to the CLI");
+      if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /teach next skips it, /teach stop ends it.`);
+      return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /teach add a --verbose flag to the CLI");
     }
     if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
     setGuide(null);

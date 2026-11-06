@@ -47,7 +47,7 @@ function editDistance(a: string, b: string): number {
 
 export function runsWhileBusy(text: string): boolean {
   const [name, ...rest] = text.slice(1).trim().split(/\s+/);
-  if (name === "showme" || name === "teach") return !rest.length || /^(next|skip|stop|end)$/.test(rest.join(" "));
+  if (name === "showme" || name === "teach" || name === "teachme") return !rest.length || /^(next|skip|back|prev|previous|stop|end|done)$/.test(rest.join(" "));
   if (!text.startsWith("/") || !name) return false;
   return INSTANT.has(name) || INSTANT.has(closestCommand(name, SLASH_COMMANDS.map((c) => c.name)) ?? "");
 }
@@ -75,8 +75,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "copy", args: "[code|file]", description: "copy the last reply, its last code block, or the open file" },
   { name: "compact", description: "summarize the conversation to free up context" },
   { name: "clear", description: "start a fresh conversation" },
-  { name: "showme", args: "<what you want>", description: "Nou shows you how, step by step, and you type it (with the code shown ahead of your cursor)" },
-  { name: "teach", args: "<what you want>", description: "same as /showme: Nou teaches you to make the change yourself, step by step" },
+  { name: "showme", args: "<question>", description: "Nou explains it and opens the places in the code, highlighted (next/back step through them); any engine" },
+  { name: "teach", args: "<what you want>", description: "Nou walks you through making the change yourself, step by step, with the code shown ahead of your cursor" },
   { name: "new", description: "a new conversation tab: another agent, working alongside this one" },
   { name: "tab", args: "[n]", description: "list the conversation tabs, or switch to tab n" },
   { name: "close", description: "close this conversation tab (it stays saved for /resume)" },

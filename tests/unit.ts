@@ -1101,5 +1101,16 @@ console.log("Mistyped commands");
   check("a typo of a screen-only command runs while Nou works", runsWhileBusy("/termnial") && !runsWhileBusy("/claer"));
 }
 
+console.log("Show me where");
+{
+  const { tidyStops, stopsFromReply, explainPrompt } = await import("../src/guide/index.js");
+  const stops = tidyStops([{ file: "src/a.ts", line: 3, end_line: 9, note: "here" }, { file: "b.ts", line: 5 }, { file: "../outside.ts", line: 1 }, { line: 2 }, { file: "c.ts", line: 0 }]);
+  check("places keep a project file and a line range", stops.length === 2 && stops[0]!.end === 9 && stops[1]!.end === 5 && stops[1]!.note === "");
+  const parsed = stopsFromReply("Look here.\n\n```nou-show\n[{\"file\": \"a.ts\", \"line\": 2, \"end_line\": 4, \"note\": \"x\"}]\n```");
+  check("a nou-show block is read and taken out of the reply", parsed?.stops[0]?.line === 2 && parsed.rest === "Look here.");
+  check("a reply without one has none", stopsFromReply("just text") === null);
+  check("other engines are asked for the block, Nou's for the tool", explainPrompt("q", false).includes("nou-show") && explainPrompt("q", true).includes("show_places"));
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);

@@ -847,9 +847,9 @@ console.log("Show me how");
     },
   };
   await session({ provider: teacher, model: "fake" }, async ({ press, type, frame }) => {
-    await type("/showme add a double helper");
+    await type("/teach add a double helper");
     await press(KEY.enter, 300);
-    check("/showme opens the first step in the editor, saying why", await until(() => frame().includes("Step 1 of 2") && frame().includes("EDITING") && frame().includes("A helper that reuses add")));
+    check("/teach opens the first step in the editor, saying why", await until(() => frame().includes("Step 1 of 2") && frame().includes("EDITING") && frame().includes("A helper that reuses add")));
     check("the code to type shows ahead of the cursor", await until(() => frame().includes("xport const double")));
     // The editor's on screen; End (harmless in either pane) lets it take the keyboard before typing: on a
     // loaded machine, React hooks up its key handler only when the next key arrives.
@@ -1007,13 +1007,51 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("switching engines hands over the conversation so far", frame().includes("It has the conversation so"));
 });
 
+console.log("Show me where (explain with the code open)");
+{
+  writeFileSync(path.join(dir, "auth.ts"), "export function login(user: string) {\n  if (!user) return false;\n  return check(user);\n}\n\nfunction check(user: string) {\n  return user.length > 2;\n}\n");
+  let calls = 0;
+  const explainer: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      calls++;
+      const last = messages[messages.length - 1];
+      if (last.role === "user") {
+        return { text: "", toolCalls: [{ id: `p${calls}`, name: "show_places", args: { places: [
+          { file: "auth.ts", line: 1, end_line: 4, note: "login turns away an empty name" },
+          { file: "auth.ts", line: 6, end_line: 8, note: "check is the real rule" },
+        ] } }] };
+      }
+      return { text: "Login is checked in two places.", toolCalls: [] };
+    },
+  };
+  await session({ provider: explainer, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/showme where do we check the login?");
+    await press(KEY.enter, 300);
+    check("/showme lists the places and opens the first, highlighted", await until(() => frame().includes("2 places") && frame().includes("auth.ts:1-4") && frame().includes("export function login")));
+    await type("/showme next");
+    await press(KEY.enter, 300);
+    check("/showme next opens the next place", await until(() => frame().includes("2 of 2") && frame().includes("check is the real rule")));
+  });
+  // Engines that can't call show_places end their reply with a nou-show block: it opens the same way and
+  // is taken out of the reply.
+  const blockModel: any = { ...explainer, async chat() {
+    return { text: "It's in check.\n\n```nou-show\n[{\"file\": \"auth.ts\", \"line\": 6, \"end_line\": 8, \"note\": \"the rule\"}]\n```", toolCalls: [] };
+  } };
+  await session({ provider: blockModel, model: "fake" }, async ({ press, type, frame }) => {
+    await type("where is the login rule?");
+    await press(KEY.enter, 300);
+    check("a nou-show block in any reply opens the place, and is hidden", await until(() => frame().includes("Here it is") && frame().includes("function check")) && !frame().includes("nou-show"));
+  });
+}
+
 console.log("Show me how on another engine");
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("/engine codex");
   await press(KEY.enter, 600);
   await until(() => frame().includes("Now using the Codex engine"));
-  await type("/showme change the greeting");
+  await type("/teach change the greeting");
   await press(KEY.enter, 300);
   // The fake Codex edits greet.js whatever it's asked, and gives no steps.
   check("an engine that edits anyway has its edit put back", await until(() => frame().includes("edited files anyway")) && readFileSync(path.join(dir, "greet.js"), "utf-8").includes("Hello"));
