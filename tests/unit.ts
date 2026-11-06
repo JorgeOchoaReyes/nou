@@ -1149,5 +1149,25 @@ console.log("Workspaces (several Nous in one window)");
   check("header clicks find each tab and the +", zones.length === 3 && zones[0]!.tab === 0 && zones[1]!.tab === 1 && zones[2]!.tab === "new" && zones[1]!.from === zones[0]!.to + 1);
 }
 
+console.log("Codex sessions as current Codex writes them");
+{
+  const { externalSessions } = await import("../src/conversations/external.js");
+  const home = mkdtempSync(path.join(os.tmpdir(), "nou-codex-big-"));
+  const project = mkdtempSync(path.join(os.tmpdir(), "nou-codex-proj-"));
+  const day = path.join(home, ".codex", "sessions", "2026", "11", "06");
+  mkdirSync(day, { recursive: true });
+  // Codex puts its whole system prompt in the first line: tens of KB.
+  writeFileSync(path.join(day, "rollout-2026-11-06T10-00-00-abc.jsonl"), [
+    { type: "session_meta", payload: { id: "big-one", cwd: project, base_instructions: { text: "x".repeat(30_000) } } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "add a login page" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done." }] } },
+  ].map((l) => JSON.stringify(l)).join("\n"));
+  // Finder leaves .DS_Store files around; they used to hide every session.
+  writeFileSync(path.join(home, ".codex", "sessions", ".DS_Store"), "");
+  writeFileSync(path.join(home, ".codex", "sessions", "2026", ".DS_Store"), "");
+  const found = externalSessions(home, project);
+  check("a Codex session with a long first line is found, stray files and all", found.length === 1 && found[0]!.id === "big-one" && found[0]!.title === "add a login page");
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);

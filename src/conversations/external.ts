@@ -44,11 +44,25 @@ function jsonLines(file: string, limit = Infinity): any[] {
 }
 
 /** The start of a file, for the line that says which folder a Codex session ran in. */
-function head(file: string, bytes = 8192): string {
+/**
+ * The file's first line, however long (up to `max`): Codex puts its whole system prompt in a session's first
+ * line, tens of KB, and reading a fixed 8 KB cut it short, so no Codex session was ever found.
+ */
+function firstLine(file: string, max = 4 * 1024 * 1024): string {
   const fd = openSync(file, "r");
   try {
-    const buf = Buffer.alloc(bytes);
-    return buf.subarray(0, readSync(fd, buf, 0, bytes, 0)).toString("utf-8");
+    const chunks: Buffer[] = [];
+    let read = 0;
+    const buf = Buffer.alloc(64 * 1024);
+    while (read < max) {
+      const n = readSync(fd, buf, 0, buf.length, read);
+      if (n <= 0) break;
+      const end = buf.subarray(0, n).indexOf(10); // \n
+      chunks.push(Buffer.from(buf.subarray(0, end >= 0 ? end : n)));
+      read += n;
+      if (end >= 0) break;
+    }
+    return Buffer.concat(chunks).toString("utf-8");
   } finally {
     closeSync(fd);
   }
@@ -101,24 +115,29 @@ function codexSessions(home: string, cwd: string): ExternalSession[] {
   const root = path.join(codexDir(home), "sessions");
   if (!existsSync(root)) return [];
   const files: string[] = [];
+  // By date: sessions/YYYY/MM/DD/rollout-*.jsonl. Anything else in there (a .DS_Store, a folder that can't
+  // be read) is skipped, rather than hiding every session.
   const walk = (dir: string, depth: number) => {
-    for (const name of readdirSync(dir).sort().reverse()) {
+    let names: string[];
+    try {
+      names = readdirSync(dir).sort().reverse();
+    } catch {
+      return;
+    }
+    for (const name of names) {
       if (files.length >= SCAN) return;
       const full = path.join(dir, name);
-      if (depth < 3) walk(full, depth + 1);
-      else if (name.startsWith("rollout-") && name.endsWith(".jsonl")) files.push(full);
+      if (depth < 3) {
+        if (!name.startsWith(".")) walk(full, depth + 1);
+      } else if (name.startsWith("rollout-") && name.endsWith(".jsonl")) files.push(full);
     }
   };
-  try {
-    walk(root, 0);
-  } catch {
-    return [];
-  }
+  walk(root, 0);
   const out: ExternalSession[] = [];
   for (const file of files) {
     let meta: any;
     try {
-      meta = JSON.parse(head(file).split("\n")[0]!);
+      meta = JSON.parse(firstLine(file));
     } catch {
       continue;
     }

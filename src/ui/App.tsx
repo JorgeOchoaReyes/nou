@@ -154,6 +154,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [setupReason, setSetupReason] = useState<string | null>(null);
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
+  /** /resume's picker: the conversations, in the palette's place while it's open. */
+  const [resumePicker, setResumePicker] = useState<PaletteAction[] | null>(null);
   const [focus, setFocus] = useState<Focus>("chat");
   /** The Games panel: whether it's open, the pane it's being dragged over, and the pane to go back to. */
   const [gamesOpen, setGamesOpen] = useState(false);
@@ -694,16 +696,28 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (busy) return info("Wait for the current reply to finish (or press Esc) before resuming another conversation.", "error");
     const list = resumable();
     if (!list.length) return info("No earlier conversations in this folder yet: Nou's are saved after each reply, and Claude Code's and Codex's own sessions here show up too.");
+    const where = (c: ConversationSummary | ExternalSession) => ("file" in c ? `${engineInfo(c.engine).label} CLI` : engineInfo(isEngineId(c.engine) ? c.engine : "nou").label);
     if (!arg) {
-      const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${"file" in c ? `${engineInfo(c.engine).label} CLI` : engineInfo(isEngineId(c.engine) ? c.engine : "nou").label} · ${ago(c.updated)})`);
+      const rows = list.slice(0, 10).map((c, i) => `  ${String(i + 1).padStart(2)}. ${c.title}  (${c.messages} message${c.messages === 1 ? "" : "s"} · ${where(c)} · ${ago(c.updated)})`);
       pickingResume.current = true; // a bare number, typed next, picks one
-      return info(`Earlier conversations here. Type a number to pick one up (or /resume last):\n${rows.join("\n")}`);
+      info(`Earlier conversations here (also in the picker: ↑↓ and Enter, or type a number here):\n${rows.join("\n")}`);
+      // A picker over the screen: ↑↓ and Enter, or type to filter by title.
+      setResumePicker(list.map((c, i) => ({ title: `${i + 1}. ${c.title}`, keys: `${where(c)} · ${ago(c.updated)}`, run: () => void resumePicked(c) })));
+      setQuickOpen(">");
+      return;
     }
     const pick = arg === "last" ? list[0] : list[Number(arg) - 1] ?? list.find((c) => c.id === arg);
     if (!pick) return info(`There's no conversation ${arg}: /resume lists them.`, "error");
+    return resumePicked(pick);
+  };
+
+  /** Picks a conversation back up: Nou's own, or a Claude Code or Codex CLI session. */
+  const resumePicked = async (pick: ConversationSummary | ExternalSession) => {
+    pickingResume.current = false;
+    if (busy) return info("Wait for the current reply to finish (or press Esc) before resuming another conversation.", "error");
     if ("file" in pick) return resumeExternal(pick);
     const saved = loadConversation(pick.id);
-    if (!saved) return info(`Couldn't read conversation ${arg}.`, "error");
+    if (!saved) return info(`Couldn't read conversation "${pick.title}".`, "error");
     const engine = engineFor(isEngineId(saved.engine) ? saved.engine : null);
     const restored = saved.engine === engine.id && !!saved.state && !!engine.restore?.(saved.state);
     if (!restored) {
@@ -2482,8 +2496,9 @@ ${snippet}
           top={3}
           files={allFiles}
           recent={recent}
-          actions={paletteActions}
+          actions={resumePicker ?? paletteActions}
           initialQuery={quickOpen}
+          {...(resumePicker ? { placeholder: "Pick a conversation to resume (type to filter)" } : {})}
           onPick={(file) => {
             setQuickOpen(null);
             clearFollow();
@@ -2493,9 +2508,13 @@ ${snippet}
           }}
           onRun={(action) => {
             setQuickOpen(null);
+            setResumePicker(null);
             action.run();
           }}
-          onClose={() => setQuickOpen(null)}
+          onClose={() => {
+            setQuickOpen(null);
+            setResumePicker(null);
+          }}
         />
       )}
     </Box>

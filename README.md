@@ -136,7 +136,7 @@ A small typo in a command still works when it only changes the screen (`/termnia
 
 New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol), or type `\` and press <kbd>Enter</kbd> in any terminal.
 
-Conversations are saved per folder after each reply. `/resume` lists them (then type a number to pick one) and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far. Sessions you started in Claude Code's or Codex's own CLI in this folder are listed too (marked "CLI"), and resuming one carries it on in that engine inside Nou.
+Conversations are saved per folder after each reply. `/resume` opens a picker (↑↓ and Enter, type to filter, or type its number) and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far. Sessions you started in Claude Code's or Codex's own CLI in this folder are listed too (marked "CLI"), and resuming one carries it on in that engine inside Nou.
 
 ## 🧠 Models
 

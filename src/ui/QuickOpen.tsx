@@ -62,13 +62,15 @@ type Props = {
   actions: PaletteAction[];
   /** ">" opens it on the actions (the ? key); empty on files (Ctrl+P). */
   initialQuery?: string;
+  /** What the empty search box says (a picker of its own, like /resume's, says what you're picking). */
+  placeholder?: string;
   onPick(file: string): void;
   onRun(action: PaletteAction): void;
   onClose(): void;
 };
 
 /** Ctrl+P: find a file. Start with ">" (or press ?) for every action Nou has, with its shortcut. */
-export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", onPick, onRun, onClose }: Props) {
+export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", onPick, onRun, onClose }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [cursor, setCursor] = useState(0);
   const boxWidth = Math.min(80, Math.max(40, width - 10));
@@ -122,10 +124,14 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
           }}
           onSubmit={() => {
             if (commandMode) {
-              if (found[cursor]) onRun(found[cursor].action);
+              // A number picks that row of a numbered list (/resume's: "1. ...", "2. ...").
+              const n = /^\s*(\d+)\s*$/.exec(query.slice(1))?.[1];
+              const numbered = n ? actions.find((a) => a.title.startsWith(`${n}. `)) : undefined;
+              if (numbered) onRun(numbered);
+              else if (found[cursor]) onRun(found[cursor].action);
             } else if (results[cursor]) onPick(results[cursor].file);
           }}
-          placeholder="Go to file…  (> for commands)"
+          placeholder={placeholder}
         />
         <Text>{" ".repeat(Math.max(0, inner - 4 - Math.max(query.length, 29)))}</Text>
       </Text>
