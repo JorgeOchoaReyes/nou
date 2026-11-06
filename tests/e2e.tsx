@@ -774,7 +774,8 @@ console.log("Taking back a message");
     check("a double-click in the chat selects the word and copies it", await until(() => /Copied it ✓|Can't copy/.test(frame()), 3000));
     await type("/cancel");
     await press(KEY.enter, 600);
-    check("/cancel takes back the last message and its reply, putting it in the input to edit", !frame().includes("reply 1") && frame().includes("❯ make it blue") && frame().includes("Took back"));
+    // Copying above runs the system clipboard tool, which can be slow (PowerShell on Windows): wait for it.
+    check("/cancel takes back the last message and its reply, putting it in the input to edit", await until(() => !frame().includes("reply 1") && frame().includes("❯ make it blue") && frame().includes("Took back")));
   });
 }
 
