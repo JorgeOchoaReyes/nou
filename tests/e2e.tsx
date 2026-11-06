@@ -642,6 +642,12 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("letters go to the find bar, not to shortcuts", !frame().includes("EDITING"));
   await press(KEY.esc, 200);
   check("Esc closes it and stays in the code", !frame().includes("⌕") && frame().split("\n").at(-1)!.includes("CODE"));
+  const following = frame().split("\n").at(-1)!.includes("● follow");
+  await press(KEY.tab, 100); // to the chat
+  await press("\x1b[102;9u", 200); // Cmd+F, as terminals with the kitty keyboard protocol send it
+  check("Cmd+F (or Ctrl+F) from the chat opens the find bar in the code", await until(() => frame().includes("type to find") && frame().split("\n").at(-1)!.includes("CODE")));
+  check("and doesn't also toggle follow mode (f)", frame().split("\n").at(-1)!.includes("● follow") === following);
+  await press(KEY.esc, 200);
 });
 
 console.log("Follow along");
@@ -1073,16 +1079,27 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("a folder that isn't there is refused", await until(() => frame().includes("No such folder")));
 });
 
-console.log("Zooming in on the code");
+console.log("Zooming the code panel");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const chatAt = () => frame().split("\n")[2]!.indexOf("Chat");
-  const before = chatAt();
-  await type("/zoom");
+  const treeEnd = () => frame().split("\n")[1]!.indexOf("┐");
+  const before = { chat: chatAt(), tree: treeEnd() };
+  await type("/zoom in");
   await press(KEY.enter, 300);
-  check("/zoom gives the code the room (the files and chat shrink)", await until(() => chatAt() > before + 5 && frame().split("\n")[1]!.indexOf("┐") < 20));
-  await type("/zoom");
+  check("/zoom in makes the code panel bigger, the files and chat give up the room", await until(() => chatAt() > before.chat && treeEnd() < before.tree));
+  const zoomed = chatAt();
+  await press(KEY.tab, 100); // off the chat...
+  await press(KEY.tab, 100); // ...to the code
+  await press("-", 200);
+  await press("-", 200);
+  check("- with the code focused makes it smaller again, then smaller than normal", await until(() => chatAt() < before.chat));
+  await press("+", 200);
+  await press("+", 200);
+  check("+ makes it bigger", await until(() => chatAt() === zoomed));
+  await press("/", 100);
+  await type("zoom reset");
   await press(KEY.enter, 300);
-  check("/zoom again zooms back out", await until(() => chatAt() === before));
+  check("/zoom reset puts it back", await until(() => chatAt() === before.chat && treeEnd() === before.tree));
 });
 
 console.log("Show me how on another engine");

@@ -62,7 +62,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
   { name: "effort", args: "[fastest|fast|balanced|smarter|smartest]", description: "speed vs smarts: how hard the model thinks (cheaper + faster, or smarter)" },
   { name: "workspace", args: "[new <folder> | n]", description: "several projects in this window, a tab each in the header: open one, or switch" },
-  { name: "zoom", description: "zoom in on the code: the files and chat shrink so the code gets the room (again to zoom out; Z in the code)" },
+  { name: "zoom", args: "in|out|reset", description: "make the code panel bigger or smaller (+ and - with the code focused, = resets)" },
   { name: "now", description: "stop Nou and send your queued messages right away (or click them)" },
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },

@@ -6,6 +6,7 @@ import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
 import { foldRanges, highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines, unfoldedLines } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
+import { isFind } from "./keys.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
@@ -196,13 +197,13 @@ export const CodeView = memo(function CodeView({ showing, width, height, focused
     if (key.return || key.downArrow || (key.ctrl && input === "g")) return setFind((f) => f && { ...f, index: f.index + 1 });
     if (key.upArrow) return setFind((f) => f && { ...f, index: f.index - 1 });
     if (key.backspace || key.delete) return setFind((f) => f && { query: f.query.slice(0, -1), index: 0 });
-    if (key.ctrl && input === "f") return;
+    if (isFind(input, key)) return;
     if (input && !key.ctrl && !key.meta && input >= " ") setFind((f) => f && { query: f.query + input, index: 0 });
   }, { isActive: focused && !!find });
 
   useInput((input, key) => {
     if (find) return;
-    if (key.ctrl && input === "f" && !diff) return setFind({ query: "", index: 0 });
+    if (isFind(input, key) && !diff) return setFind({ query: "", index: 0 });
     if (key.upArrow || input === "k") setTop((t) => Math.max(0, Math.min(t, maxTop) - 1));
     else if (key.downArrow || input === "j") setTop((t) => Math.min(maxTop, t + 1));
     else if (key.pageUp) setTop((t) => Math.max(0, Math.min(t, maxTop) - rows));

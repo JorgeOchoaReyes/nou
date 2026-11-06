@@ -94,9 +94,9 @@ Every change is reviewed like a code review:
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
-| <kbd>Z</kbd> or `/zoom` | zoom in on the code: the files and chat shrink so the code gets the room; again to zoom out (for bigger text, use your terminal's zoom, Cmd/Ctrl and +) |
+| <kbd>+</kbd> / <kbd>-</kbd> (in the code) or `/zoom in` / `/zoom out` | make the code panel bigger or smaller, a step at a time: the files and chat give or take the room; <kbd>=</kbd> or `/zoom reset` puts it back (for bigger text, use your terminal's zoom, Cmd/Ctrl and +) |
 | <kbd>b</kbd> | back to the previous file (press again to flip back) |
-| <kbd>Ctrl</kbd>+<kbd>F</kbd> | find in the open file: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>Cmd</kbd>+<kbd>F</kbd> on a Mac, in terminals that report Cmd: Ghostty, kitty, WezTerm, iTerm2) | find in the open file, from any pane: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
 | 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, any tab's × to close it, ‹ › for ones that don't fit · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> or <kbd>Ctrl</kbd>+<kbd>W</kbd> close |
 | <kbd>Ctrl</kbd>+click | on a name in the code (or <kbd>Option</kbd>+click, or right-click): go to its definition; an imported name goes to its import, and the import's path opens that file |
 | <kbd>e</kbd> or a double-click | edit the open file (see the editor keys below) |

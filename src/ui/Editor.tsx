@@ -5,6 +5,7 @@ import type { AutoSave } from "../config/index.js";
 import type { Diagnostic } from "../diagnostics/index.js";
 import { highlightLines, sliceAnsi } from "./text.js";
 import { C, fileIcon } from "./theme.js";
+import { FIND_KEY, isFind } from "./keys.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
@@ -441,7 +442,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
       }
       if (prompt.kind === "find" && (key.downArrow || key.upArrow)) return find(prompt.text, key.upArrow);
       if (key.backspace || key.delete) return setPrompt({ ...prompt, text: prompt.text.slice(0, -1) });
-      if (key.ctrl && input === "f") return find(prompt.text);
+      if (isFind(input, key)) return find(prompt.text);
       if (input && !key.ctrl && !key.meta && (prompt.kind === "find" || /^\d+$/.test(input))) {
         const text = prompt.text + input;
         setPrompt({ ...prompt, text });
@@ -466,7 +467,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
     if (key.ctrl && input === "s") return save();
     if (key.ctrl && input === "z") return step(undo, redo);
     if (key.ctrl && input === "y") return step(redo, undo);
-    if (key.ctrl && input === "f") {
+    if (isFind(input, key)) {
       const word = selectedText(buf);
       return setPrompt({ kind: "find", text: word.includes("\n") ? "" : word });
     }
@@ -644,7 +645,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
       ? prompt.kind === "find" ? `Find: ${prompt.text}▏  Enter/↓ next · Shift+Enter/↑ previous · Esc close` : `Go to line: ${prompt.text}▏  Enter go · Esc cancel`
       : flash ?? (cursorProblem
         ? `${SEVERITY_STYLE[cursorProblem.severity].icon} ${cursorProblem.message} (${cursorProblem.source})`
-        : `Ln ${buf.row + 1}, Col ${buf.col + 1}${sel ? `  (${selectedCount} selected · Ctrl+C copy · Ctrl+X cut)` : ""}${dirty ? "  ● modified" : ""}   Ctrl+F find · Ctrl+/ comment · Esc done`);
+        : `Ln ${buf.row + 1}, Col ${buf.col + 1}${sel ? `  (${selectedCount} selected · Ctrl+C copy · Ctrl+X cut)` : ""}${dirty ? "  ● modified" : ""}   ${FIND_KEY} find · Ctrl+/ comment · Esc done`);
   const statusColor = guideStatus && !confirmExit && !prompt ? (progress < 0 ? C.red : C.accent2) : confirmExit ? C.red : prompt ? C.accent : flash ? C.green : cursorProblem ? SEVERITY_STYLE[cursorProblem.severity].color : C.dim;
   const hoverLines = hover ? hover.split("\n").filter((l) => l.trim()).slice(0, 6) : [];
   const cursorVisible = buf.row >= v.top && buf.row < v.top + rows;
