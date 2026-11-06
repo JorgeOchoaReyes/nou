@@ -21,7 +21,7 @@ type Props = {
 type Row = { kind: "file"; file: string; errors: number; warnings: number } | { kind: "problem"; d: Diagnostic };
 
 export const SEVERITY_STYLE = {
-  error: { icon: "✖", color: C.red },
+  error: { icon: "✗", color: C.red },
   warning: { icon: "▲", color: C.yellow },
   info: { icon: "ℹ", color: C.accent },
 } as const;
@@ -77,7 +77,7 @@ export function ProblemsView({ width, height, focused, problems, checking, wheel
   const start = Math.max(0, Math.min(cursor - Math.floor(visibleRows / 2), rows.length - visibleRows));
   const title = (
     <>
-      {" "}<Text color={C.red}>✖ {errors}</Text>  <Text color={C.yellow}>▲ {warnings}</Text>  Problems
+      {" "}<Text color={C.red}>✗ {errors}</Text>  <Text color={C.yellow}>▲ {warnings}</Text>  Problems
       {checking.length > 0 && <Text color={C.accent2}>  {SPINNER[frame % SPINNER.length]} checking {checking.join(", ")}</Text>}
       <Text color={C.dim}>{onlyErrors ? "  (errors only)" : ""}</Text>
     </>
@@ -100,7 +100,7 @@ export function ProblemsView({ width, height, focused, problems, checking, wheel
             return (
               <Text key={`f${row.file}`} wrap="truncate-end" {...bg}>
                 <Text color={color}>{icon}</Text> <Text bold color={C.text}>{row.file}</Text>
-                {row.errors > 0 && <Text color={C.red}>  ✖ {row.errors}</Text>}
+                {row.errors > 0 && <Text color={C.red}>  ✗ {row.errors}</Text>}
                 {row.warnings > 0 && <Text color={C.yellow}>  ▲ {row.warnings}</Text>}
               </Text>
             );

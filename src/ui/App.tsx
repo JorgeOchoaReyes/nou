@@ -30,6 +30,7 @@ import { ENABLE as MOUSE_ON, useMouse } from "./mouse.js";
 import { connectToHost, isHosted, reopenAsWorkspaces, sendToHost, useWorkspaceTabs, workspaceTabs } from "../workspaces/client.js";
 import { PTY_PACKAGE, workspaceFolder } from "../workspaces/host.js";
 import { C, palette } from "./theme.js";
+import { FIND_KEY, isFind } from "./keys.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
@@ -113,7 +114,7 @@ Keys:
   m  mouse on/off (off: select text to copy; Shift+drag also works in most terminals)
   /  start a command from any pane
   e  edit open file (or double-click in the code)  v  diff (git / Nou / session)  f  follow mode
-  Ctrl+F  find in the open file (Enter/↓ next, ↑ previous)
+  ${FIND_KEY}  find in the open file (Enter/↓ next, ↑ previous)
   b  back to the previous file (Ctrl+P lists recent files first)   [ ]  previous/next tab · x close tab
   Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
@@ -122,7 +123,7 @@ Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-
 In the editor:
   Shift+arrows / mouse drag select · Ctrl+A all · Ctrl+C/X/V copy/cut/paste · Esc clear selection or leave
   Ctrl+←/→ word · Ctrl+Backspace or Ctrl+W delete word · Ctrl+Home/End file start/end
-  Ctrl+F find · Ctrl+L go to line · Ctrl+/ comment · Ctrl+D duplicate line · Alt+↑/↓ move line
+  ${FIND_KEY} find · Ctrl+L go to line · Ctrl+/ comment · Ctrl+D duplicate line · Alt+↑/↓ move line
   Tab/Shift+Tab indent/outdent · Ctrl+S save · Ctrl+Z/Y undo/redo · Ctrl+K info · Ctrl+G go to definition`;
 
 /** A callback that keeps one identity across renders but always runs the latest code, so memoized panes don't re-render for it. */
@@ -191,6 +192,13 @@ export function App({ initialModel, permContext, resume }: Props) {
    */
   const [tour, setTour] = useState<{ stops: TourStop[]; at: number } | null>(null);
   const tourFound = useRef<TourStop[] | null>(null);
+  /** The files on /showme's tour and which of its places are in each, for the file tree. */
+  const tourFiles = useMemo(() => {
+    if (!tour) return null;
+    const map = new Map<string, number[]>();
+    tour.stops.forEach((s, i) => map.set(s.file, [...(map.get(s.file) ?? []), i + 1]));
+    return map;
+  }, [tour]);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -285,7 +293,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** Bumped to open the code view's find bar from outside it (the palette, the status bar). */
   const [findRequest, setFindRequest] = useState(0);
   const startFind = () => {
-    if (!openFile) return info("Open a file first (Ctrl+P), then Ctrl+F searches it.");
+    if (!openFile) return info(`Open a file first (Ctrl+P), then ${FIND_KEY} searches it.`);
     setDiffMode("off");
     setEditing(false);
     setCodePanel("code");
@@ -300,6 +308,12 @@ export function App({ initialModel, permContext, resume }: Props) {
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0, heights: { tree: 0, code: 0, chat: 0 } as Record<Dock, number>, game: null as Rect | null, terminal: null as Rect | null });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
   const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
+  /**
+   * How far the code panel is zoomed (+ and - in the code, /zoom in|out): each step makes it a few columns
+   * wider (taken from the files and chat) or narrower (given to them). 0 is the normal layout.
+   */
+  const [codeZoom, setCodeZoom] = useState(0);
+  const zoomCode = (by: number) => setCodeZoom((z) => (by === 0 ? 0 : Math.max(-6, Math.min(8, z + by))));
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
@@ -1428,6 +1442,14 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (showEditor && focus === "code") return; // the editor owns the keyboard
     if (focus === "code" && codeFinding.current) return; // so does the find bar
     if (focus === "game" || focus === "terminal") return; // and the Games panel and the terminal
+    // Cmd+F (Mac) or Ctrl+F from the files or the chat: find in the open file (the code view takes it itself
+    // when it has the keyboard). Other Cmd+letters aren't Nou's: a plain letter is, so Cmd+F never also
+    // toggles follow mode (f).
+    if (isFind(input, key)) {
+      if (focus !== "code") startFind();
+      return;
+    }
+    if (key.super) return;
     if (key.tab && key.shift) return cycleAutoMode();
     if (key.tab && focus === "chat" && chatMenuOpen.current) return; // Tab completes the command
     if (key.tab) {
@@ -1461,8 +1483,11 @@ export function App({ initialModel, permContext, resume }: Props) {
       const step = input === ">" ? 2 : -2;
       updateSettings({ paneWidths: moveBorder(focus === "tree" ? "tree" : "chat", (focus === "tree" ? treeWidth - 1 : treeWidth + codeWidth) + step) });
     } else if (input === "=") {
+      setCodeZoom(0);
       setPaneWidths(null);
       updateSettings({ paneWidths: null });
+    } else if ((input === "+" || input === "-") && focus === "code") {
+      zoomCode(input === "+" ? 1 : -1);
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
@@ -1540,7 +1565,7 @@ ${snippet}
     }
     if (action) return info("Usage: /mcp, /mcp add <name> <command|url>, /mcp add browser, /mcp remove <name>, /mcp import, /mcp reconnect", "error");
     const list = mcpRef.current!.status();
-    const mark = { ready: "●", connecting: "◌", failed: "✖", off: "○" };
+    const mark = { ready: "●", connecting: "◌", failed: "✗", off: "○" };
     const lines = list.map((x) => `  ${mark[x.state]} ${x.name.padEnd(16)} ${x.state === "ready" ? `${x.tools} tools` : x.state}${x.scope === "project" ? " · this project" : ""}${x.error ? ` · ${x.error}` : ""}`);
     const others = findOtherMcpServers().filter((f) => !list.some((x) => x.name === f.name));
     return info([
@@ -1575,7 +1600,7 @@ ${snippet}
     const lines = allPlugins.map((p) =>
       p.scope === "starter"
         ? `  + ${p.id.padEnd(16)} ${p.plugin?.description ?? ""}`
-        : `  ${mark[trustState(p, settings)]} ${p.id.padEnd(16)} ${p.scope}${p.error ? ` · ✖ ${p.error}` : ""}`);
+        : `  ${mark[trustState(p, settings)]} ${p.id.padEnd(16)} ${p.scope}${p.error ? ` · ✗ ${p.error}` : ""}`);
     return info(`Plugins (● on, ○ off, + starter you can add with /plugins add <name>):\n${lines.join("\n")}\nWrite your own: /plugins new <name>`);
   };
 
@@ -1716,6 +1741,11 @@ ${snippet}
       return toggleTerminal();
     case "redraw":
       return redraw();
+    case "zoom":
+      if (/^(in|\+|bigger)$/.test(arg)) return zoomCode(1);
+      if (/^(out|-|smaller)$/.test(arg)) return zoomCode(-1);
+      if (/^(reset|0|off)$/.test(arg)) return zoomCode(0);
+      return info("/zoom in makes the code panel bigger, /zoom out smaller, /zoom reset puts it back (or + and - with the code focused, = to reset). The files and chat give or take the room. For bigger text, use your terminal's own zoom (Cmd/Ctrl and +).");
     case "workspace":
     case "workspaces":
     case "ws":
@@ -1856,7 +1886,7 @@ ${snippet}
     stops = (stops ?? []).filter((s) => existsSync(s.file));
     if (!stops.length) return;
     const list = stops.map((s, i) => `${i + 1}. ${s.file}:${s.line}${s.end > s.line ? `-${s.end}` : ""}${s.note ? ` · ${s.note}` : ""}`).join("\n");
-    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}):\n${list}`);
+    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}; /showme stop clears the highlights):\n${list}`);
     setTour({ stops, at: 0 });
   }, [busy]);
   // Each place: open it in the code view with its lines highlighted.
@@ -1868,9 +1898,12 @@ ${snippet}
   /** /showme <question>: explains it and opens the places in the code; /showme next|back|stop steps through them. */
   const showPlaces = (arg: string) => {
     const words = arg.trim();
-    if (/^(stop|end|done)$/.test(words)) {
+    if (/^(stop|end|done|clear)$/.test(words)) {
+      // Done looking: the highlighted lines go back to plain code.
       setTour(null);
-      return info(tour ? "Done showing." : "Nothing is being shown.");
+      const highlighted = !!focusLine?.to;
+      setFocusLine((f) => (f?.to !== undefined ? null : f));
+      return info(tour || highlighted ? "Done showing: the highlights are cleared." : "Nothing is being shown.");
     }
     if (/^(next|back|prev|previous)$/.test(words)) {
       if (!tour) return info("Nothing is being shown. Ask with /showme <question>, e.g. /showme where do we check the login?");
@@ -2113,8 +2146,16 @@ ${snippet}
   }
 
   const height = Math.max(10, rows - 2);
-  const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
-  const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
+  const baseTree = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
+  const baseChat = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - baseTree - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
+  // Zooming the code panel: each step moves a few columns between it and the files and chat, as far as their
+  // minimums (zooming in) or its own (zooming out) allow.
+  const zoomCols = codeZoom * Math.max(4, Math.round(columns * 0.06));
+  const spare = { tree: baseTree - MIN_TREE, chat: baseChat - MIN_CHAT };
+  const taken = zoomCols > 0 ? Math.min(zoomCols, spare.tree + spare.chat) : -Math.min(-zoomCols, Math.max(0, columns - baseTree - baseChat - MIN_CODE));
+  const fromTree = zoomCols > 0 ? Math.round(taken * (spare.tree / Math.max(1, spare.tree + spare.chat))) : Math.round(taken / 2);
+  const treeWidth = baseTree - fromTree;
+  const chatWidth = baseChat - (taken - fromTree);
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
   const tabKey = tabs.length && openFile ? `${tabs.join("\0")}|${openFile}|${tabsWidth(codeWidth)}|${showEditor && !!editorState?.dirty}` : "";
   if (tabStripCache.current?.key !== tabKey) {
@@ -2234,7 +2275,7 @@ ${snippet}
   // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
-    { title: "Find in the open file", keys: "Ctrl+F", run: startFind },
+    { title: "Find in the open file", keys: FIND_KEY, run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
     { title: "Cancel your last message (edit it and resend)", keys: "/cancel", run: cancelLast },
@@ -2302,7 +2343,7 @@ ${snippet}
       : showEditor && focus === "code"
         ? editorState?.selection
           ? [["Ctrl+C", "copy"], ["Ctrl+X", "cut"], ["Tab", "indent"], ["Ctrl+/", "comment"], ["Esc", "deselect"]]
-          : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], ["Ctrl+F", "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
+          : [["Esc", "done"], ["Ctrl+S", settings.autoSave === "off" ? "save" : "save (auto-save on)"], ["Ctrl+Z", "undo"], ["Shift+→", "select"], [FIND_KEY, "find"], ["Ctrl+/", "comment"], ["/help", "all keys"]]
         : focus === "chat"
           ? chatMenu ? [["↑↓", "choose"], ["Tab", "complete"], ["Enter", "run"], ["Esc", "close"]]
             : busy
@@ -2312,9 +2353,9 @@ ${snippet}
             ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
             : diff
               ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-              : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+              : [["double-click/e", "edit"], [FIND_KEY, "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const followChip = follow ? ` ◉ follow${followLag ? ` ·${followLag}` : ""} ` : " ○ follow ";
-  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
+  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✗ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
     used += hints[i]![0].length + hints[i]![1].length + 4;
@@ -2327,7 +2368,7 @@ ${snippet}
     y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
     "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
-    e: startEditing, "double-click/e": startEditing, b: goBack, "Ctrl+F": showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    e: startEditing, "double-click/e": startEditing, b: goBack, [FIND_KEY]: showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
     Esc: busy ? stop : diff && !showEditor ? () => setDiffMode("off") : undefined,
   };
@@ -2340,7 +2381,7 @@ ${snippet}
     };
     add(` ${autoMode} `.length, () => cycleAutoMode());
     add(followChip.length, () => setFollow((f) => !f));
-    add(` ✖ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
+    add(` ✗ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
     if (checking.length) add(3 + checking.join(", ").length);
     if (!exitArmed) {
       shownHints.forEach(([key, label], i) => {
@@ -2350,7 +2391,7 @@ ${snippet}
     }
   }
   const modelLabel = agentRef.current!.id === "nou" ? describe(choice) : `${engineInfo(agentRef.current!.id).label} · ${engineInfo(agentRef.current!.id).model(choice)}`;
-  clickable.current = { status: zones, modelFrom: columns - (" ⌂ LOCAL ".length + ` ${modelLabel} `.length + 1) };
+  clickable.current = { status: zones, modelFrom: columns - (" LOCAL ".length + ` ${modelLabel} `.length + 1) };
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -2365,6 +2406,7 @@ ${snippet}
           version={treeVersion}
           changed={edited}
           working={working}
+          {...(tourFiles ? { showing: tourFiles } : {})}
           git={git}
           problemCounts={problemCounts}
           wheel={wheelFor("tree")}
@@ -2411,6 +2453,7 @@ ${snippet}
           />
         ) : (
           <CodeView
+            {...(tour && tour.stops[tour.at]?.file === openFile && !diff ? { showing: `${tour.at + 1}/${tour.stops.length}` } : {})}
             {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={heights.code}
@@ -2467,7 +2510,7 @@ ${snippet}
           <Text backgroundColor={mode.color} color={C.onBadge} bold>{` ${mode.label} `}</Text>
           <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
           <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{followChip}</Text>
-          <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
+          <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✗ ${totals.errors}`}</Text>
           <Text backgroundColor={C.panel} color={totals.warnings ? C.yellow : C.dim}>{` ▲ ${totals.warnings} `}</Text>
           {checking.length > 0 && <Text color={C.accent2}> ⟳ {checking.join(", ")}</Text>}
           {exitArmed

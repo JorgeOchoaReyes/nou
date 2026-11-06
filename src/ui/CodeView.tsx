@@ -6,10 +6,13 @@ import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { artWork } from "../util/index.js";
 import { foldRanges, highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines, unfoldedLines } from "./text.js";
 import { C, fileIcon, gradient } from "./theme.js";
+import { isFind } from "./keys.js";
 import { Pane } from "./Pane.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
 type Props = {
+  /** /showme is showing a place in this file: "2/6". The pane takes /showme's color, as it takes green for editing. */
+  showing?: string;
   width: number;
   height: number;
   focused: boolean;
@@ -61,7 +64,7 @@ const CURRENT_MATCH = ["\x1b[43m\x1b[30m", "\x1b[49m\x1b[39m"] as const;
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest, foldClick, foldAll }: Props) {
+export const CodeView = memo(function CodeView({ showing, width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest, foldClick, foldAll }: Props) {
   const [top, setTop] = useState(0);
   // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
@@ -194,13 +197,13 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     if (key.return || key.downArrow || (key.ctrl && input === "g")) return setFind((f) => f && { ...f, index: f.index + 1 });
     if (key.upArrow) return setFind((f) => f && { ...f, index: f.index - 1 });
     if (key.backspace || key.delete) return setFind((f) => f && { query: f.query.slice(0, -1), index: 0 });
-    if (key.ctrl && input === "f") return;
+    if (isFind(input, key)) return;
     if (input && !key.ctrl && !key.meta && input >= " ") setFind((f) => f && { query: f.query + input, index: 0 });
   }, { isActive: focused && !!find });
 
   useInput((input, key) => {
     if (find) return;
-    if (key.ctrl && input === "f" && !diff) return setFind({ query: "", index: 0 });
+    if (isFind(input, key) && !diff) return setFind({ query: "", index: 0 });
     if (key.upArrow || input === "k") setTop((t) => Math.max(0, Math.min(t, maxTop) - 1));
     else if (key.downArrow || input === "j") setTop((t) => Math.min(maxTop, t + 1));
     else if (key.pageUp) setTop((t) => Math.max(0, Math.min(t, maxTop) - rows));
@@ -304,14 +307,15 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
   const title = (
     <>
       {tabs ?? <>{" "}<Text color={color}>{icon}</Text> {filePath}</>}
-      {errorCount > 0 && <Text color={C.red}>  ✖ {errorCount}</Text>}
+      {showing && <>{"  "}<Text backgroundColor={C.accent2} color={C.onBadge} bold>{` ◉ SHOWING ${showing} `}</Text></>}
+      {errorCount > 0 && <Text color={C.red}>  ✗ {errorCount}</Text>}
       {warningCount > 0 && <Text color={C.yellow}>  ▲ {warningCount}</Text>}
       {/* After the tabs, as room allows (the row is cut, not wrapped, when they fill it). */}
       <Text color={C.dim}>{scroll}{total > rows ? ` (${percent}%)` : ""}{focused && titleRoom >= EDIT_HINT.length ? EDIT_HINT : ""}</Text>
     </>
   );
   return (
-    <Pane title={title} width={width} height={height} focused={focused}>
+    <Pane title={title} width={width} height={height} focused={focused} {...(showing ? { accent: C.accent2 } : {})}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={inner} flexShrink={0}>
           {shown.slice(start, start + rows).map((n) => {

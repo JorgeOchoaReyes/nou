@@ -115,7 +115,7 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
   } else {
     const style = entry.kind === "tool"
       ? { icon: "⚙", color: C.dim }
-      : entry.kind === "error" ? { icon: "✖", color: C.red } : { icon: "ℹ", color: C.accent };
+      : entry.kind === "error" ? { icon: "✗", color: C.red } : { icon: "ℹ", color: C.accent };
     wrap(entry.text, inner - 4).forEach((line, i) => {
       const spans = links && entry.kind !== "user" ? linkFileRefs(linkUrls([{ text: ` ${line}` }]), isProjectFile) : [];
       out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color, ...(spans.some((sp) => sp.link) ? { spans } : {}) });

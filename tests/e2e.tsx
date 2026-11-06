@@ -417,6 +417,11 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press("b", 400);
   check("pressing b again flips back", frame().includes("long.ts"));
   check("the header stays on one line", frame().split("\n")[1]!.startsWith("┌") || frame().split("\n")[1]!.startsWith("╭"));
+  // Some terminals (Ghostty among them) draw symbols that are also emoji (☁ ⬆ ✖...) two columns wide. Counted
+  // that way, no row may be wider than the terminal, or it wraps and shifts the whole screen a row.
+  const { default: stringWidth } = await import("string-width");
+  const widest = Math.max(...frame().split("\n").map((l) => stringWidth(l) + [...l].filter((c) => /\p{Extended_Pictographic}/u.test(c) && stringWidth(c) === 1).length));
+  check("no row can wrap, even with symbols drawn as wide emoji", widest <= 100);
 });
 
 console.log("Finding things for you: open_file and clickable paths");
@@ -637,6 +642,12 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("letters go to the find bar, not to shortcuts", !frame().includes("EDITING"));
   await press(KEY.esc, 200);
   check("Esc closes it and stays in the code", !frame().includes("⌕") && frame().split("\n").at(-1)!.includes("CODE"));
+  const following = frame().split("\n").at(-1)!.includes("● follow");
+  await press(KEY.tab, 100); // to the chat
+  await press("\x1b[102;9u", 200); // Cmd+F, as terminals with the kitty keyboard protocol send it
+  check("Cmd+F (or Ctrl+F) from the chat opens the find bar in the code", await until(() => frame().includes("type to find") && frame().split("\n").at(-1)!.includes("CODE")));
+  check("and doesn't also toggle follow mode (f)", frame().split("\n").at(-1)!.includes("● follow") === following);
+  await press(KEY.esc, 200);
 });
 
 console.log("Follow along");
@@ -1035,9 +1046,14 @@ console.log("Show me where (explain with the code open)");
     await type("/showme where do we check the login?");
     await press(KEY.enter, 300);
     check("/showme lists the places and opens the first, highlighted", await until(() => frame().includes("2 places") && frame().includes("auth.ts:1-4") && frame().includes("export function login")));
+    check("the code view says it's showing, in /showme's color (like editing has its own)", frame().includes("SHOWING 1/2"));
+    check("the file tree marks the file with its places", /auth\.ts\s+◉1,2/.test(frame()));
     await type("/showme next");
     await press(KEY.enter, 300);
     check("/showme next opens the next place", await until(() => frame().includes("2 of 2") && frame().includes("check is the real rule")));
+    await type("/showme stop");
+    await press(KEY.enter, 300);
+    check("/showme stop clears the highlights", await until(() => frame().includes("highlights are cleared")) && frame().includes("return user.length") && !frame().includes("SHOWING") && !frame().includes("◉1,2"));
   });
   // Engines that can't call show_places end their reply with a nou-show block: it opens the same way and
   // is taken out of the reply.
@@ -1061,6 +1077,29 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("/workspace new no-such-folder-here");
   await press(KEY.enter, 300);
   check("a folder that isn't there is refused", await until(() => frame().includes("No such folder")));
+});
+
+console.log("Zooming the code panel");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  const chatAt = () => frame().split("\n")[2]!.indexOf("Chat");
+  const treeEnd = () => frame().split("\n")[1]!.indexOf("┐");
+  const before = { chat: chatAt(), tree: treeEnd() };
+  await type("/zoom in");
+  await press(KEY.enter, 300);
+  check("/zoom in makes the code panel bigger, the files and chat give up the room", await until(() => chatAt() > before.chat && treeEnd() < before.tree));
+  const zoomed = chatAt();
+  await press(KEY.tab, 100); // off the chat...
+  await press(KEY.tab, 100); // ...to the code
+  await press("-", 200);
+  await press("-", 200);
+  check("- with the code focused makes it smaller again, then smaller than normal", await until(() => chatAt() < before.chat));
+  await press("+", 200);
+  await press("+", 200);
+  check("+ makes it bigger", await until(() => chatAt() === zoomed));
+  await press("/", 100);
+  await type("zoom reset");
+  await press(KEY.enter, 300);
+  check("/zoom reset puts it back", await until(() => chatAt() === before.chat && treeEnd() === before.tree));
 });
 
 console.log("Show me how on another engine");
@@ -1125,7 +1164,7 @@ console.log("Fixing a rejected key");
   await session(resolveModel("litellm:gateway-model"), async ({ press, type, frame }) => {
     await type("hello");
     await press(KEY.enter, 1500);
-    check("a message that fails on a rejected key opens the provider's key form, saying why", frame().includes("Connect LiteLLM") && frame().includes("✖") && frame().includes("401"));
+    check("a message that fails on a rejected key opens the provider's key form, saying why", frame().includes("Connect LiteLLM") && frame().includes("✗") && frame().includes("401"));
     await press(KEY.esc, 300);
     await press(KEY.esc, 300);
     check("Esc comes back to the chat, which says what happened", frame().includes("Opened its") && frame().includes("◆ Chat"));
