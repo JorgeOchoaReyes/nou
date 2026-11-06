@@ -15,6 +15,11 @@ import { App } from "./ui/App.js";
 import { installFastOutput } from "./ui/fast-output.js";
 import { RENDER_OPTIONS } from "./ui/render-options.js";
 import { setScreenClear } from "./ui/redraw.js";
+import { detectBackground } from "./ui/background.js";
+import { setPalette } from "./ui/theme.js";
+import { runHost, workspaceFolder } from "./workspaces/host.js";
+import { pendingWorkspaces } from "./workspaces/client.js";
+import { spawn } from "child_process";
 import { appendFileSync, mkdirSync } from "fs";
 import path from "path";
 import { format } from "util";
@@ -47,6 +52,7 @@ const HELP = `nou ${currentVersion()}: an AI coding assistant for your terminal
 Usage:
   nou              open Nou in the current folder
   nou --continue   pick up the last conversation in this folder (-c)
+  nou --workspaces . ../api   several projects in one window, a tab each
   nou --resume     list earlier conversations here to pick one up (-r)
   nou update       update to the latest version
   nou --version    print the version
@@ -74,6 +80,24 @@ async function main() {
     if (await installUpdate(latest)) process.exit(0);
     if (process.platform !== "win32") console.log("If that was a permissions error, run: sudo npm install -g nou-cli@latest");
     process.exit(1);
+  }
+
+  // nou --workspaces <folder>... : several Nous in this window, a tab each (see src/workspaces).
+  const wsAt = args.indexOf("--workspaces");
+  if (wsAt >= 0) {
+    if (!process.stdin.isTTY) {
+      console.error("Nou needs an interactive terminal.");
+      process.exit(1);
+    }
+    const asked = args.slice(wsAt + 1).filter((a) => !a.startsWith("-"));
+    const folders = asked.map((f) => workspaceFolder(f, process.cwd())).filter((f): f is string => !!f);
+    const missing = asked.filter((f) => !workspaceFolder(f, process.cwd()));
+    if (missing.length) console.error(`Not a folder, so not opened: ${missing.join(", ")}`);
+    const uiTheme = loadSettings().uiTheme;
+    // Every workspace uses the colors found for this terminal (they can't ask it themselves from the background).
+    process.env.NOU_PALETTE = uiTheme === "dark" || uiTheme === "light" ? uiTheme : (await detectBackground()) ?? "dark";
+    const firstArgs = args.includes("--continue") || args.includes("-c") ? ["--continue"] : [];
+    process.exit(await runHost(folders.length ? folders : [process.cwd()], firstArgs));
   }
 
   if (!process.stdin.isTTY) {
@@ -140,6 +164,11 @@ async function main() {
 
   const permContext = await loadPermanentContext();
 
+  // Colors that are readable on this terminal: a dark or a light set, from the setting or the background.
+  const uiTheme = loadSettings().uiTheme;
+  const fromHost = process.env.NOU_PALETTE;
+  setPalette(uiTheme === "dark" || uiTheme === "light" ? uiTheme : fromHost === "light" || fromHost === "dark" ? fromHost : (await detectBackground()) ?? "dark");
+
   await installFastOutput();
   // While Nou is on screen, anything a library prints (console.log, warnings, stderr) goes to a log file:
   // written into the terminal, it would scroll the screen out from under the mouse.
@@ -148,6 +177,14 @@ async function main() {
   setScreenClear(() => app.clear());
   await app.waitUntilExit();
   restoreOutput();
+  // /workspace new: Nou closes and opens again as a workspaces window, this conversation in the first tab.
+  const folders = pendingWorkspaces();
+  if (folders) {
+    lsp.stopAll();
+    const child = spawn(process.execPath, [process.argv[1]!, "--workspaces", ...folders, "--continue"], { stdio: "inherit" });
+    child.on("close", (code) => process.exit(code ?? 0));
+    return;
+  }
   lsp.stopAll();
 
   p.outro(chalk.cyan("Bye bye!"));

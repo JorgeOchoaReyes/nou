@@ -242,7 +242,7 @@ export const CodeView = memo(function CodeView({ width, height, focused, filePat
     const title = (
       <>
         {" "}<Text color={color}>{icon}</Text> {diff.path}{"  "}
-        <Text backgroundColor={pending ? C.yellow : C.accent2} color="black">{pending ? (diff.isNew ? " NEW FILE " : " PROPOSED ") : ` ${diffLabel.toUpperCase()} `}</Text>
+        <Text backgroundColor={pending ? C.yellow : C.accent2} color={C.onBadge}>{pending ? (diff.isNew ? " NEW FILE " : " PROPOSED ") : ` ${diffLabel.toUpperCase()} `}</Text>
         {"  "}<Text color={C.green}>+{added}</Text> <Text color={C.red}>-{removed}</Text>
         {diffNote ? <Text color={diffNote.startsWith("✓") ? C.green : C.red}>{"  "}{diffNote}</Text> : null}
         <Text color={C.dim}>{pending ? "   y accept · n reject" : "   n/N next/prev change"}{scroll}</Text>

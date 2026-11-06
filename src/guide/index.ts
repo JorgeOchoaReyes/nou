@@ -115,3 +115,96 @@ export function guideProgress(typed: string, expected: string): number {
   }
   return j;
 }
+
+/**
+ * "Show me": the agent explains something and points at where it happens. Each stop is a range of a file
+ * with what it shows; Nou opens them in the code view, highlighted, one after another.
+ */
+export type TourStop = {
+  /** Project-relative path. */
+  file: string;
+  /** First and last line of the part to look at (1-based). */
+  line: number;
+  end: number;
+  /** What this part does, for the explanation: a sentence or two. */
+  note: string;
+};
+
+export const SHOW_PLACES = "show_places";
+
+/** Stops as the model gave them, kept when usable: a file in the project and a line. */
+export function tidyStops(raw: unknown): TourStop[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((s: any) => typeof s?.file === "string" && s.file.trim() && Number(s.line) >= 1)
+    .map((s: any) => {
+      const line = Math.floor(Number(s.line));
+      const end = Math.max(line, Math.floor(Number(s.end_line ?? s.end ?? line)) || line);
+      return { file: path.relative(process.cwd(), path.resolve(s.file)).split(path.sep).join("/"), line, end, note: String(s.note ?? s.why ?? "").trim() };
+    })
+    .filter((s) => !s.file.startsWith(".."))
+    .slice(0, 12);
+}
+
+/** The tool Nou's own engine points at places with. `onStops` gets them. */
+export function showPlacesTool(onStops: (stops: TourStop[]) => void): ExtraTool {
+  return {
+    definition: {
+      name: SHOW_PLACES,
+      description: "When you explain how something works or where something happens in this project, point at the exact places so the user sees them: Nou opens each one in their code view, highlighted, in the order given. Call it once, after you've read the code, with the parts that matter (usually 1-6).",
+      parameters: {
+        type: "object",
+        properties: {
+          places: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                file: { type: "string", description: "Project-relative path." },
+                line: { type: "number", description: "First line of the part (1-based)." },
+                end_line: { type: "number", description: "Last line of the part." },
+                note: { type: "string", description: "One or two plain sentences: what this part does, in terms of the explanation." },
+              },
+              required: ["file", "line", "end_line", "note"],
+            },
+          },
+        },
+        required: ["places"],
+      },
+    },
+    readOnly: true,
+    source: "nou",
+    run: (args) => {
+      const stops = tidyStops(args.places);
+      if (!stops.length) return "No usable places: each needs a project file and a line. Call show_places again.";
+      onStops(stops);
+      return `Shown to the user: ${stops.length} place${stops.length > 1 ? "s" : ""}, opening the first. Now explain in the order of the places, naming each as path:line.`;
+    },
+  };
+}
+
+/** The fenced block other engines (which can't call Nou's tools) list their places in. */
+const SHOW_BLOCK = /```nou-show\s*\n([\s\S]*?)\n```/;
+
+/**
+ * For Claude Code, Codex and pi, which can't call show_places: how to point at places, added to what they
+ * know about the project, so explaining "where does X happen" opens the files on any engine.
+ */
+export const SHOW_PLACES_NOTE = "When you explain how something in this project works or where something happens, end your reply with the exact places, in the order to read them, as a JSON array in a fenced block marked nou-show. The user's editor opens each one highlighted:\n```nou-show\n[{\"file\": \"src/auth/session.ts\", \"line\": 40, \"end_line\": 58, \"note\": \"Checks the token and refuses expired ones.\"}]\n```\nOnly for places in this project you've actually read; leave it out when nothing needs showing.";
+
+/** The message /showme sends: explain, and point at the places. */
+export function explainPrompt(question: string, withTool: boolean): string {
+  const how = withTool ? `call ${SHOW_PLACES} with them` : "list them in a nou-show block at the end, as described";
+  return `[Show me] ${question}\n\nExplain this to me and show me where it happens in the code. Don't change any files. Read what you need, find the exact places (file and line range) that matter, ${how}, in the order to read them, and explain in that order, naming each as path:line.`;
+}
+
+/** Places from a reply's ```nou-show block, and the reply without it; null when there's none. */
+export function stopsFromReply(text: string): { stops: TourStop[]; rest: string } | null {
+  const m = SHOW_BLOCK.exec(text);
+  if (!m) return null;
+  try {
+    const stops = tidyStops(JSON.parse(m[1]!));
+    return { stops, rest: text.replace(m[0], "").trim() };
+  } catch {
+    return null;
+  }
+}

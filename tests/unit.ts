@@ -1072,5 +1072,82 @@ console.log("Speed vs smarts");
   check("an unknown level isn't", effortFrom("turbo") === null);
 }
 
+console.log("Readable colors on dark and light terminals");
+{
+  const { paletteFromColorFgBg, paletteFromOsc11 } = await import("../src/ui/background.js");
+  const { C, setPalette } = await import("../src/ui/theme.js");
+  check("COLORFGBG says which background it is", paletteFromColorFgBg("15;0") === "dark" && paletteFromColorFgBg("0;15") === "light" && paletteFromColorFgBg("0;default;15") === "light" && paletteFromColorFgBg(undefined) === null);
+  check("the terminal's answer to OSC 11 is read, any digit count", paletteFromOsc11("\x1b]11;rgb:ffff/ffff/ffff\x1b\\") === "light" && paletteFromOsc11("\x1b]11;rgb:1a/1b/26\x07") === "dark" && paletteFromOsc11("junk") === null);
+  const lum = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const contrast = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+  const readable = (bgs: string[]) => (["text", "dim", "accent", "accent2", "green", "yellow", "red", "cyan", "orange"] as const).every((k) => bgs.every((bg) => contrast(C[k], bg) >= 4.5));
+  check("on dark terminals every text color is at least 4.5:1 (dim hints too)", readable(["#1a1b26", "#000000", "#1e1e1e", "#282c34"]));
+  setPalette("light");
+  check("on light terminals too", readable(["#ffffff", "#fafafa"]) && C.text !== "#c0caf5");
+  setPalette("dark");
+  check("and back to dark", C.text === "#c0caf5");
+}
+
+console.log("Mistyped commands");
+{
+  const { closestCommand, runsWhileBusy } = await import("../src/ui/commands.js");
+  const names = ["terminal", "resume", "undo", "help", "clear", "close", "games"];
+  check("the same letters in another order find the command", closestCommand("termnial", names) === "terminal" && closestCommand("TERMINLA", names) === "terminal");
+  check("so does one letter off", closestCommand("termial", names) === "terminal" && closestCommand("terminall", names) === "terminal" && closestCommand("resme", names) === "resume");
+  check("nothing when it could be two commands, or isn't close", closestCommand("closr", ["close", "clear", "closer"]) === null && closestCommand("banana", names) === null && closestCommand("ud", names) === null);
+  check("a typo of a screen-only command runs while Nou works", runsWhileBusy("/termnial") && !runsWhileBusy("/claer"));
+}
+
+console.log("Show me where");
+{
+  const { tidyStops, stopsFromReply, explainPrompt } = await import("../src/guide/index.js");
+  const stops = tidyStops([{ file: "src/a.ts", line: 3, end_line: 9, note: "here" }, { file: "b.ts", line: 5 }, { file: "../outside.ts", line: 1 }, { line: 2 }, { file: "c.ts", line: 0 }]);
+  check("places keep a project file and a line range", stops.length === 2 && stops[0]!.end === 9 && stops[1]!.end === 5 && stops[1]!.note === "");
+  const parsed = stopsFromReply("Look here.\n\n```nou-show\n[{\"file\": \"a.ts\", \"line\": 2, \"end_line\": 4, \"note\": \"x\"}]\n```");
+  check("a nou-show block is read and taken out of the reply", parsed?.stops[0]?.line === 2 && parsed.rest === "Look here.");
+  check("a reply without one has none", stopsFromReply("just text") === null);
+  check("other engines are asked for the block, Nou's for the tool", explainPrompt("q", false).includes("nou-show") && explainPrompt("q", true).includes("show_places"));
+}
+
+console.log("Workspaces (several Nous in one window)");
+{
+  const { runHost, workspaceFolder } = await import("../src/workspaces/host.js");
+  const { headerZones } = await import("../src/ui/Header.js");
+  const a = mkdtempSync(path.join(os.tmpdir(), "nou-ws-a-"));
+  const b = mkdtempSync(path.join(os.tmpdir(), "nou-ws-b-"));
+  check("a workspace folder must exist ('~' and relative paths work)", workspaceFolder(path.basename(b), path.dirname(b)) === b && workspaceFolder("nope-not-here", a) === null && workspaceFolder("~", a) === os.homedir());
+  let out = "";
+  const write = process.stdout.write.bind(process.stdout);
+  (process.stdout as any).write = (chunk: any) => ((out += String(chunk)), true);
+  const type = (text: string) => process.stdin.emit("data", Buffer.from(text));
+  const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-workspace.mjs");
+  const finished = runHost([a, b], [], [process.execPath, fake]);
+  const waitFor = async (re: RegExp) => {
+    for (let i = 0; i < 100 && !re.test(out); i++) await new Promise((r) => setTimeout(r, 50));
+    return re.test(out);
+  };
+  const nameA = path.basename(a);
+  const nameB = path.basename(b);
+  const opened = await waitFor(new RegExp(`\\[redraw 2 ${nameB}\\]`));
+  out = "";
+  type("s1\r");
+  const switched = await waitFor(new RegExp(`\\[redraw 1 ${nameA}\\]`));
+  out = "";
+  type("q\r");
+  const closed = await waitFor(new RegExp(`\\[redraw 2 ${nameB}\\]`));
+  type("q\r");
+  const code = await Promise.race([finished, new Promise((r) => setTimeout(() => r("hung"), 5000))]);
+  (process.stdout as any).write = write;
+  check("the last folder opened is on screen, drawn in full", opened);
+  check("switching shows the other workspace, which redraws", switched);
+  check("closing one brings the other back", closed);
+  check("closing the last one ends the window", code === 0);
+  const zones = headerZones([{ id: "1", name: "app", folder: "/x/app", busy: false, active: true }, { id: "2", name: "api", folder: "/x/api", busy: true, active: false }]);
+  check("header clicks find each tab and the +", zones.length === 3 && zones[0]!.tab === 0 && zones[1]!.tab === 1 && zones[2]!.tab === "new" && zones[1]!.from === zones[0]!.to + 1);
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);

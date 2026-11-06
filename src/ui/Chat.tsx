@@ -156,7 +156,11 @@ export function chatTabZones(tabs: ChatTabItem[]): { zones: { id: string; from: 
 }
 const tabText = (t: ChatTabItem) => ` ${t.state === "busy" ? "● " : t.state === "waiting" ? "! " : ""}${t.label} `;
 
-export type ChatSelect = { row: number; col: number; kind: "press" | "drag" | "release"; nonce: number };
+/** `word`: a double-click (the word, path or link under it); `block`: a triple-click (the whole paragraph). */
+export type ChatSelect = { row: number; col: number; kind: "press" | "drag" | "release" | "word" | "block"; nonce: number };
+
+/** Characters of a word for a double-click: paths and web addresses come whole (src/a.ts, https://x.io/y). */
+const WORD_CHAR = /[\p{L}\p{N}_.\-/@:~#%?=&+]/u;
 type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
@@ -306,6 +310,32 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   useEffect(() => {
     if (!select) return;
     const at: Point = { line: Math.max(0, Math.min(lines.length - 1, firstShown + select.row)), col: Math.max(0, select.col) };
+    if (select.kind === "word" || select.kind === "block") {
+      anchor.current = null; // the button coming up doesn't change it
+      let range: { from: Point; to: Point };
+      if (select.kind === "word") {
+        const chars = [...lineText(lines[at.line] ?? { text: "" })];
+        if (!WORD_CHAR.test(chars[at.col] ?? "")) return;
+        let start = at.col;
+        let end = at.col;
+        while (start > 0 && WORD_CHAR.test(chars[start - 1]!)) start--;
+        while (end < chars.length - 1 && WORD_CHAR.test(chars[end + 1]!)) end++;
+        // Punctuation that ends a sentence isn't part of the word.
+        while (end > start && /[.,:;?!]/.test(chars[end]!)) end--;
+        range = { from: { line: at.line, col: start }, to: { line: at.line, col: end } };
+      } else {
+        const blank = (i: number) => !lineText(lines[i] ?? { text: "" }).trim();
+        if (blank(at.line)) return;
+        let first = at.line;
+        let last = at.line;
+        while (first > 0 && !blank(first - 1)) first--;
+        while (last < lines.length - 1 && !blank(last + 1)) last++;
+        range = { from: { line: first, col: 0 }, to: { line: last, col: Infinity } };
+      }
+      setSelection(range);
+      copySelection(range);
+      return;
+    }
     if (select.kind === "press") {
       anchor.current = at;
       setSelection(null);
@@ -321,16 +351,20 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     setSelection(range);
     if (select.kind !== "release") return;
     anchor.current = null;
-    if (!range) return;
+    if (range) copySelection(range);
+  }, [select?.nonce]);
+  /** Copies the selected text (and says so for a moment). Columns count characters, as the screen shows them. */
+  const copySelection = (range: { from: Point; to: Point }) => {
     const text = lines.slice(range.from.line, range.to.line + 1).map((line, i, all) => {
-      const t = lineText(line);
-      return t.slice(i === 0 ? range.from.col : 0, i === all.length - 1 ? range.to.col + 1 : undefined).trimEnd();
+      const t = [...lineText(line)];
+      return t.slice(i === 0 ? range.from.col : 0, i === all.length - 1 && Number.isFinite(range.to.col) ? range.to.col + 1 : undefined).join("").trimEnd();
     }).join("\n");
+    if (!text) return;
     void copyToClipboard(text).then((ok) => {
       setFlash(ok ? `Copied ${text.split("\n").length > 1 ? `${text.split("\n").length} lines` : "it"} ✓` : "Can't copy: press m, then select");
       setTimeout(() => setFlash(null), 2000);
     });
-  }, [select?.nonce]);
+  };
   // Typing or new messages leave the selection be; a new conversation clears it.
   useEffect(() => {
     if (!entries.length) setSelection(null);

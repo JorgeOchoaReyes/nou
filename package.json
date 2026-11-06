@@ -1,6 +1,6 @@
 {
   "name": "nou-cli",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "Nou: an IDE-style AI coding assistant for your terminal. Local (Ollama, LM Studio) and cloud (Claude, OpenAI, Gemini...) models, live diffs, git-aware, built-in editor.",
   "type": "module",
   "bin": {
@@ -61,6 +61,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@lydell/node-pty": "1.2.0-beta.18",
     "@types/node": "^22.20.5",
     "@types/react": "^19.3.0",
     "eslint": "^10.2.0",

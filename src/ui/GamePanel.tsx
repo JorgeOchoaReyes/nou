@@ -148,7 +148,7 @@ export const GamePanel = memo(function GamePanel({ width, height, focused, movin
             if (view.over && i === Math.floor(FIELD.height / 2)) {
               const msg = ` ${view.over}${newBest ? " New best!" : ""} `;
               const left = Math.max(0, Math.floor((FIELD.width - msg.length) / 2));
-              return <Text key={i}>{line.slice(0, left)}<Text backgroundColor={C.yellow} color="black" bold>{msg}</Text>{line.slice(left + msg.length)}</Text>;
+              return <Text key={i}>{line.slice(0, left)}<Text backgroundColor={C.yellow} color={C.onBadge} bold>{msg}</Text>{line.slice(left + msg.length)}</Text>;
             }
             return <Row key={i} line={line} colors={playing.game.colors} />;
           })}

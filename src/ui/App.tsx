@@ -26,21 +26,23 @@ import { changedLines, lineCounts, loadFallbackHighlighter, splitLines, type Fil
 import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useFocusReporting, useTerminalFocused } from "./focus.js";
-import { useMouse } from "./mouse.js";
-import { C } from "./theme.js";
+import { ENABLE as MOUSE_ON, useMouse } from "./mouse.js";
+import { connectToHost, isHosted, reopenAsWorkspaces, sendToHost, useWorkspaceTabs, workspaceTabs } from "../workspaces/client.js";
+import { PTY_PACKAGE, workspaceFolder } from "../workspaces/host.js";
+import { C, palette } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
-import { SLASH_COMMANDS, runsWhileBusy, type SlashCommand } from "./commands.js";
+import { SLASH_COMMANDS, closestCommand, onlyChangesScreen, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
-import { Header } from "./Header.js";
+import { Header, headerZones } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GameGuard, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
 import { forgetScreen } from "./redraw.js";
-import { showMePrompt, showStepsTool, stepsFromReply, type GuideStep } from "../guide/index.js";
+import { SHOW_PLACES_NOTE, explainPrompt, showMePrompt, showPlacesTool, showStepsTool, stepsFromReply, stopsFromReply, type GuideStep, type TourStop } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -116,7 +118,7 @@ Keys:
   Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
-Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select
+Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select · in the chat: double-click copies a word, triple-click a paragraph
 In the editor:
   Shift+arrows / mouse drag select · Ctrl+A all · Ctrl+C/X/V copy/cut/paste · Esc clear selection or leave
   Ctrl+←/→ word · Ctrl+Backspace or Ctrl+W delete word · Ctrl+Home/End file start/end
@@ -143,7 +145,9 @@ export function App({ initialModel, permContext, resume }: Props) {
   const { columns, rows } = useWindowSize();
 
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
-  setCodeTheme(settings.codeTheme); // before anything below highlights code
+  // Before anything below highlights code. One Dark's light text is unreadable on a light terminal: there the
+  // default switches to GitHub Light (any other theme you picked stays).
+  setCodeTheme(palette() === "light" && settings.codeTheme === "one-dark" ? "github-light" : settings.codeTheme);
   const [view, setView] = useState<"main" | "settings">("main");
   const [connectTo, setConnectTo] = useState<Provider | undefined>();
   /** Why settings were opened for you (a request failed on the provider's setup). */
@@ -169,7 +173,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** The tab strip, kept while nothing in it changes: a new one would redraw the whole code view on every scroll. */
   const tabStripCache = useRef<{ key: string; strip: ReactNode } | null>(null);
   /**
-   * "Show me how" (/showme): the steps Nou found, and the one you're on. While Nou looks for them,
+   * "Teach me" (/teach): the steps Nou found, and the one you're on. While Nou looks for them,
    * `guideAsk` holds what you asked (and its edits are turned down: you're doing the typing).
    */
   const [guide, setGuide] = useState<{ steps: GuideStep[]; at: number; task: string } | null>(null);
@@ -179,6 +183,12 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** /resume just listed the conversations: the next message, if it's a number, picks one. */
   const pickingResume = useRef(false);
   const guideFound = useRef<GuideStep[] | null>(null);
+  /**
+   * "Show me" (/showme, or any explanation that points at code): the places the agent pointed at, and the
+   * one open in the code view. `tourFound` holds what Nou's engine passed to show_places during a turn.
+   */
+  const [tour, setTour] = useState<{ stops: TourStop[]; at: number } | null>(null);
+  const tourFound = useRef<TourStop[] | null>(null);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -293,7 +303,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
-  const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastClick = useRef<{ x: number; y: number; time: number; count: number } | null>(null);
   const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
@@ -575,7 +585,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext)].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), ...mcpRef.current!.tools()], effort: settings.effort };
+    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext), SHOW_PLACES_NOTE].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), showPlacesTool((stops) => (tourFound.current = stops)), ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
@@ -609,6 +619,24 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (openFile && diffMode === "off" && !editing) setContent(readText(openFile));
   }, [busy]);
 
+  /**
+   * Workspaces: when this Nou is one tab of several, the host says when it's on screen again (redraw all of
+   * it, and turn the mouse and focus reports back on, which another workspace may have turned off on its way
+   * out), and hears when it's busy, for the tab's ● .
+   */
+  const tabsOfWorkspaces = useWorkspaceTabs();
+  useEffect(() => {
+    connectToHost({
+      redraw: () => {
+        process.stdout.write(`\x1b[?1049h${settings.mouse ? MOUSE_ON : ""}\x1b[?1004h`);
+        redraw();
+      },
+      error: (text) => info(text, "error"),
+    });
+  }, []);
+  useEffect(() => {
+    sendToHost({ type: "state", busy: !!busy });
+  }, [!!busy]);
   const updateSettings = (patch: Partial<SettingsType>) => setSettings(saveSettings(patch));
 
   const switchModel = (next: ModelChoice) => {
@@ -1019,6 +1047,12 @@ export function App({ initialModel, permContext, resume }: Props) {
       return;
     }
     if (event.kind === "click" && !approval && event.y === 0 && event.x >= clickable.current.modelFrom) return setView("settings");
+    // Workspace tabs in the header: click one to switch to it, + to open another.
+    if (event.kind === "click" && event.y === 0) {
+      const zone = headerZones(workspaceTabs()).find((z) => event.x >= z.from && event.x < z.to);
+      if (zone?.tab === "new") return typeCommand("/workspace new ");
+      if (typeof zone?.tab === "number") return void sendToHost({ type: "switch", index: zone.tab });
+    }
     if (event.kind === "click" && event.y === paneHeight + 1) return clickable.current.status.find((z) => event.x >= z.from && event.x < z.to)?.run();
     if (event.y < 1 || event.y > paneHeight) return; // header or status bar
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
@@ -1082,8 +1116,13 @@ export function App({ initialModel, permContext, resume }: Props) {
     }
     // Two clicks in the same spot within half a second are a double-click.
     const last = lastClick.current;
-    const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
-    lastClick.current = double ? null : { x: event.x, y: event.y, time: Date.now() };
+    const again = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
+    const count = again ? last!.count + 1 : 1;
+    const double = count === 2;
+    // The chat counts a third click too (the whole paragraph); elsewhere a double-click starts over.
+    lastClick.current = double && pane !== "chat" ? null : count >= 3 ? null : { x: event.x, y: event.y, time: Date.now(), count };
+    // In the chat: a double-click selects and copies the word (or path, or link), a triple-click the paragraph.
+    if (pane === "chat" && event.y >= 3 && count >= 2) chatAt(event.x, event.y, count === 2 ? "word" : "block");
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
       // As the code view counts them (a last empty line after the final newline isn't shown).
       const digits = String(splitLines(content).length).length;
@@ -1663,6 +1702,10 @@ ${snippet}
       return toggleTerminal();
     case "redraw":
       return redraw();
+    case "workspace":
+    case "workspaces":
+    case "ws":
+      return void workspaceCommand(arg);
     case "fold":
     case "unfold":
       if (!openFile) return info("Open a file first: /fold folds every function and block in it, /unfold opens them.", "error");
@@ -1679,7 +1722,9 @@ ${snippet}
       return switchChatTab(chatTabs[n - 1]!);
     }
     case "showme":
+      return showPlaces(rest.join(" "));
     case "teach":
+    case "teachme":
       return showMe(rest.join(" "));
     case "resume":
       return resumeConversation(rest[0] ?? "");
@@ -1701,6 +1746,11 @@ ${snippet}
         }
         return;
       }
+      // A typo of a command ("/termnial"): one that only changes the screen just runs; others are suggested,
+      // so a slip never clears or undoes anything.
+      const meant = closestCommand(command ?? "", [...SLASH_COMMANDS.map((c) => c.name), ...activePlugins.flatMap(({ plugin }) => plugin!.commands?.map((c) => c.name) ?? [])]);
+      if (meant && onlyChangesScreen(meant)) return runCommand(`/${meant}${arg ? ` ${arg}` : ""}`);
+      if (meant) return info(`Unknown command /${command}. Did you mean /${meant}${arg ? ` ${arg}` : ""}?`, "error");
       return info(`Unknown command /${command}. Type /help.`, "error");
     }
     }
@@ -1777,6 +1827,50 @@ ${snippet}
     setQueued(queued.slice(take));
     send(queued.slice(0, take).join("\n\n"));
   }, [busy, approval, queued]);
+  // When a reply points at places in the code (Nou's engine with show_places, the others with a ```nou-show
+  // block, which is taken out of the reply), the first one opens highlighted and the rest are listed.
+  useEffect(() => {
+    if (busy || guideAsk.current) return;
+    let stops = tourFound.current;
+    tourFound.current = null;
+    const reply = [...entries].reverse().find((e) => e.kind === "assistant");
+    const found = reply && stopsFromReply(reply.text);
+    if (found) {
+      stops = stops?.length ? stops : found.stops;
+      setEntries((prev) => prev.map((e) => (e === reply ? { ...e, text: found.rest || "Here's where." } : e)));
+    }
+    stops = (stops ?? []).filter((s) => existsSync(s.file));
+    if (!stops.length) return;
+    const list = stops.map((s, i) => `${i + 1}. ${s.file}:${s.line}${s.end > s.line ? `-${s.end}` : ""}${s.note ? ` · ${s.note}` : ""}`).join("\n");
+    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}):\n${list}`);
+    setTour({ stops, at: 0 });
+  }, [busy]);
+  // Each place: open it in the code view with its lines highlighted.
+  useEffect(() => {
+    const stop = tour?.stops[tour.at];
+    if (!stop) return;
+    openRef({ path: stop.file, line: stop.line, ...(stop.end > stop.line ? { to: stop.end } : {}) });
+  }, [tour?.at, tour?.stops]);
+  /** /showme <question>: explains it and opens the places in the code; /showme next|back|stop steps through them. */
+  const showPlaces = (arg: string) => {
+    const words = arg.trim();
+    if (/^(stop|end|done)$/.test(words)) {
+      setTour(null);
+      return info(tour ? "Done showing." : "Nothing is being shown.");
+    }
+    if (/^(next|back|prev|previous)$/.test(words)) {
+      if (!tour) return info("Nothing is being shown. Ask with /showme <question>, e.g. /showme where do we check the login?");
+      const at = tour.at + (words === "next" ? 1 : -1);
+      if (at < 0 || at >= tour.stops.length) return info(at < 0 ? "That's the first place." : "That was the last place.");
+      const stop = tour.stops[at]!;
+      info(`📍 ${at + 1} of ${tour.stops.length}: ${stop.file}:${stop.line}${stop.end > stop.line ? `-${stop.end}` : ""}${stop.note ? ` · ${stop.note}` : ""}`);
+      return setTour({ ...tour, at });
+    }
+    if (!words) return info("Ask how something works or where it happens, and Nou explains it and opens the places in the code, highlighted: /showme where do we check the login? (To be walked through typing a change yourself: /teach.)");
+    if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
+    setTour(null);
+    send(explainPrompt(words, agentRef.current!.id === "nou"));
+  };
   // When Nou has finished looking, the guide starts at its first step.
   useEffect(() => {
     if (busy || !guideAsk.current) return;
@@ -1800,8 +1894,8 @@ ${snippet}
       undoCheckpoints([...edited].reverse() as ReturnType<typeof timeline.lastTurn>);
       info("It edited files anyway, so those changes were put back: you're the one typing them.");
     }
-    if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /showme add a --verbose flag to the CLI", "error");
-    info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /showme next skips a step, /showme stop ends it.`);
+    if (!steps?.length) return info("Nou didn't come back with steps to show. Try asking more specifically, e.g. /teach add a --verbose flag to the CLI", "error");
+    info(`Here's how, in ${steps.length} step${steps.length > 1 ? "s" : ""}. You type each one in the editor: the dim text ahead of the cursor is what goes next, and Tab fills in the rest of a line. /teach next skips a step, /teach stop ends it.`);
     setGuide({ steps, at: 0, task });
   }, [busy]);
   // Each step: open its file in the editor where the code goes, and say what to type and why.
@@ -1833,7 +1927,7 @@ ${snippet}
       setGuide(null);
     }
   });
-  /** /showme <what you want>: Nou finds where the change goes and walks you through typing it. */
+  /** /teach <what you want>: Nou finds where the change goes and walks you through typing it. */
   const showMe = (arg: string) => {
     const words = arg.trim();
     if (words === "stop" || words === "end") {
@@ -1849,8 +1943,8 @@ ${snippet}
       return setGuide({ ...guide, at: guide.at + 1 });
     }
     if (!words) {
-      if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /showme next skips it, /showme stop ends it.`);
-      return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /showme add a --verbose flag to the CLI");
+      if (guide) return info(`On step ${guide.at + 1} of ${guide.steps.length}: ${guideStep!.file}:${guideStep!.line}. /teach next skips it, /teach stop ends it.`);
+      return info("Tell Nou what you want to do and it shows you how, step by step, for you to type: /teach add a --verbose flag to the CLI");
     }
     if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
     setGuide(null);
@@ -2042,6 +2136,42 @@ ${snippet}
     forgetScreen();
     setRepaint((n) => n + 1);
   }
+  /** /workspace: list them, `new [folder]` opens one, a number switches. */
+  async function workspaceCommand(arg: string) {
+    const [sub, ...more] = arg.split(/\s+/);
+    const tabs = workspaceTabs();
+    if (!sub) {
+      if (!isHosted()) return info(`One workspace: ${path.basename(process.cwd())}. /workspace new <folder> opens another in this window, a tab each in the header (click + there too).`);
+      return info(`Workspaces: ${tabs.map((t, i) => `${i + 1}. ${t.name}${t.busy ? " (working)" : ""}${t.active ? " ← here" : ""}`).join("  ")}. /workspace <n> switches, /workspace new <folder> opens one, /quit closes this one.`);
+    }
+    if (/^\d+$/.test(sub)) {
+      const n = Number(sub);
+      if (!isHosted() || !tabs[n - 1]) return info(`There's no workspace ${n}. /workspace lists them.`, "error");
+      return void sendToHost({ type: "switch", index: n - 1 });
+    }
+    if (sub !== "new") return info("Try /workspace new <folder>, /workspace <n> or /workspace.", "error");
+    const wanted = more.join(" ");
+    if (isHosted()) return void sendToHost({ type: "new", folder: wanted });
+    const folder = workspaceFolder(wanted, process.cwd());
+    if (!folder) return info(`No such folder: ${wanted}`, "error");
+    if (busy) return info("Wait for the current reply to finish (or press Esc) first: Nou reopens as a workspaces window.", "error");
+    // The pseudo-terminals workspaces run in come from a small native package, installed once like an engine.
+    const pty = { id: "nou" as const, label: "workspaces", description: "", approvals: "before" as const, model: () => "", package: PTY_PACKAGE };
+    if (!isInstalled(pty)) {
+      info(`Workspaces need ${PTY_PACKAGE} (pseudo-terminals, prebuilt for macOS, Linux and Windows). Installing it once into ~/.nou/engines...`);
+      setBusy("Installing workspaces support (npm)...");
+      try {
+        await installEngine(pty, (line) => setBusy(`Installing workspaces support (npm): ${line.slice(0, 70)}`));
+      } catch (error: any) {
+        return info(`Couldn't install ${PTY_PACKAGE}: ${error.message}`, "error");
+      } finally {
+        setBusy(null);
+      }
+    }
+    if (draft.current && settings.autoSave !== "off") saveFromEditor(draft.current.text, draft.current.path);
+    reopenAsWorkspaces([process.cwd(), folder]);
+    exit();
+  }
   /** Opens the terminal panel (starting its shell the first time) and gives it the keyboard, or closes it. */
   function toggleTerminal(open = !termOpen) {
     shellRef.current ??= new Shell(() => setTermVersion((v) => v + 1));
@@ -2210,7 +2340,7 @@ ${snippet}
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} />
+      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} tabs={tabsOfWorkspaces} />
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}
@@ -2320,7 +2450,7 @@ ${snippet}
       </Box>
       <Box>
         <Text wrap="truncate-end">
-          <Text backgroundColor={mode.color} color="black" bold>{` ${mode.label} `}</Text>
+          <Text backgroundColor={mode.color} color={C.onBadge} bold>{` ${mode.label} `}</Text>
           <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
           <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{followChip}</Text>
           <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
@@ -2335,7 +2465,7 @@ ${snippet}
       </Box>
       {layout.current.terminal && shellRef.current && (
         <Box position="absolute" marginLeft={layout.current.terminal.x} marginTop={layout.current.terminal.y}>
-          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onResize={resizeTerminal} />
+          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onClose={() => toggleTerminal(false)} onResize={resizeTerminal} />
         </Box>
       )}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}

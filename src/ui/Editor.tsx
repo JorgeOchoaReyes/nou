@@ -650,7 +650,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
   const cursorVisible = buf.row >= v.top && buf.row < v.top + rows;
 
   return (
-    <Pane title={<>{tabs ?? <> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}</>}  <Text backgroundColor={C.green} color="black"> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
+    <Pane title={<>{tabs ?? <> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}</>}  <Text backgroundColor={C.green} color={C.onBadge}> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={width - 3} flexShrink={0}>
           {visible.map((line, i) => {
