@@ -61,6 +61,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "connect", args: "<provider>", description: "enter an API key (and URL) for a provider" },
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
   { name: "effort", args: "[fastest|fast|balanced|smarter|smartest]", description: "speed vs smarts: how hard the model thinks (cheaper + faster, or smarter)" },
+  { name: "workspace", args: "[new <folder> | n]", description: "several projects in this window, a tab each in the header: open one, or switch" },
   { name: "now", description: "stop Nou and send your queued messages right away (or click them)" },
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },

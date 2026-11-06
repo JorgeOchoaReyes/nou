@@ -26,7 +26,9 @@ import { changedLines, lineCounts, loadFallbackHighlighter, splitLines, type Fil
 import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useFocusReporting, useTerminalFocused } from "./focus.js";
-import { useMouse } from "./mouse.js";
+import { ENABLE as MOUSE_ON, useMouse } from "./mouse.js";
+import { connectToHost, isHosted, reopenAsWorkspaces, sendToHost, useWorkspaceTabs, workspaceTabs } from "../workspaces/client.js";
+import { PTY_PACKAGE, workspaceFolder } from "../workspaces/host.js";
 import { C, palette } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
@@ -35,7 +37,7 @@ import { SLASH_COMMANDS, closestCommand, onlyChangesScreen, runsWhileBusy, type 
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
-import { Header } from "./Header.js";
+import { Header, headerZones } from "./Header.js";
 import { Tabs, layoutTabs } from "./Tabs.js";
 import { GAME_PANEL, GameGuard, GamePanel } from "./GamePanel.js";
 import { Terminal } from "./Terminal.js";
@@ -617,6 +619,24 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (openFile && diffMode === "off" && !editing) setContent(readText(openFile));
   }, [busy]);
 
+  /**
+   * Workspaces: when this Nou is one tab of several, the host says when it's on screen again (redraw all of
+   * it, and turn the mouse and focus reports back on, which another workspace may have turned off on its way
+   * out), and hears when it's busy, for the tab's ● .
+   */
+  const tabsOfWorkspaces = useWorkspaceTabs();
+  useEffect(() => {
+    connectToHost({
+      redraw: () => {
+        process.stdout.write(`\x1b[?1049h${settings.mouse ? MOUSE_ON : ""}\x1b[?1004h`);
+        redraw();
+      },
+      error: (text) => info(text, "error"),
+    });
+  }, []);
+  useEffect(() => {
+    sendToHost({ type: "state", busy: !!busy });
+  }, [!!busy]);
   const updateSettings = (patch: Partial<SettingsType>) => setSettings(saveSettings(patch));
 
   const switchModel = (next: ModelChoice) => {
@@ -1027,6 +1047,12 @@ export function App({ initialModel, permContext, resume }: Props) {
       return;
     }
     if (event.kind === "click" && !approval && event.y === 0 && event.x >= clickable.current.modelFrom) return setView("settings");
+    // Workspace tabs in the header: click one to switch to it, + to open another.
+    if (event.kind === "click" && event.y === 0) {
+      const zone = headerZones(workspaceTabs()).find((z) => event.x >= z.from && event.x < z.to);
+      if (zone?.tab === "new") return typeCommand("/workspace new ");
+      if (typeof zone?.tab === "number") return void sendToHost({ type: "switch", index: zone.tab });
+    }
     if (event.kind === "click" && event.y === paneHeight + 1) return clickable.current.status.find((z) => event.x >= z.from && event.x < z.to)?.run();
     if (event.y < 1 || event.y > paneHeight) return; // header or status bar
     const pane: Focus = event.x < treeWidth ? "tree" : event.x < treeWidth + codeWidth ? "code" : "chat";
@@ -1676,6 +1702,10 @@ ${snippet}
       return toggleTerminal();
     case "redraw":
       return redraw();
+    case "workspace":
+    case "workspaces":
+    case "ws":
+      return void workspaceCommand(arg);
     case "fold":
     case "unfold":
       if (!openFile) return info("Open a file first: /fold folds every function and block in it, /unfold opens them.", "error");
@@ -2106,6 +2136,42 @@ ${snippet}
     forgetScreen();
     setRepaint((n) => n + 1);
   }
+  /** /workspace: list them, `new [folder]` opens one, a number switches. */
+  async function workspaceCommand(arg: string) {
+    const [sub, ...more] = arg.split(/\s+/);
+    const tabs = workspaceTabs();
+    if (!sub) {
+      if (!isHosted()) return info(`One workspace: ${path.basename(process.cwd())}. /workspace new <folder> opens another in this window, a tab each in the header (click + there too).`);
+      return info(`Workspaces: ${tabs.map((t, i) => `${i + 1}. ${t.name}${t.busy ? " (working)" : ""}${t.active ? " ← here" : ""}`).join("  ")}. /workspace <n> switches, /workspace new <folder> opens one, /quit closes this one.`);
+    }
+    if (/^\d+$/.test(sub)) {
+      const n = Number(sub);
+      if (!isHosted() || !tabs[n - 1]) return info(`There's no workspace ${n}. /workspace lists them.`, "error");
+      return void sendToHost({ type: "switch", index: n - 1 });
+    }
+    if (sub !== "new") return info("Try /workspace new <folder>, /workspace <n> or /workspace.", "error");
+    const wanted = more.join(" ");
+    if (isHosted()) return void sendToHost({ type: "new", folder: wanted });
+    const folder = workspaceFolder(wanted, process.cwd());
+    if (!folder) return info(`No such folder: ${wanted}`, "error");
+    if (busy) return info("Wait for the current reply to finish (or press Esc) first: Nou reopens as a workspaces window.", "error");
+    // The pseudo-terminals workspaces run in come from a small native package, installed once like an engine.
+    const pty = { id: "nou" as const, label: "workspaces", description: "", approvals: "before" as const, model: () => "", package: PTY_PACKAGE };
+    if (!isInstalled(pty)) {
+      info(`Workspaces need ${PTY_PACKAGE} (pseudo-terminals, prebuilt for macOS, Linux and Windows). Installing it once into ~/.nou/engines...`);
+      setBusy("Installing workspaces support (npm)...");
+      try {
+        await installEngine(pty, (line) => setBusy(`Installing workspaces support (npm): ${line.slice(0, 70)}`));
+      } catch (error: any) {
+        return info(`Couldn't install ${PTY_PACKAGE}: ${error.message}`, "error");
+      } finally {
+        setBusy(null);
+      }
+    }
+    if (draft.current && settings.autoSave !== "off") saveFromEditor(draft.current.text, draft.current.path);
+    reopenAsWorkspaces([process.cwd(), folder]);
+    exit();
+  }
   /** Opens the terminal panel (starting its shell the first time) and gives it the keyboard, or closes it. */
   function toggleTerminal(open = !termOpen) {
     shellRef.current ??= new Shell(() => setTermVersion((v) => v + 1));
@@ -2274,7 +2340,7 @@ ${snippet}
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} />
+      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} tabs={tabsOfWorkspaces} />
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}

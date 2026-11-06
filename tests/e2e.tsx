@@ -1045,6 +1045,18 @@ console.log("Show me where (explain with the code open)");
   });
 }
 
+console.log("Workspaces");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  const header = frame().split("\n")[0]!;
+  check("the header has a + for another workspace", /│\s+\S+ \+ /.test(header) || header.includes(" + "));
+  await press(click(header.indexOf(" + ") + 1, 0), 300);
+  check("clicking + starts /workspace new in the chat", await until(() => frame().includes("❯ /workspace new")));
+  await press("\x15", 50); // Ctrl+U clears the input
+  await type("/workspace new no-such-folder-here");
+  await press(KEY.enter, 300);
+  check("a folder that isn't there is refused", await until(() => frame().includes("No such folder")));
+});
+
 console.log("Show me how on another engine");
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {

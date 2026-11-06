@@ -1112,5 +1112,42 @@ console.log("Show me where");
   check("other engines are asked for the block, Nou's for the tool", explainPrompt("q", false).includes("nou-show") && explainPrompt("q", true).includes("show_places"));
 }
 
+console.log("Workspaces (several Nous in one window)");
+{
+  const { runHost, workspaceFolder } = await import("../src/workspaces/host.js");
+  const { headerZones } = await import("../src/ui/Header.js");
+  const a = mkdtempSync(path.join(os.tmpdir(), "nou-ws-a-"));
+  const b = mkdtempSync(path.join(os.tmpdir(), "nou-ws-b-"));
+  check("a workspace folder must exist ('~' and relative paths work)", workspaceFolder(path.basename(b), path.dirname(b)) === b && workspaceFolder("nope-not-here", a) === null && workspaceFolder("~", a) === os.homedir());
+  let out = "";
+  const write = process.stdout.write.bind(process.stdout);
+  (process.stdout as any).write = (chunk: any) => ((out += String(chunk)), true);
+  const type = (text: string) => process.stdin.emit("data", Buffer.from(text));
+  const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-workspace.mjs");
+  const finished = runHost([a, b], [], [process.execPath, fake]);
+  const waitFor = async (re: RegExp) => {
+    for (let i = 0; i < 100 && !re.test(out); i++) await new Promise((r) => setTimeout(r, 50));
+    return re.test(out);
+  };
+  const nameA = path.basename(a);
+  const nameB = path.basename(b);
+  const opened = await waitFor(new RegExp(`\\[redraw 2 ${nameB}\\]`));
+  out = "";
+  type("s1\r");
+  const switched = await waitFor(new RegExp(`\\[redraw 1 ${nameA}\\]`));
+  out = "";
+  type("q\r");
+  const closed = await waitFor(new RegExp(`\\[redraw 2 ${nameB}\\]`));
+  type("q\r");
+  const code = await Promise.race([finished, new Promise((r) => setTimeout(() => r("hung"), 5000))]);
+  (process.stdout as any).write = write;
+  check("the last folder opened is on screen, drawn in full", opened);
+  check("switching shows the other workspace, which redraws", switched);
+  check("closing one brings the other back", closed);
+  check("closing the last one ends the window", code === 0);
+  const zones = headerZones([{ id: "1", name: "app", folder: "/x/app", busy: false, active: true }, { id: "2", name: "api", folder: "/x/api", busy: true, active: false }]);
+  check("header clicks find each tab and the +", zones.length === 3 && zones[0]!.tab === 0 && zones[1]!.tab === 1 && zones[2]!.tab === "new" && zones[1]!.from === zones[0]!.to + 1);
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);
