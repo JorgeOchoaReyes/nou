@@ -962,10 +962,15 @@ console.log("Resuming a conversation");
     await press(KEY.enter, 300);
     await type("/resume");
     await press(KEY.enter, 300);
-    check("/resume lists earlier conversations here", frame().includes("just now)"));
+    check("/resume opens a picker of earlier conversations here", await until(() => frame().includes("1. remember the word pineapple") && frame().includes("just now")));
     await type("1");
     await press(KEY.enter, 400);
     check("then typing its number picks it back up (not sent to the agent)", await until(() => frame().includes("Resumed") && frame().includes("pineapple")) && !frame().includes("answer 2"));
+    await type("/resume");
+    await press(KEY.enter, 300);
+    await until(() => frame().includes("Pick a conversation") || frame().includes("1. "));
+    await press(KEY.esc, 200);
+    check("Esc closes the picker", !frame().includes("Enter run"));
   });
   // A new run of Nou in the same folder.
   await session({ provider: model, model: "fake" }, async ({ press, type, frame }) => {
