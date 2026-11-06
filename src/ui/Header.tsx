@@ -45,14 +45,29 @@ type Props = {
   tabs?: WorkspaceTab[];
 };
 
+/**
+ * The header's right side: the update notice (when there's room), where the model runs and which. Plain
+ * characters only: symbols that are also emoji (☁, ⬆) are drawn two columns wide by some terminals.
+ */
+const rightSide = (width: number, model: string, local: boolean, update: string | null) => ({
+  notice: update && width >= 110 ? `↑ v${update} available · run \`nou update\`  ` : "",
+  badge: ` ${local ? "LOCAL" : "CLOUD"} `,
+  model: ` ${model} `,
+});
+
 export const Header = memo(function Header({ width, branch, changes, model, local, busy, update, tabs = [] }: Props) {
   // The spinner stops while Nou's window is in the background: nobody sees it, and each frame is a redraw.
   const windowFocused = useTerminalFocused();
   const { frame } = useAnimation({ interval: ANIMATION_MS, isActive: !!busy && windowFocused });
   const project = path.basename(process.cwd());
+  const right = rightSide(width, model, local, update);
+  const rightWidth = right.notice.length + right.badge.length + right.model.length + 1;
   return (
     <Box width={width} justifyContent="space-between">
-      <Box flexShrink={1} flexGrow={1} overflow="hidden">
+      {/* The left side gets what the right leaves, less a margin, and is cut short: the row never wraps, even
+          where the terminal draws a symbol or two wider than counted (a wrapped header pushes the whole screen
+          down a row, and every click lands a row off). */}
+      <Box width={Math.max(0, width - rightWidth - 4)} flexShrink={0} overflow="hidden">
         <Text wrap="truncate-end">
           {" "}
           {gradient("◆ NOU", busy ? frame : 0).map((g, i) => <Text key={i} bold color={g.color}>{g.ch}</Text>)}
@@ -79,9 +94,9 @@ export const Header = memo(function Header({ width, branch, changes, model, loca
       {/* The model badge never wraps or shrinks: the left side gives way instead. */}
       <Box flexShrink={0}>
         <Text wrap="truncate-end">
-          {update && width >= 110 && <Text color={C.green} bold>⬆ v{update} available · run `nou update`  </Text>}
-          <Text backgroundColor={local ? C.green : C.accent2} color={C.onBadge} bold>{` ${local ? "⌂ LOCAL" : "☁ CLOUD"} `}</Text>
-          <Text backgroundColor={C.panel} color={C.text}>{` ${model} `}</Text>
+          {right.notice && <Text color={C.green} bold>{right.notice}</Text>}
+          <Text backgroundColor={local ? C.green : C.accent2} color={C.onBadge} bold>{right.badge}</Text>
+          <Text backgroundColor={C.panel} color={C.text}>{right.model}</Text>
           {" "}
         </Text>
       </Box>

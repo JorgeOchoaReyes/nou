@@ -235,7 +235,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
           </Box>
           <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={column === "models" ? C.accent : C.dim} paddingX={1}>
             <Text color={C.dim} bold>MODELS · {provider.label}</Text>
-            {reason ? <Text color={C.red} wrap="wrap">✖ {reason}</Text> : null}
+            {reason ? <Text color={C.red} wrap="wrap">✗ {reason}</Text> : null}
             {connecting && provider.connect ? (
               <>
                 <Text color={C.accent2} bold>Connect {provider.label}</Text>
@@ -429,7 +429,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
               {state === "changed"
                 ? <Text color={C.yellow} wrap="truncate-end">    ⚠ Changed since you enabled it. Review the code, then press Enter to enable again.</Text>
                 : p.error
-                  ? <Text color={C.red} wrap="truncate-end">    ✖ {p.error}</Text>
+                  ? <Text color={C.red} wrap="truncate-end">    ✗ {p.error}</Text>
                   : <Text color={C.dim} wrap="truncate-end">    {p.plugin?.description ?? (enabled ? "" : "Enable to load it.")}</Text>}
             </Box>
           );

@@ -417,6 +417,11 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press("b", 400);
   check("pressing b again flips back", frame().includes("long.ts"));
   check("the header stays on one line", frame().split("\n")[1]!.startsWith("┌") || frame().split("\n")[1]!.startsWith("╭"));
+  // Some terminals (Ghostty among them) draw symbols that are also emoji (☁ ⬆ ✖...) two columns wide. Counted
+  // that way, no row may be wider than the terminal, or it wraps and shifts the whole screen a row.
+  const { default: stringWidth } = await import("string-width");
+  const widest = Math.max(...frame().split("\n").map((l) => stringWidth(l) + [...l].filter((c) => /\p{Extended_Pictographic}/u.test(c) && stringWidth(c) === 1).length));
+  check("no row can wrap, even with symbols drawn as wide emoji", widest <= 100);
 });
 
 console.log("Finding things for you: open_file and clickable paths");
@@ -1035,9 +1040,14 @@ console.log("Show me where (explain with the code open)");
     await type("/showme where do we check the login?");
     await press(KEY.enter, 300);
     check("/showme lists the places and opens the first, highlighted", await until(() => frame().includes("2 places") && frame().includes("auth.ts:1-4") && frame().includes("export function login")));
+    check("the code view says it's showing, in /showme's color (like editing has its own)", frame().includes("SHOWING 1/2"));
+    check("the file tree marks the file with its places", /auth\.ts\s+◉1,2/.test(frame()));
     await type("/showme next");
     await press(KEY.enter, 300);
     check("/showme next opens the next place", await until(() => frame().includes("2 of 2") && frame().includes("check is the real rule")));
+    await type("/showme stop");
+    await press(KEY.enter, 300);
+    check("/showme stop clears the highlights", await until(() => frame().includes("highlights are cleared")) && frame().includes("return user.length") && !frame().includes("SHOWING") && !frame().includes("◉1,2"));
   });
   // Engines that can't call show_places end their reply with a nou-show block: it opens the same way and
   // is taken out of the reply.
@@ -1061,6 +1071,18 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("/workspace new no-such-folder-here");
   await press(KEY.enter, 300);
   check("a folder that isn't there is refused", await until(() => frame().includes("No such folder")));
+});
+
+console.log("Zooming in on the code");
+await session(resolveModel("ollama"), async ({ press, type, frame }) => {
+  const chatAt = () => frame().split("\n")[2]!.indexOf("Chat");
+  const before = chatAt();
+  await type("/zoom");
+  await press(KEY.enter, 300);
+  check("/zoom gives the code the room (the files and chat shrink)", await until(() => chatAt() > before + 5 && frame().split("\n")[1]!.indexOf("┐") < 20));
+  await type("/zoom");
+  await press(KEY.enter, 300);
+  check("/zoom again zooms back out", await until(() => chatAt() === before));
 });
 
 console.log("Show me how on another engine");
@@ -1125,7 +1147,7 @@ console.log("Fixing a rejected key");
   await session(resolveModel("litellm:gateway-model"), async ({ press, type, frame }) => {
     await type("hello");
     await press(KEY.enter, 1500);
-    check("a message that fails on a rejected key opens the provider's key form, saying why", frame().includes("Connect LiteLLM") && frame().includes("✖") && frame().includes("401"));
+    check("a message that fails on a rejected key opens the provider's key form, saying why", frame().includes("Connect LiteLLM") && frame().includes("✗") && frame().includes("401"));
     await press(KEY.esc, 300);
     await press(KEY.esc, 300);
     check("Esc comes back to the chat, which says what happened", frame().includes("Opened its") && frame().includes("◆ Chat"));

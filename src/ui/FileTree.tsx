@@ -24,6 +24,8 @@ type Props = {
   changed: Set<string>;
   /** Files Nou is editing right now (this turn): their names shimmer. */
   working?: Set<string>;
+  /** Files /showme is showing, with which of its places are in each: marked in /showme's color. */
+  showing?: Map<string, number[]>;
   git: GitStatus;
   /** Problem counts per file, from the checkers. */
   problemCounts: Map<string, { errors: number; warnings: number }>;
@@ -60,7 +62,7 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, working, git, problemCounts, wheel, scrollTo, click, onOpen, onHover }: Props) {
+export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, working, showing, git, problemCounts, wheel, scrollTo, click, onOpen, onHover }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
   // The first row shown. The wheel moves it on its own; the keyboard moves the cursor and the view follows.
@@ -205,11 +207,12 @@ export const FileTree = memo(function FileTree({ width, height, focused, openFil
               ? { icon: expanded.has(node.path) ? "▾" : "▸", color: C.accent }
               : fileIcon(node.path);
             const counts = problemCounts.get(node.path);
-            const problemMark = counts?.errors ? "✖" : counts?.warnings ? "▲" : "";
-            const marker = problemMark || code || (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
-            const markerColor = counts?.errors ? C.red : counts?.warnings ? C.yellow : code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
+            const problemMark = counts?.errors ? "✗" : counts?.warnings ? "▲" : "";
+            const stops = showing?.get(node.path);
+            const marker = stops ? `◉${stops.join(",")}` : problemMark || code || (changed.has(node.path) ? "●" : dirtyDirs.has(node.path) ? "•" : "");
+            const markerColor = stops ? C.accent2 : counts?.errors ? C.red : counts?.warnings ? C.yellow : code ? GIT_COLORS[code] ?? C.yellow : changed.has(node.path) ? C.green : C.yellow;
             const label = `${"  ".repeat(node.depth)}${icon} ${node.name}`;
-            const nameColor = isOpen ? C.cyan : counts?.errors ? C.red : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
+            const nameColor = stops ? C.accent2 : isOpen ? C.cyan : counts?.errors ? C.red : code ? GIT_COLORS[code] : node.isDir ? C.text : undefined;
             const room = Math.max(1, inner - marker.length - 1);
             const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label.padEnd(room);
             const iconAt = shown.indexOf(icon);

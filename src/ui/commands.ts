@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["zoom", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 /**
@@ -47,7 +47,7 @@ function editDistance(a: string, b: string): number {
 
 export function runsWhileBusy(text: string): boolean {
   const [name, ...rest] = text.slice(1).trim().split(/\s+/);
-  if (name === "showme" || name === "teach" || name === "teachme") return !rest.length || /^(next|skip|back|prev|previous|stop|end|done)$/.test(rest.join(" "));
+  if (name === "showme" || name === "teach" || name === "teachme") return !rest.length || /^(next|skip|back|prev|previous|stop|end|done|clear)$/.test(rest.join(" "));
   if (!text.startsWith("/") || !name) return false;
   return INSTANT.has(name) || INSTANT.has(closestCommand(name, SLASH_COMMANDS.map((c) => c.name)) ?? "");
 }
@@ -62,6 +62,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
   { name: "effort", args: "[fastest|fast|balanced|smarter|smartest]", description: "speed vs smarts: how hard the model thinks (cheaper + faster, or smarter)" },
   { name: "workspace", args: "[new <folder> | n]", description: "several projects in this window, a tab each in the header: open one, or switch" },
+  { name: "zoom", description: "zoom in on the code: the files and chat shrink so the code gets the room (again to zoom out; Z in the code)" },
   { name: "now", description: "stop Nou and send your queued messages right away (or click them)" },
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },

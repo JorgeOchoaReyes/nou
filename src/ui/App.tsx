@@ -191,6 +191,13 @@ export function App({ initialModel, permContext, resume }: Props) {
    */
   const [tour, setTour] = useState<{ stops: TourStop[]; at: number } | null>(null);
   const tourFound = useRef<TourStop[] | null>(null);
+  /** The files on /showme's tour and which of its places are in each, for the file tree. */
+  const tourFiles = useMemo(() => {
+    if (!tour) return null;
+    const map = new Map<string, number[]>();
+    tour.stops.forEach((s, i) => map.set(s.file, [...(map.get(s.file) ?? []), i + 1]));
+    return map;
+  }, [tour]);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
   const [follow, setFollow] = useState(settings.followMode);
@@ -300,6 +307,11 @@ export function App({ initialModel, permContext, resume }: Props) {
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0, heights: { tree: 0, code: 0, chat: 0 } as Record<Dock, number>, game: null as Rect | null, terminal: null as Rect | null });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
   const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
+  /**
+   * Zoomed in on the code (/zoom or Z): the files and chat shrink to slivers and the code gets the room. A
+   * terminal can't make one pane's text bigger (its font size is the whole window's), so this is the zoom.
+   */
+  const [codeZoom, setCodeZoom] = useState(false);
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
@@ -1461,8 +1473,11 @@ export function App({ initialModel, permContext, resume }: Props) {
       const step = input === ">" ? 2 : -2;
       updateSettings({ paneWidths: moveBorder(focus === "tree" ? "tree" : "chat", (focus === "tree" ? treeWidth - 1 : treeWidth + codeWidth) + step) });
     } else if (input === "=") {
+      setCodeZoom(false);
       setPaneWidths(null);
       updateSettings({ paneWidths: null });
+    } else if (input === "Z" && focus === "code") {
+      setCodeZoom((z) => !z);
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
@@ -1540,7 +1555,7 @@ ${snippet}
     }
     if (action) return info("Usage: /mcp, /mcp add <name> <command|url>, /mcp add browser, /mcp remove <name>, /mcp import, /mcp reconnect", "error");
     const list = mcpRef.current!.status();
-    const mark = { ready: "●", connecting: "◌", failed: "✖", off: "○" };
+    const mark = { ready: "●", connecting: "◌", failed: "✗", off: "○" };
     const lines = list.map((x) => `  ${mark[x.state]} ${x.name.padEnd(16)} ${x.state === "ready" ? `${x.tools} tools` : x.state}${x.scope === "project" ? " · this project" : ""}${x.error ? ` · ${x.error}` : ""}`);
     const others = findOtherMcpServers().filter((f) => !list.some((x) => x.name === f.name));
     return info([
@@ -1575,7 +1590,7 @@ ${snippet}
     const lines = allPlugins.map((p) =>
       p.scope === "starter"
         ? `  + ${p.id.padEnd(16)} ${p.plugin?.description ?? ""}`
-        : `  ${mark[trustState(p, settings)]} ${p.id.padEnd(16)} ${p.scope}${p.error ? ` · ✖ ${p.error}` : ""}`);
+        : `  ${mark[trustState(p, settings)]} ${p.id.padEnd(16)} ${p.scope}${p.error ? ` · ✗ ${p.error}` : ""}`);
     return info(`Plugins (● on, ○ off, + starter you can add with /plugins add <name>):\n${lines.join("\n")}\nWrite your own: /plugins new <name>`);
   };
 
@@ -1716,6 +1731,9 @@ ${snippet}
       return toggleTerminal();
     case "redraw":
       return redraw();
+    case "zoom":
+      setCodeZoom((z) => !z);
+      return info(codeZoom ? "Zoomed out: the panes are back as they were." : "Zoomed in on the code: the files and chat shrink so the code gets the room. /zoom (or Z in the code) zooms back out. For bigger text, use your terminal's own zoom (Cmd/Ctrl and +).");
     case "workspace":
     case "workspaces":
     case "ws":
@@ -1856,7 +1874,7 @@ ${snippet}
     stops = (stops ?? []).filter((s) => existsSync(s.file));
     if (!stops.length) return;
     const list = stops.map((s, i) => `${i + 1}. ${s.file}:${s.line}${s.end > s.line ? `-${s.end}` : ""}${s.note ? ` · ${s.note}` : ""}`).join("\n");
-    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}):\n${list}`);
+    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}; /showme stop clears the highlights):\n${list}`);
     setTour({ stops, at: 0 });
   }, [busy]);
   // Each place: open it in the code view with its lines highlighted.
@@ -1868,9 +1886,12 @@ ${snippet}
   /** /showme <question>: explains it and opens the places in the code; /showme next|back|stop steps through them. */
   const showPlaces = (arg: string) => {
     const words = arg.trim();
-    if (/^(stop|end|done)$/.test(words)) {
+    if (/^(stop|end|done|clear)$/.test(words)) {
+      // Done looking: the highlighted lines go back to plain code.
       setTour(null);
-      return info(tour ? "Done showing." : "Nothing is being shown.");
+      const highlighted = !!focusLine?.to;
+      setFocusLine((f) => (f?.to !== undefined ? null : f));
+      return info(tour || highlighted ? "Done showing: the highlights are cleared." : "Nothing is being shown.");
     }
     if (/^(next|back|prev|previous)$/.test(words)) {
       if (!tour) return info("Nothing is being shown. Ask with /showme <question>, e.g. /showme where do we check the login?");
@@ -2113,8 +2134,8 @@ ${snippet}
   }
 
   const height = Math.max(10, rows - 2);
-  const treeWidth = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
-  const chatWidth = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
+  const treeWidth = codeZoom ? MIN_TREE : paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
+  const chatWidth = codeZoom ? MIN_CHAT : paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - treeWidth - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
   const tabKey = tabs.length && openFile ? `${tabs.join("\0")}|${openFile}|${tabsWidth(codeWidth)}|${showEditor && !!editorState?.dirty}` : "";
   if (tabStripCache.current?.key !== tabKey) {
@@ -2314,7 +2335,7 @@ ${snippet}
               ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
               : [["double-click/e", "edit"], ["Ctrl+F", "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const followChip = follow ? ` ◉ follow${followLag ? ` ·${followLag}` : ""} ` : " ○ follow ";
-  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✖ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
+  const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✗ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
   for (let used = statusUsed, i = 0; i < hints.length; i++) {
     used += hints[i]![0].length + hints[i]![1].length + 4;
@@ -2340,7 +2361,7 @@ ${snippet}
     };
     add(` ${autoMode} `.length, () => cycleAutoMode());
     add(followChip.length, () => setFollow((f) => !f));
-    add(` ✖ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
+    add(` ✗ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
     if (checking.length) add(3 + checking.join(", ").length);
     if (!exitArmed) {
       shownHints.forEach(([key, label], i) => {
@@ -2350,7 +2371,7 @@ ${snippet}
     }
   }
   const modelLabel = agentRef.current!.id === "nou" ? describe(choice) : `${engineInfo(agentRef.current!.id).label} · ${engineInfo(agentRef.current!.id).model(choice)}`;
-  clickable.current = { status: zones, modelFrom: columns - (" ⌂ LOCAL ".length + ` ${modelLabel} `.length + 1) };
+  clickable.current = { status: zones, modelFrom: columns - (" LOCAL ".length + ` ${modelLabel} `.length + 1) };
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -2365,6 +2386,7 @@ ${snippet}
           version={treeVersion}
           changed={edited}
           working={working}
+          {...(tourFiles ? { showing: tourFiles } : {})}
           git={git}
           problemCounts={problemCounts}
           wheel={wheelFor("tree")}
@@ -2411,6 +2433,7 @@ ${snippet}
           />
         ) : (
           <CodeView
+            {...(tour && tour.stops[tour.at]?.file === openFile && !diff ? { showing: `${tour.at + 1}/${tour.stops.length}` } : {})}
             {...(tabStrip && !diff ? { tabs: tabStrip } : {})}
             width={codeWidth}
             height={heights.code}
@@ -2467,7 +2490,7 @@ ${snippet}
           <Text backgroundColor={mode.color} color={C.onBadge} bold>{` ${mode.label} `}</Text>
           <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
           <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{followChip}</Text>
-          <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
+          <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✗ ${totals.errors}`}</Text>
           <Text backgroundColor={C.panel} color={totals.warnings ? C.yellow : C.dim}>{` ▲ ${totals.warnings} `}</Text>
           {checking.length > 0 && <Text color={C.accent2}> ⟳ {checking.join(", ")}</Text>}
           {exitArmed
