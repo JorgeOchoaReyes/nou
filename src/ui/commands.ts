@@ -17,11 +17,43 @@ export type SlashCommand = {
 const INSTANT = new Set(["now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
+/**
+ * The command a mistyped name means: the same letters in another order ("/termnial"), or one letter off
+ * ("/termial", "/terminall"). Only when exactly one command fits, so a typo never runs the wrong one.
+ */
+export function closestCommand(name: string, names: string[]): string | null {
+  const word = name.toLowerCase();
+  if (word.length < 3) return null;
+  const sorted = (s: string) => [...s].sort().join("");
+  const anagrams = names.filter((n) => n.length === word.length && sorted(n) === sorted(word));
+  if (anagrams.length === 1) return anagrams[0]!;
+  if (anagrams.length > 1) return null;
+  const near = names.filter((n) => editDistance(word, n) <= 1);
+  return near.length === 1 ? near[0]! : null;
+}
+
+/** Levenshtein distance, stopping early once it's over 1 (all closestCommand needs). */
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (Math.min(...row) > 1) return 2;
+    prev = row;
+  }
+  return prev[b.length]!;
+}
+
 export function runsWhileBusy(text: string): boolean {
   const [name, ...rest] = text.slice(1).trim().split(/\s+/);
   if (name === "showme" || name === "teach") return !rest.length || /^(next|skip|stop|end)$/.test(rest.join(" "));
-  return text.startsWith("/") && INSTANT.has(name ?? "");
+  if (!text.startsWith("/") || !name) return false;
+  return INSTANT.has(name) || INSTANT.has(closestCommand(name, SLASH_COMMANDS.map((c) => c.name)) ?? "");
 }
+
+/** Whether a command only changes what's on screen, so running it for a typo can't do harm. */
+export const onlyChangesScreen = (name: string) => INSTANT.has(name);
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "model", args: "[provider:model]", description: "show or switch the model" },

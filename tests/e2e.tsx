@@ -766,6 +766,12 @@ console.log("Taking back a message");
     await press(`\x1b[<32;${x + 6 + 1};${y + 1}M`, 50);
     await press(`\x1b[<0;${x + 6 + 1};${y + 1}m`, 400);
     check("dragging over the chat selects and copies it", /Copied it ✓|Can't copy/.test(frame()));
+    await until(() => !/Copied it ✓|Can't copy/.test(frame()), 4000);
+    await press(click(x + 1, y), 30);
+    await press(`\x1b[<0;${x + 2};${y + 1}m`, 30);
+    await press(click(x + 1, y), 30);
+    await press(`\x1b[<0;${x + 2};${y + 1}m`, 400);
+    check("a double-click in the chat selects the word and copies it", await until(() => /Copied it ✓|Can't copy/.test(frame()), 3000));
     await type("/cancel");
     await press(KEY.enter, 600);
     check("/cancel takes back the last message and its reply, putting it in the input to edit", !frame().includes("reply 1") && frame().includes("❯ make it blue") && frame().includes("Took back"));
@@ -799,6 +805,14 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const y = rows.findIndex((l) => l.includes("▸ Terminal"));
   await press(click(rows[y]!.indexOf("×", rows[y]!.indexOf("▸ Terminal")), y), 300);
   check("× closes it", !frame().includes("▸ Terminal"));
+  await press(KEY.tab, 100); // back to the chat
+  await press(KEY.tab, 100);
+  await type("/termnial");
+  await press(KEY.enter, 300);
+  check("a mistyped /termnial still opens it", await until(() => frame().includes("▸ Terminal")));
+  await type("exit");
+  await press(KEY.enter, 300);
+  check("exit at its prompt closes it", await until(() => !frame().includes("▸ Terminal")));
 });
 
 console.log("New lines in a message");

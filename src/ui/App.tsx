@@ -27,11 +27,11 @@ import { findDefinition, wordAt } from "./definition.js";
 import { ProblemsView } from "./ProblemsView.js";
 import { useFocusReporting, useTerminalFocused } from "./focus.js";
 import { useMouse } from "./mouse.js";
-import { C } from "./theme.js";
+import { C, palette } from "./theme.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
-import { SLASH_COMMANDS, runsWhileBusy, type SlashCommand } from "./commands.js";
+import { SLASH_COMMANDS, closestCommand, onlyChangesScreen, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
 import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
@@ -116,7 +116,7 @@ Keys:
   Ctrl+click, Option+click or right-click a name: go to its definition (an import's path opens the file)
   p  problems              u    undo Nou's edit   s   settings
   c  (in files) show only changed files            Ctrl+C twice  quit
-Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select
+Mouse: wheel scrolls (Shift+wheel sideways) · click/drag a scrollbar · double-click in the code to edit there (in the editor: select a word), drag to select · in the chat: double-click copies a word, triple-click a paragraph
 In the editor:
   Shift+arrows / mouse drag select · Ctrl+A all · Ctrl+C/X/V copy/cut/paste · Esc clear selection or leave
   Ctrl+←/→ word · Ctrl+Backspace or Ctrl+W delete word · Ctrl+Home/End file start/end
@@ -143,7 +143,9 @@ export function App({ initialModel, permContext, resume }: Props) {
   const { columns, rows } = useWindowSize();
 
   const [settings, setSettings] = useState<SettingsType>(loadSettings);
-  setCodeTheme(settings.codeTheme); // before anything below highlights code
+  // Before anything below highlights code. One Dark's light text is unreadable on a light terminal: there the
+  // default switches to GitHub Light (any other theme you picked stays).
+  setCodeTheme(palette() === "light" && settings.codeTheme === "one-dark" ? "github-light" : settings.codeTheme);
   const [view, setView] = useState<"main" | "settings">("main");
   const [connectTo, setConnectTo] = useState<Provider | undefined>();
   /** Why settings were opened for you (a request failed on the provider's setup). */
@@ -293,7 +295,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
-  const lastClick = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastClick = useRef<{ x: number; y: number; time: number; count: number } | null>(null);
   const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
@@ -1082,8 +1084,13 @@ export function App({ initialModel, permContext, resume }: Props) {
     }
     // Two clicks in the same spot within half a second are a double-click.
     const last = lastClick.current;
-    const double = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
-    lastClick.current = double ? null : { x: event.x, y: event.y, time: Date.now() };
+    const again = !!last && Date.now() - last.time < DOUBLE_CLICK_MS && Math.abs(last.x - event.x) <= 1 && last.y === event.y;
+    const count = again ? last!.count + 1 : 1;
+    const double = count === 2;
+    // The chat counts a third click too (the whole paragraph); elsewhere a double-click starts over.
+    lastClick.current = double && pane !== "chat" ? null : count >= 3 ? null : { x: event.x, y: event.y, time: Date.now(), count };
+    // In the chat: a double-click selects and copies the word (or path, or link), a triple-click the paragraph.
+    if (pane === "chat" && event.y >= 3 && count >= 2) chatAt(event.x, event.y, count === 2 ? "word" : "block");
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
       // As the code view counts them (a last empty line after the final newline isn't shown).
       const digits = String(splitLines(content).length).length;
@@ -1701,6 +1708,11 @@ ${snippet}
         }
         return;
       }
+      // A typo of a command ("/termnial"): one that only changes the screen just runs; others are suggested,
+      // so a slip never clears or undoes anything.
+      const meant = closestCommand(command ?? "", [...SLASH_COMMANDS.map((c) => c.name), ...activePlugins.flatMap(({ plugin }) => plugin!.commands?.map((c) => c.name) ?? [])]);
+      if (meant && onlyChangesScreen(meant)) return runCommand(`/${meant}${arg ? ` ${arg}` : ""}`);
+      if (meant) return info(`Unknown command /${command}. Did you mean /${meant}${arg ? ` ${arg}` : ""}?`, "error");
       return info(`Unknown command /${command}. Type /help.`, "error");
     }
     }
@@ -2320,7 +2332,7 @@ ${snippet}
       </Box>
       <Box>
         <Text wrap="truncate-end">
-          <Text backgroundColor={mode.color} color="black" bold>{` ${mode.label} `}</Text>
+          <Text backgroundColor={mode.color} color={C.onBadge} bold>{` ${mode.label} `}</Text>
           <Text backgroundColor={C.panel} color={autoMode === "ask" ? C.dim : C.orange} bold={autoMode !== "ask"}>{` ${autoMode === "ask" ? "ask" : autoMode} `}</Text>
           <Text backgroundColor={C.panel} color={follow ? C.green : C.dim}>{followChip}</Text>
           <Text backgroundColor={C.panel} color={totals.errors ? C.red : C.dim}>{` ✖ ${totals.errors}`}</Text>
@@ -2335,7 +2347,7 @@ ${snippet}
       </Box>
       {layout.current.terminal && shellRef.current && (
         <Box position="absolute" marginLeft={layout.current.terminal.x} marginTop={layout.current.terminal.y}>
-          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onResize={resizeTerminal} />
+          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onClose={() => toggleTerminal(false)} onResize={resizeTerminal} />
         </Box>
       )}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}

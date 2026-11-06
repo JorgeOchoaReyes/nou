@@ -1,7 +1,7 @@
 import { memo } from "react";
 import path from "path";
 import { Box, Text, useAnimation } from "ink";
-import { C, SPINNER, gradient, ANIMATION_MS } from "./theme.js";
+import { C, gradient, ANIMATION_MS } from "./theme.js";
 import { useTerminalFocused } from "./focus.js";
 import { currentVersion } from "../update/index.js";
 
@@ -39,14 +39,13 @@ export const Header = memo(function Header({ width, branch, changes, model, loca
               {changes > 0 && <Text color={C.yellow}> ±{changes}</Text>}
             </>
           )}
-          {busy && <Text color={C.accent2}>{"  "}{SPINNER[frame % SPINNER.length]} {busy}</Text>}
         </Text>
       </Box>
       {/* The model badge never wraps or shrinks: the left side gives way instead. */}
       <Box flexShrink={0}>
         <Text wrap="truncate-end">
           {update && width >= 110 && <Text color={C.green} bold>⬆ v{update} available · run `nou update`  </Text>}
-          <Text backgroundColor={local ? C.green : C.accent2} color="black" bold>{` ${local ? "⌂ LOCAL" : "☁ CLOUD"} `}</Text>
+          <Text backgroundColor={local ? C.green : C.accent2} color={C.onBadge} bold>{` ${local ? "⌂ LOCAL" : "☁ CLOUD"} `}</Text>
           <Text backgroundColor={C.panel} color={C.text}>{` ${model} `}</Text>
           {" "}
         </Text>

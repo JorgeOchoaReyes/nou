@@ -26,6 +26,9 @@ export function effortFrom(text: string): Effort | null {
   return EFFORTS.find((e) => e === t || EFFORT_LABELS[e].name.toLowerCase() === t) ?? null;
 }
 
+export const UI_THEMES = ["auto", "dark", "light"] as const;
+export type UiTheme = (typeof UI_THEMES)[number];
+
 export const AUTO_SAVE = ["delay", "focus", "off"] as const;
 export type AutoSave = (typeof AUTO_SAVE)[number];
 
@@ -60,6 +63,8 @@ export type Settings = {
   autoSave: AutoSave;
   /** Colors for code: syntax highlighting in the code view, editor and diffs. */
   codeTheme: CodeTheme;
+  /** Nou's colors: for a dark or a light terminal, or picked from the terminal's background (auto). */
+  uiTheme: UiTheme;
   /** Mouse wheel scrolls the pane under the pointer; clicks focus panes and open files. */
   mouse: boolean;
   /** Use API keys from Claude Code's and Codex's config for providers you haven't set up. */
@@ -99,6 +104,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sendNowWhileBusy: false,
   autoSave: "delay",
   codeTheme: "one-dark",
+  uiTheme: "auto",
   mouse: true,
   reuseToolConfig: true,
   paneWidths: null,

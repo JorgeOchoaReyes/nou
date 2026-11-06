@@ -69,6 +69,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🧩 **Plugins** | Add your own tools and slash commands with a single file. |
 | 🔎 **Quick open** | <kbd>Ctrl</kbd>+<kbd>P</kbd> fuzzy-finds any file. |
 | 🔋 **Easy on your battery** | Idle, Nou uses next to no CPU. When its window is in the background (in terminals that report focus: iTerm2, Terminal.app, kitty, Ghostty, WezTerm, Windows Terminal, VS Code), spinners and git polling pause until you come back, and TypeScript checks are incremental. |
+| 👓 **Easy to read** | Hints and secondary text keep at least 4.5:1 contrast. Nou asks your terminal whether its background is light or dark and picks matching colors (code switches to GitHub Light on a light background); set it yourself in <kbd>s</kbd> settings → **Nou's colors**. |
 
 Every change is reviewed like a code review:
 
@@ -102,11 +103,11 @@ Every change is reviewed like a code review:
 | <kbd>c</kbd> | in the file tree: show only changed files |
 | <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
-| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × closes it; drag its top border (or <kbd>Alt</kbd>+↑/↓) to make it taller or shorter. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
+| <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × or `exit` closes it; drag its top border (or <kbd>Alt</kbd>+↑/↓) to make it taller or shorter. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
 | <kbd>z</kbd> | in the code view: fold every function and block to its first line, or open them all again (also `/fold`, `/unfold`); click a ▾/▸ beside a line number to fold or open just that one |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | draw the whole screen again (also `/redraw`), if it ever looks shifted or clicks land a row off. Output from libraries goes to `~/.nou/nou.log` instead of the screen |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | in the chat: open or fold every "▸ N steps" line (what the agent read and ran between replies folds into one; click one to open just it) |
-| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go) |
+| <kbd>m</kbd> | mouse on/off, so you can select and copy text in the terminal (in the chat, just drag over the text: it's copied when you let go; double-click copies a word, path or link, triple-click a paragraph) |
 | <kbd>s</kbd> | settings: model, preferences, plugins |
 | <kbd>y</kbd> / <kbd>n</kbd> | accept / reject a proposed edit or command, from any pane; the rest of Nou keeps working while it waits (<kbd>o</kbd> shows the edit) |
 | <kbd>Enter</kbd> while Nou works | queue the message: it goes when Nou finishes, together with anything else you queued, as one message; commands that only change the screen, like `/terminal`, `/games` or `/open`, run right away. To send now instead of waiting: <kbd>Alt</kbd>+<kbd>Enter</kbd> (stops Nou and sends it), click the queued message, or `/now`; or turn on **Send while Nou works** in settings so <kbd>Enter</kbd> sends right away (<kbd>Alt</kbd>+<kbd>Enter</kbd> then queues) |
@@ -128,6 +129,8 @@ In the editor:
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
 Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/effort [fastest|fast|balanced|smarter|smartest]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/now` · `/showme <what you want>` · `/help`
+
+A small typo in a command still works when it only changes the screen (`/termnial` opens the terminal); for others Nou asks "Did you mean...?" instead of guessing.
 
 New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol), or type `\` and press <kbd>Enter</kbd> in any terminal.
 

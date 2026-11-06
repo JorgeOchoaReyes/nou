@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { AUTO_SAVE, CODE_THEMES, EFFORT_LABELS, EFFORTS, FOLLOW_SPEEDS, type Settings as SettingsType } from "../config/index.js";
+import { AUTO_SAVE, CODE_THEMES, UI_THEMES, EFFORT_LABELS, EFFORTS, FOLLOW_SPEEDS, type Settings as SettingsType } from "../config/index.js";
 import { highlightLines } from "./text.js";
 import { GAMES } from "../games/index.js";
 import { saveCredentials } from "../config/credentials.js";
@@ -43,6 +43,7 @@ type Pref = { key: keyof SettingsType; label: string; help: string; warn?: boole
 const PREFS: Pref[] = [
   { key: "effort", label: "Speed vs smarts", help: "How hard the model thinks before it answers (Claude, Codex, pi and Nou's engine with Claude)." },
   { key: "followSpeed", label: "Follow mode speed", help: "How long each file Nou reads stays on screen in follow mode (f): slow, normal, fast, or as it happens." },
+  { key: "uiTheme", label: "Nou's colors", help: "For a dark or a light terminal; auto asks the terminal which it is. Applies when Nou next starts." },
   { key: "codeTheme", label: "Code colors", help: "The theme for code. ←/→ to try them; github-light is for light terminals." },
   { key: "autoSave", label: "Auto-save", help: "delay: a second after you stop typing · focus: when you leave the editor · off: only Ctrl+S." },
   { key: "mouse", label: "Mouse", help: "Wheel scrolls the pane under the pointer; click to focus or open files. Hold Shift to select text." },
@@ -171,6 +172,8 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
         onChange({ followSpeed: FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + step + FOLLOW_SPEEDS.length) % FOLLOW_SPEEDS.length]! });
       } else if (pref.key === "codeTheme") {
         onChange({ codeTheme: CODE_THEMES[(CODE_THEMES.indexOf(settings.codeTheme) + step + CODE_THEMES.length) % CODE_THEMES.length]! });
+      } else if (pref.key === "uiTheme") {
+        onChange({ uiTheme: UI_THEMES[(UI_THEMES.indexOf(settings.uiTheme) + step + UI_THEMES.length) % UI_THEMES.length]! });
       } else if (pref.key === "autoSave") {
         onChange({ autoSave: AUTO_SAVE[(AUTO_SAVE.indexOf(settings.autoSave) + step + AUTO_SAVE.length) % AUTO_SAVE.length]! });
       } else {
@@ -361,8 +364,8 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                     ? <Text><Text color={C.dim}>‹ </Text><Text color={C.accent2} bold>{String(value)}</Text><Text color={C.dim}> ›  {CODE_THEMES.indexOf(value as never) + 1}/{CODE_THEMES.length}</Text></Text>
                     : pref.key === "effort"
                       ? <Text>{EFFORTS.map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${EFFORT_LABELS[e].name}]` : ` ${EFFORT_LABELS[e].name} `}</Text>)}</Text>
-                      : pref.key === "autoSave" || pref.key === "followSpeed"
-                        ? <Text>{(pref.key === "autoSave" ? AUTO_SAVE : FOLLOW_SPEEDS).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
+                      : pref.key === "autoSave" || pref.key === "followSpeed" || pref.key === "uiTheme"
+                        ? <Text>{(pref.key === "autoSave" ? AUTO_SAVE : pref.key === "uiTheme" ? UI_THEMES : FOLLOW_SPEEDS).map((e) => <Text key={e} color={e === value ? C.accent2 : C.dim} bold={e === value}>{e === value ? `[${e}]` : ` ${e} `}</Text>)}</Text>
                         : toggle(value as boolean, pref.warn)}
                 </Text>
                 <Text color={C.dim} wrap="truncate-end">    {pref.key === "effort" ? `${EFFORT_LABELS[settings.effort].tradeoff}` : pref.help}</Text>

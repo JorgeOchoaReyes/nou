@@ -15,6 +15,8 @@ import { App } from "./ui/App.js";
 import { installFastOutput } from "./ui/fast-output.js";
 import { RENDER_OPTIONS } from "./ui/render-options.js";
 import { setScreenClear } from "./ui/redraw.js";
+import { detectBackground } from "./ui/background.js";
+import { setPalette } from "./ui/theme.js";
 import { appendFileSync, mkdirSync } from "fs";
 import path from "path";
 import { format } from "util";
@@ -139,6 +141,10 @@ async function main() {
   if ((settings.engine ?? "nou") === "nou") await ensureProjectContext(choice);
 
   const permContext = await loadPermanentContext();
+
+  // Colors that are readable on this terminal: a dark or a light set, from the setting or the background.
+  const uiTheme = loadSettings().uiTheme;
+  setPalette(uiTheme === "dark" || uiTheme === "light" ? uiTheme : (await detectBackground()) ?? "dark");
 
   await installFastOutput();
   // While Nou is on screen, anything a library prints (console.log, warnings, stderr) goes to a log file:

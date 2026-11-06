@@ -14,6 +14,8 @@ type Props = {
   wheel?: Wheel | null;
   /** Esc: back to the pane you came from (the command keeps running). */
   onLeave(): void;
+  /** `exit` (or `logout`) at the prompt: closes the terminal, as it would end a shell. */
+  onClose(): void;
   /** Alt+↑/↓: taller or shorter, by this many rows. */
   onResize(by: number): void;
 };
@@ -25,7 +27,7 @@ const COLORS = { out: C.text, command: C.accent, info: C.dim, error: C.red } as 
  * what you type goes to it; Ctrl+C stops it. ↑↓ go through what you ran, Ctrl+L clears, Esc leaves.
  * Drag its top border (or Alt+↑/↓) to make it taller or shorter.
  */
-export const Terminal = memo(function Terminal({ shell, version, width, height, focused, wheel, onLeave, onResize }: Props) {
+export const Terminal = memo(function Terminal({ shell, version, width, height, focused, wheel, onLeave, onClose, onResize }: Props) {
   const [input, setInput] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [back, setBack] = useState(-1);
@@ -62,6 +64,12 @@ export const Terminal = memo(function Terminal({ shell, version, width, height, 
     }
     if (key.ctrl && typed === "l") return shell.clear();
     if (key.return) {
+      // Each command runs in its own shell, so `exit` would end only that one and nothing would seem to
+      // happen: at the prompt it closes the terminal instead.
+      if (!shell.running && /^\s*(exit|logout)(\s+\d+)?\s*$/.test(input)) {
+        setInput("");
+        return onClose();
+      }
       if (!shell.running && input.trim()) setHistory((h) => [...h.filter((c) => c !== input.trim()), input.trim()].slice(-100));
       if (shell.running) shell.input(input);
       else shell.run(input);
