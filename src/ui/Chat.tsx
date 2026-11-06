@@ -9,7 +9,7 @@ import { copyToClipboard } from "./clipboard.js";
 import { C, SPINNER, ANIMATION_MS } from "./theme.js";
 import { useTerminalFocused } from "./focus.js";
 import { Pane } from "./Pane.js";
-import { matchCommands, type SlashCommand } from "./commands.js";
+import { SLASH_COMMANDS, matchCommands, type SlashCommand } from "./commands.js";
 import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
 
 type Props = {
@@ -256,6 +256,13 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const menuOpen = focused && !approval && input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
   const matches = useMemo(() => (menuOpen ? matchCommands(input, extraCommands) : []), [menuOpen, input, extraCommands]);
   const showMenu = matches.length > 0;
+  // A known command typed at the start of the input ("/zoom in") is drawn in the command color.
+  const commandLength = useMemo(() => {
+    const name = /^\/(\S+)/.exec(input)?.[1];
+    if (!name) return 0;
+    const known = SLASH_COMMANDS.some((c) => c.name === name) || !!extraCommands?.some((c) => c.name === name);
+    return known ? name.length + 1 : 0;
+  }, [input, extraCommands]);
   useEffect(() => onMenu?.(showMenu), [showMenu]);
   const menuRows = Math.min(matches.length, Math.max(1, Math.min(7, height - 12)));
   const menuStart = Math.max(0, Math.min(menuRow - menuRows + 1, matches.length - menuRows));
@@ -498,10 +505,18 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
         <Box flexDirection="column">
           {matches.slice(menuStart, menuStart + menuRows).map((c, i) => {
             const selected = menuStart + i === menuRow;
+            // What's typed so far shows in the command color; the rest of the name follows. A plugin's
+            // command says so, so Nou's own stand apart.
+            const typed = input.slice(1).toLowerCase();
+            const typedLen = typed && c.name.startsWith(typed) ? typed.length : 0;
+            const fromPlugin = !!extraCommands?.some((e) => e.name === c.name);
             return (
               <Text key={c.name} wrap="truncate-end" {...(selected ? { backgroundColor: C.panel } : {})}>
                 <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸" : " "}</Text>
-                <Text color={selected ? C.accent : C.text} bold={selected}>/{c.name}</Text>
+                <Text color={C.accent2} bold>/</Text>
+                <Text color={C.yellow} bold>{c.name.slice(0, typedLen)}</Text>
+                <Text color={C.accent2} bold={selected}>{c.name.slice(typedLen)}</Text>
+                {fromPlugin && <Text color={C.cyan}> plugin</Text>}
                 {c.args && inner >= 56 ? <Text color={C.dim}> {c.args}</Text> : null /* narrow: the description matters more */}
                 <Text color={C.dim}>  {c.description}</Text>
               </Text>
@@ -522,6 +537,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
         width={inner + 1}
         history={sent}
         arrowsTaken={showMenu}
+        command={commandLength}
         placeholder={busy ? (inner >= 44 ? (sendNowFirst ? "Enter sends now · Alt+Enter queues · Esc stops" : "Enter queues · Alt+Enter sends now · Esc stops") : sendNowFirst ? "Enter sends now · Esc stops" : "Enter queues · Esc stops") : showMenu ? "↑↓ choose · Tab complete · Enter run" : inner >= 44 ? "Ask anything · / for commands · ↑ history" : "Ask anything · / commands"}
       />
     </Pane>
