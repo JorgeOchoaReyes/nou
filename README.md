@@ -104,7 +104,7 @@ Every change is reviewed like a code review:
 | <kbd>u</kbd> | undo Nou's last edit |
 | <kbd>v</kbd> | diff the open file vs git `HEAD`, Nou's last edit, or this session · <kbd>n</kbd>/<kbd>N</kbd> jump between changes · <kbd>[</kbd>/<kbd>]</kbd> previous/next file in a session diff |
 | <kbd>c</kbd> | in the file tree: show only changed files |
-| <kbd>f</kbd> | follow mode (off by default): watch along as Nou works. Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
+| <kbd>f</kbd> or `/follow [on\|off]` | follow mode (off by default, and your choice is remembered): watch along as Nou works, with any engine (Codex's `sed`/`cat` reads count too). Each file it reads (the exact lines, highlighted) is shown a step at a time, a little behind it, and its edits as they happen. The status bar shows how many steps behind it is; set the speed in settings → Preferences (slow · normal · fast · instant) |
 | <kbd>&lt;</kbd> / <kbd>&gt;</kbd> / <kbd>=</kbd> | make the focused pane narrower / wider / reset the layout |
 | <kbd>`</kbd> | a terminal under the code, like VS Code's (also `/terminal`): Enter runs a command, Ctrl+C stops it, ↑↓ history, Esc back to the code, × or `exit` closes it; drag its top border (or <kbd>Alt</kbd>+↑/↓) to make it taller or shorter. Commands run through your shell one at a time, so full-screen programs like vim don't draw there |
 | <kbd>z</kbd> | in the code view: fold every function and block to its first line, or open them all again (also `/fold`, `/unfold`); click a ▾/▸ beside a line number to fold or open just that one |

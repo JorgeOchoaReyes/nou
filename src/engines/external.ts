@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import path from "path";
 import { newSessionId, type AgentHooks } from "../agent/index.js";
 import { isInProject, toRelative, type FileChange } from "../commands/index.js";
@@ -11,6 +11,49 @@ function readOrNull(filePath: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** A file a shell command reads, and the lines when it reads part of it (see readsInCommand). */
+export type CommandRead = { path: string; line?: number; to?: number };
+
+/**
+ * The files a shell command reads, so follow mode can show them: engines like Codex read with `sed -n
+ * '10,80p' f`, `cat f`, `nl -ba f`, `head -n 40 f` instead of a read tool. Only files that exist in the
+ * project count; anything it can't make sense of is no read.
+ */
+export function readsInCommand(command: string): CommandRead[] {
+  // Codex runs `bash -lc '<script>'`: look inside the quotes.
+  const wrapped = command.match(/^\S*(?:bash|sh|zsh)\s+-l?c\s+(['"])([\s\S]*)\1\s*$/);
+  const script = wrapped ? wrapped[2]! : command;
+  const reads: CommandRead[] = [];
+  for (const part of script.split(/\s*(?:&&|\|\||;|\||\n)\s*/)) {
+    const words = (part.match(/'[^']*'|"[^"]*"|\S+/g) ?? []).map((w) => w.replace(/^(['"])(.*)\1$/, "$2"));
+    const [tool, ...args] = words;
+    if (!tool) continue;
+    const files = args.filter((a) => !a.startsWith("-") && /[./]|\w\.\w/.test(a));
+    let range: { line?: number; to?: number } = {};
+    if (tool === "sed" && args.includes("-n")) {
+      const m = args.join(" ").match(/(\d+)\s*,\s*(\d+)\s*p/) ?? args.join(" ").match(/(\d+)p/);
+      if (!m) continue;
+      range = { line: Number(m[1]), to: Number(m[2] ?? m[1]) };
+      files.splice(0, files.length, ...files.filter((f) => !/^\d+(,\d+)?p$/.test(f)));
+      // `nl -ba f | sed -n '5,9p'`: the lines are of the file read just before it in the pipe.
+      const last = reads.at(-1);
+      if (!files.length && last && last.line === undefined) Object.assign(last, range);
+    } else if (tool === "head") {
+      const n = Number(args.join(" ").match(/-n\s*(\d+)|-(\d+)/)?.slice(1).find(Boolean) ?? 10);
+      range = { line: 1, to: n };
+    } else if (!["cat", "nl", "bat", "less", "more", "tail"].includes(tool)) continue;
+    for (const file of files) {
+      try {
+        if (!statSync(path.resolve(process.cwd(), file)).isFile() || !isInProject(file)) continue;
+      } catch {
+        continue;
+      }
+      reads.push({ path: toRelative(file), ...range });
+    }
+  }
+  return reads;
 }
 
 /** Replaces `oldText` with `newText`, as edit tools do; null if it isn't there (the tool will fail on its own). */

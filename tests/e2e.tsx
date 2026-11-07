@@ -25,6 +25,7 @@ const { createElement } = await import("react");
 const { App } = await import("../src/ui/App.js");
 const { resolveModel } = await import("../src/providers/index.js");
 const { writeFakeEngines } = await import("./fake-engines.js");
+const { loadSettings } = await import("../src/config/index.js");
 
 // Every frame below is rendered by both Ink's own output stage and Nou's faster one (src/ui/fast-output.ts);
 // they must produce the same text, byte for byte.
@@ -682,6 +683,10 @@ console.log("Follow along");
     check("the next step shows the lines it read, highlighted", title().includes("many.ts") && /50▌.*const line50/.test(frame().replace(/\x1b\[[\d;]*m/g, "")));
     await delay(1300);
     check("and so on, until it has caught up", title().includes("b.ts") && !/follow ·\d/.test(frame()));
+    await type("/follow off");
+    await press(KEY.enter, 300);
+    check("/follow off turns it off, and says so", await until(() => frame().includes("○ follow") && frame().includes("Follow off")));
+    check("and it's remembered for next time", loadSettings().followMode === false);
   });
 }
 

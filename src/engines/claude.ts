@@ -3,7 +3,7 @@ import path from "path";
 import type { AgentHooks } from "../agent/index.js";
 import { toRelative } from "../commands/index.js";
 import type { ModelChoice } from "../providers/index.js";
-import { ExternalEngine, replaceIn } from "./external.js";
+import { ExternalEngine, readsInCommand, replaceIn } from "./external.js";
 import { loadPackage } from "./index.js";
 
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -103,7 +103,15 @@ export class ClaudeCodeEngine extends ExternalEngine {
           ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `This edit introduced problems; fix them:\n${problems}` } }
           : {};
       }
-      if (tool === "Read" && args.file_path) this.hooks.onRead(toRelative(args.file_path));
+      if (tool === "Read" && args.file_path) {
+        // A part of the file (offset and limit, in lines): follow mode shows those lines.
+        const from = typeof args.offset === "number" ? Math.max(1, args.offset) : undefined;
+        const to = from && typeof args.limit === "number" ? from + args.limit - 1 : undefined;
+        this.hooks.onRead(toRelative(args.file_path), from, to);
+      }
+      if ((tool === "Bash" || tool === "PowerShell") && typeof args.command === "string") {
+        for (const read of readsInCommand(args.command)) this.hooks.onRead(read.path, read.line, read.to);
+      }
       this.hooks.onEntry({ kind: "tool", text: tool === "Bash" || tool === "PowerShell" ? `Ran: ${args.command}` : describeTool(tool, args) });
       return {};
     };

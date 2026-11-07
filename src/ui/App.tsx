@@ -1413,6 +1413,16 @@ export function App({ initialModel, permContext, resume }: Props) {
     setFollowLag(followQueue.current.length);
     if (!followTimer.current) playFollow();
   };
+  /** Turns follow mode on or off (`to`), or flips it; remembered for next time, and the chat says what it does. */
+  const toggleFollow = (to?: boolean) => {
+    const on = to ?? !followRef.current;
+    followRef.current = on;
+    setFollow(on);
+    if (settingsRef.current.followMode !== on) updateSettings({ followMode: on });
+    info(on
+      ? "Follow on: the code view now shows each file Nou reads or edits as it works (f, the follow chip or /follow off to stop)."
+      : "Follow off: the code view stays on what you have open. Edits waiting for your OK still show.");
+  };
   const followStepRef = useRef(followStep);
   followStepRef.current = followStep;
   useEffect(() => {
@@ -1506,7 +1516,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       // Commands work from anywhere: / jumps to the chat's command box.
       setFocus("chat");
       setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
-    } else if (input === "f") setFollow((f) => !f);
+    } else if (input === "f") toggleFollow();
     else if (input === "m") toggleMouse();
     else if (input === "`") toggleTerminal();
     else if (input === "p") toggleProblems();
@@ -1664,6 +1674,11 @@ ${snippet}
         .sort((a, b) => b.m!.score - a.m!.score)[0]?.f;
       if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
       return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
+    }
+    case "follow": {
+      const want = arg.trim().toLowerCase();
+      if (want && !/^(on|off)$/.test(want)) return info("Use /follow on or /follow off (or just /follow to switch).", "error");
+      return toggleFollow(want ? want === "on" : undefined);
     }
     case "effort": {
       // Speed vs smarts, by name: /effort smarter (or the effort itself: /effort xhigh).
@@ -2396,7 +2411,7 @@ ${snippet}
     { title: "Ask before every edit and command", keys: "Shift+Tab", run: () => cycleAutoMode("ask") },
     { title: "Auto-edit: apply edits without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto-edit") },
     { title: "Auto: edits and commands without asking", keys: "Shift+Tab", run: () => cycleAutoMode("auto") },
-    { title: `Follow mode ${follow ? "off" : "on"}: jump to files Nou works on`, keys: "f", run: () => setFollow((f) => !f) },
+    { title: `Follow mode ${follow ? "off" : "on"}: jump to files Nou works on`, keys: "f", run: () => toggleFollow() },
     { title: `Replay speed for follow mode: ${settings.followSpeed} (next: ${FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + 1) % FOLLOW_SPEEDS.length]})`, keys: "settings", run: () => updateSettings({ followSpeed: FOLLOW_SPEEDS[(FOLLOW_SPEEDS.indexOf(settings.followSpeed) + 1) % FOLLOW_SPEEDS.length]! }) },
     { title: `Mouse ${settings.mouse ? "off (select text in the terminal)" : "on"}`, keys: "m", run: toggleMouse },
     { title: "Copy the last reply", keys: "/copy", run: () => void runCommand("/copy") },
@@ -2473,7 +2488,7 @@ ${snippet}
       x += width;
     };
     add(` ${autoMode} `.length, () => cycleAutoMode());
-    add(followChip.length, () => setFollow((f) => !f));
+    add(followChip.length, () => toggleFollow());
     add(` ✗ ${totals.errors} ▲ ${totals.warnings} `.length, toggleProblems);
     if (checking.length) add(3 + checking.join(", ").length);
     if (!exitArmed) {
