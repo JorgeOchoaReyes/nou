@@ -1082,7 +1082,7 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   const header = frame().split("\n")[0]!;
   check("the header has a + for another workspace", /│\s+\S+ \+ /.test(header) || header.includes(" + "));
   await press(click(header.indexOf(" + ") + 1, 0), 300);
-  const opened = await until(() => frame().includes("Open a folder as a new workspace") && frame().includes("(this project, another workspace)"));
+  const opened = await until(() => frame().includes("Open a folder as a new workspace") && frame().includes("(this project)"));
   check("clicking + opens a picker of folders, this project first", opened);
   await press(KEY.esc, 200);
   check("Esc closes it", !frame().includes("Open a folder as a new workspace"));

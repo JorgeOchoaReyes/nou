@@ -2238,7 +2238,11 @@ ${snippet}
     const here = process.cwd();
     const parent = path.dirname(here);
     const home = os.homedir();
-    const short = (p: string) => (p.startsWith(home) ? `~${p.slice(home.length)}` : p);
+    // Where each folder is, kept short (its end is what tells them apart) so the names keep their room.
+    const short = (p: string) => {
+      const shown = p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+      return shown.length > 22 ? `…${shown.slice(-21)}` : shown;
+    };
     let beside: { path: string; time: number }[] = [];
     try {
       beside = readdirSync(parent, { withFileTypes: true })
@@ -2260,7 +2264,7 @@ ${snippet}
     }
     const open = (folder: string) => () => void workspaceCommand(`new ${folder}`);
     setResumePicker([
-      { title: `${path.basename(here)} (this project, another workspace)`, keys: short(here), run: open(here) },
+      { title: `${path.basename(here)} (this project)`, keys: short(here), run: open(here) },
       ...beside.map((b) => ({ title: path.basename(b.path), keys: short(b.path), run: open(b.path) })),
     ]);
     setPickerTitle("Open a folder as a new workspace · any other: /workspace new <path>");
