@@ -35,7 +35,7 @@ import { FIND_KEY, isFind } from "./keys.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
-import { SLASH_COMMANDS, closestCommand, onlyChangesScreen, runsWhileBusy, type SlashCommand } from "./commands.js";
+import { SLASH_COMMANDS, closestCommand, finishAfter, onlyChangesScreen, runsWhileBusy, type SlashCommand } from "./commands.js";
 import { WHEEL_STEP, sendWheel, type ScrollTo } from "./scroll.js";
 import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
@@ -1895,6 +1895,16 @@ ${snippet}
     agentRef.current?.cancel();
     stopped.current = true;
   };
+  /** What Nou was working on when a message cut in (see interruptToSend), so it finishes that too. */
+  const unfinished = useRef<string | null>(null);
+  const lastAsked = useRef<string | null>(null);
+  /** Stops Nou so what's queued goes now; the request it was on isn't dropped, it's handed back with it. */
+  const interruptToSend = () => {
+    // What the agent was last asked, unfinished work handed back included: cutting in twice keeps both.
+    if (lastAsked.current) unfinished.current = lastAsked.current;
+    stop();
+    stopped.current = false; // what's queued is meant to go
+  };
   useEffect(() => {
     if (busy || approval || !queued.length) return;
     if (stopped.current) {
@@ -1908,7 +1918,10 @@ ${snippet}
     const isCommand = (text: string) => text.startsWith("/");
     const take = isCommand(queued[0]!) ? 1 : Math.max(1, queued.findIndex(isCommand) === -1 ? queued.length : queued.findIndex(isCommand));
     setQueued(queued.slice(take));
-    send(queued.slice(0, take).join("\n\n"));
+    const text = queued.slice(0, take).join("\n\n");
+    const previous = unfinished.current;
+    unfinished.current = null;
+    send(text, previous && !isCommand(text) ? finishAfter(text, previous) : undefined);
   }, [busy, approval, queued]);
   // When a reply points at places in the code (Nou's engine with show_places, the others with a ```nou-show
   // block, which is taken out of the reply), the first one opens highlighted and the rest are listed.
@@ -2045,8 +2058,7 @@ ${snippet}
   /** Stops Nou and sends what's queued right away (a click on the queue, or /now). */
   const sendNow = () => {
     if (!queued.length) return;
-    stop();
-    stopped.current = false; // what's queued is meant to go
+    interruptToSend();
   };
   /**
    * From the chat: while Nou works, a message waits its turn, or (`now`: Alt+Enter) stops Nou and goes right
@@ -2056,12 +2068,12 @@ ${snippet}
     if (!busy || (text.startsWith("/") && runsWhileBusy(text))) return send(text);
     const now = settings.sendNowWhileBusy ? !alt : alt;
     if (now) {
-      stop();
-      stopped.current = false; // this one is meant to go
+      interruptToSend();
       setQueued((q) => [text, ...q]);
     } else setQueued((q) => [...q, text]);
   };
-  const send = (text: string) => {
+  /** `forAgent`: what the agent gets instead of `text` (the chat still shows `text`). */
+  const send = (text: string, forAgent?: string) => {
     // Right after /resume lists them, a number picks a conversation instead of being sent to the agent.
     const picking = pickingResume.current;
     pickingResume.current = false;
@@ -2077,7 +2089,8 @@ ${snippet}
       return;
     }
     setEntries((prev) => [...prev, { kind: "user", text }]);
-    void agentRef.current!.send(text, editorContext() ?? undefined);
+    lastAsked.current = forAgent ?? text;
+    void agentRef.current!.send(forAgent ?? text, editorContext() ?? undefined);
   };
 
   function saveFromEditor(text: string, file = openFile) {

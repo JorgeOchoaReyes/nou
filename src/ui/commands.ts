@@ -106,3 +106,12 @@ export function matchCommands(typed: string, extra: SlashCommand[] = []): SlashC
   const contains = query ? all.filter((c) => !c.name.startsWith(query) && (c.name.includes(query) || c.description.includes(query))) : [];
   return [...starts.sort((a, b) => Number(b.name === query) - Number(a.name === query)), ...contains];
 }
+
+/**
+ * A message sent while Nou was working stops it so it's answered now, but what Nou was on isn't dropped:
+ * the agent is told what that was and to finish it after, unless the new message says otherwise.
+ */
+export function finishAfter(text: string, previous: string): string {
+  const was = previous.length > 6000 ? `${previous.slice(0, 6000)}…` : previous;
+  return `${text}\n\n[Sent while you were still working on my previous message, so you were interrupted. Handle this first, then carry on with and finish the previous request, picking up where you left off (don't redo finished steps), unless this message cancels or replaces it. The previous request was:\n${was}]`;
+}
