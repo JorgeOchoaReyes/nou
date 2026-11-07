@@ -10,7 +10,7 @@ import { C, SPINNER, ANIMATION_MS } from "./theme.js";
 import { useTerminalFocused } from "./focus.js";
 import { Pane } from "./Pane.js";
 import { SLASH_COMMANDS, matchCommands, type SlashCommand } from "./commands.js";
-import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
+import { Scrollbar, topFor, type ScrollTo, usePaneWheel } from "./scroll.js";
 
 type Props = {
   width: number;
@@ -24,7 +24,8 @@ type Props = {
   approvalNote?: string | null;
   /** Short description of the editor context sent with the next message, e.g. "src/a.ts:10-40". */
   contextChip: string | null;
-  wheel?: Wheel | null;
+  /** Which pane's wheel scrolls this (see sendWheel). */
+  wheelPane?: string;
   /** A click or drag on the scrollbar. */
   scrollTo?: ScrollTo | null;
   /** Text to start the input with, e.g. "/" typed in another pane. */
@@ -73,8 +74,8 @@ type Line = {
 function stepLines(steps: ChatEntry[], open: boolean, live: boolean, inner: number): Line[] {
   const last = steps[steps.length - 1]!.text.replace(/\s+/g, " ");
   const summary = `${open ? "▾" : "▸"} ${steps.length} steps${open ? "" : ` · ${live ? "now: " : "last: "}${last}`}`;
-  const head: Line = { text: ` ${summary.length > inner - 4 ? `${summary.slice(0, inner - 5)}…` : summary}`, color: open ? C.accent2 : C.dim, lead: " ⚙", leadColor: C.dim, toggle: steps[0]! };
-  return open ? [head, ...steps.flatMap((e) => cachedLines(e, inner).map((l) => (l.lead === " ⚙" ? { ...l, lead: "  " } : l)))] : [head];
+  const head: Line = { text: ` ${summary.length > inner - 4 ? `${summary.slice(0, inner - 5)}…` : summary}`, color: open ? C.accent2 : C.dim, lead: " ◇", leadColor: C.dim, toggle: steps[0]! };
+  return open ? [head, ...steps.flatMap((e) => cachedLines(e, inner).map((l) => (l.lead === " ◇" ? { ...l, lead: "  " } : l)))] : [head];
 }
 const BAR = "▌ ";
 
@@ -114,8 +115,8 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
     out.push({ text: "" });
   } else {
     const style = entry.kind === "tool"
-      ? { icon: "⚙", color: C.dim }
-      : entry.kind === "error" ? { icon: "✗", color: C.red } : { icon: "ℹ", color: C.accent };
+      ? { icon: "◇", color: C.dim }
+      : entry.kind === "error" ? { icon: "✗", color: C.red } : { icon: "ⓘ", color: C.accent };
     wrap(entry.text, inner - 4).forEach((line, i) => {
       const spans = links && entry.kind !== "user" ? linkFileRefs(linkUrls([{ text: ` ${line}` }]), isProjectFile) : [];
       out.push({ text: ` ${line}`, color: style.color, lead: i === 0 ? ` ${style.icon}` : "  ", leadColor: style.color, ...(spans.some((sp) => sp.link) ? { spans } : {}) });
@@ -142,18 +143,20 @@ export type ChatTabItem = { id: string; label: string; state: "idle" | "busy" | 
  * Where each tab sits in the chat's title row (columns from the pane's inner left edge), and the "+"
  * that opens a new one: shared by the drawing and the clicks.
  */
-export function chatTabZones(tabs: ChatTabItem[]): { zones: { id: string; from: number; to: number }[]; plus: number; width: number } {
+export function chatTabZones(tabs: ChatTabItem[]): { zones: { id: string; from: number; to: number; close?: boolean }[]; plus: number; width: number } {
   // One tab: just "Chat +", to leave the title row its room.
   if (tabs.length === 1) return { zones: [{ id: tabs[0]!.id, from: 3, to: 7 }], plus: 8, width: 9 };
   let x = 3; // " ◆ "
-  const zones = tabs.map((t) => {
+  // Each tab, then its × (which closes it).
+  const zones = tabs.flatMap((t) => {
     const w = tabText(t).length;
-    const zone = { id: t.id, from: x, to: x + w };
-    x += w + 1;
-    return zone;
+    const both = [{ id: t.id, from: x, to: x + w }, { id: t.id, from: x + w, to: x + w + TAB_CLOSE.length, close: true }];
+    x += w + TAB_CLOSE.length + 1;
+    return both;
   });
   return { zones, plus: x + 1, width: x + 3 };
 }
+const TAB_CLOSE = "× ";
 const tabText = (t: ChatTabItem) => ` ${t.state === "busy" ? "● " : t.state === "waiting" ? "! " : ""}${t.label} `;
 
 /** `word`: a double-click (the word, path or link under it); `block`: a triple-click (the whole paragraph). */
@@ -164,7 +167,8 @@ const WORD_CHAR = /[\p{L}\p{N}_.\-/@:~#%?=&+]/u;
 type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheel, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [], sendNowFirst = false, onSendNow }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheelPane, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [], sendNowFirst = false, onSendNow }: Props) {
+  const wheel = usePaneWheel(wheelPane);
   const [input, setInputText] = useState("");
   // Whether the chat has the keyboard right now: a key handler from a render before focus moved away can
   // still be attached for a moment (on a busy machine), and its keys belong to the pane that has focus.
@@ -231,17 +235,17 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
 
   const footer: Line[] = [];
   if (approval?.kind === "command") {
-    footer.push({ text: "⚡ Run this command?", color: C.yellow, bold: true });
+    footer.push({ text: "› Run this command?", color: C.yellow, bold: true });
     for (const line of wrap(`$ ${approval.command}`, inner - 2)) footer.push({ text: ` ${line}`, color: C.text });
     footer.push({ text: " [y] allow   [n] deny   [Esc] stop", color: C.yellow });
   } else if (approval?.kind === "tool") {
-    footer.push({ text: `🔌 ${approval.name.startsWith("mcp__") ? `MCP tool ${approval.name.split("__")[1]} → ${approval.name.split("__").slice(2).join("__")}` : `Plugin tool: ${approval.name}`}`, color: C.yellow, bold: true });
+    footer.push({ text: `◇ ${approval.name.startsWith("mcp__") ? `MCP tool ${approval.name.split("__")[1]} → ${approval.name.split("__").slice(2).join("__")}` : `Plugin tool: ${approval.name}`}`, color: C.yellow, bold: true });
     for (const line of wrap(JSON.stringify(approval.args), inner - 2).slice(0, 4)) footer.push({ text: ` ${line}`, color: C.text });
     footer.push({ text: " [y] allow   [n] deny   [Esc] stop", color: C.yellow });
   } else if (approval?.kind === "change") {
-    footer.push({ text: `✎ Nou wants to ${approval.change.isNew ? "create" : "edit"} ${approval.change.path}`, color: C.yellow, bold: true });
+    footer.push({ text: `± Nou wants to ${approval.change.isNew ? "create" : "edit"} ${approval.change.path}`, color: C.yellow, bold: true });
     if (approvalNote) {
-      footer.push({ text: "⚠ This edit adds problems:", color: C.red, bold: true });
+      footer.push({ text: "▲ This edit adds problems:", color: C.red, bold: true });
       for (const line of wrap(approvalNote, inner - 2).slice(0, 6)) footer.push({ text: ` ${line}`, color: C.red });
     }
     footer.push({ text: " [y] accept   [n] reject   [o] show it   [Esc] stop", color: C.yellow });
@@ -249,7 +253,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
     footer.push({ text: `${SPINNER[frame % SPINNER.length]} ${busy}`, color: C.accent2 });
   }
   // Click what's queued (or /now) to stop Nou and send it right away.
-  for (const text of queued) footer.push({ text: `⏳ next: ${text.replace(/\s+/g, " ")}`, color: C.dim, sendNow: true });
+  for (const text of queued) footer.push({ text: `⧗ next: ${text.replace(/\s+/g, " ")}`, color: C.dim, sendNow: true });
   if (queued.length && busy) footer.push({ text: "   ↳ click to send now, or /now", color: C.accent2, sendNow: true });
 
   // Typing "/" opens a menu of commands with what each does; ↑↓ pick one, Tab completes, Enter runs it.
@@ -441,6 +445,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
               <Text {...(t.id === tabs.active ? { backgroundColor: C.panel, color: C.text, bold: true } : { color: t.state === "waiting" ? C.yellow : C.dim })}>
                 {tabText(t)}
               </Text>
+              <Text color={C.dim} {...(t.id === tabs.active ? { backgroundColor: C.panel } : {})}>{TAB_CLOSE}</Text>
               {" "}
             </Text>
           ))}

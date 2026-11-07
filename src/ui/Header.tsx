@@ -11,13 +11,15 @@ const VERSION = `v${currentVersion()}`;
 const LEAD = ` ◆ NOU ${VERSION}  │  `;
 
 const tabLabel = (t: WorkspaceTab, i: number) => ` ${i + 1} ${t.name}${t.busy ? " ●" : ""} `;
+/** Each workspace tab ends with a × that closes it. */
+const CLOSE = "× ";
 
 /**
  * Where each workspace tab, and the + that opens one, sits in the header row: for clicks. With one workspace
  * (not hosted) there's just the project's name and the +.
  */
-export function headerZones(tabs: WorkspaceTab[]): { from: number; to: number; tab: number | "new" }[] {
-  const zones: { from: number; to: number; tab: number | "new" }[] = [];
+export function headerZones(tabs: WorkspaceTab[]): { from: number; to: number; tab: number | "new"; close?: boolean }[] {
+  const zones: { from: number; to: number; tab: number | "new"; close?: boolean }[] = [];
   let x = LEAD.length;
   if (!tabs.length) {
     x += path.basename(process.cwd()).length + 1;
@@ -25,7 +27,8 @@ export function headerZones(tabs: WorkspaceTab[]): { from: number; to: number; t
     tabs.forEach((t, i) => {
       const w = tabLabel(t, i).length;
       zones.push({ from: x, to: x + w, tab: i });
-      x += w + 1;
+      zones.push({ from: x + w, to: x + w + CLOSE.length, tab: i, close: true });
+      x += w + CLOSE.length + 1;
     });
   }
   zones.push({ from: x, to: x + 3, tab: "new" });
@@ -77,6 +80,7 @@ export const Header = memo(function Header({ width, branch, changes, model, loca
             ? tabs.map((t, i) => (
               <Text key={t.id}>
                 <Text {...(t.active ? { backgroundColor: C.panel } : {})} color={t.active ? C.accent : C.text} bold={t.active}>{tabLabel(t, i)}</Text>
+                <Text {...(t.active ? { backgroundColor: C.panel } : {})} color={C.dim}>{CLOSE}</Text>
                 {" "}
               </Text>
             ))

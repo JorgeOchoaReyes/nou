@@ -269,7 +269,7 @@ export function renderMarkdown(text: string, width: number, isFile?: (file: stri
     const item = raw.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?(.*)/);
     if (item) {
       const depth = Math.floor(item[1]!.length / 2) * 2;
-      const task = item[3] ? (/x/i.test(item[3]) ? "☑ " : "☐ ") : "";
+      const task = item[3] ? (/x/i.test(item[3]) ? "■ " : "□ ") : "";
       const bullet = `${" ".repeat(depth)}${/\d/.test(item[2]!) ? item[2] : "•"} ${task}`;
       for (const line of wrapSpans([{ text: bullet }, ...spansOf(item[4]!)], width, bullet.length)) out.push({ kind: "text", spans: line });
       continue;

@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { useState, useSyncExternalStore } from "react";
 import { C } from "./theme.js";
 
 /**
@@ -10,6 +11,35 @@ export type Wheel = { lines: number; columns: number; nonce: number };
 
 /** A click or drag on a pane's scrollbar: `fraction` 0 is the top of the track, 1 the bottom. */
 export type ScrollTo = { fraction: number; nonce: number };
+
+const wheels = new Map<string, Wheel>();
+const wheelListeners = new Map<string, Set<() => void>>();
+
+/**
+ * Hands a pane its wheel total. Only that pane draws again, not the whole app: scrolling is the most
+ * frequent thing there is, and every pane redrawing for it was most of its cost.
+ */
+export function sendWheel(pane: string, lines: number, columns: number): void {
+  wheels.set(pane, { lines, columns, nonce: (wheels.get(pane)?.nonce ?? 0) + 1 });
+  for (const fn of wheelListeners.get(pane) ?? []) fn();
+}
+
+/** The latest wheel total for `pane` (see sendWheel) since this pane appeared; null before that. */
+export function usePaneWheel(pane: string | undefined): Wheel | null {
+  // A pane that opens later (the editor, say) mustn't replay a wheel meant for what was there before.
+  const [since] = useState(() => (pane ? wheels.get(pane)?.nonce ?? 0 : 0));
+  const wheel = useSyncExternalStore(
+    (fn) => {
+      if (!pane) return () => {};
+      let set = wheelListeners.get(pane);
+      if (!set) wheelListeners.set(pane, (set = new Set()));
+      set.add(fn);
+      return () => set.delete(fn);
+    },
+    () => (pane ? wheels.get(pane) ?? null : null),
+  );
+  return wheel && wheel.nonce > since ? wheel : null;
+}
 
 /** Lines a single wheel notch moves. */
 export const WHEEL_STEP = 3;

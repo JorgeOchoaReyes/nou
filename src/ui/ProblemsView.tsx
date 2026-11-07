@@ -4,7 +4,7 @@ import type { Diagnostic } from "../diagnostics/index.js";
 import { C, SPINNER, fileIcon, ANIMATION_MS } from "./theme.js";
 import { useTerminalFocused } from "./focus.js";
 import { Pane } from "./Pane.js";
-import type { Wheel } from "./scroll.js";
+import { usePaneWheel } from "./scroll.js";
 
 type Props = {
   width: number;
@@ -13,7 +13,8 @@ type Props = {
   problems: Diagnostic[];
   /** Checkers still running, e.g. ["TypeScript"]. */
   checking: string[];
-  wheel?: Wheel | null;
+  /** Which pane's wheel scrolls this (see sendWheel). */
+  wheelPane?: string;
   onJump(file: string, line: number): void;
   onClose(): void;
 };
@@ -23,10 +24,11 @@ type Row = { kind: "file"; file: string; errors: number; warnings: number } | { 
 export const SEVERITY_STYLE = {
   error: { icon: "✗", color: C.red },
   warning: { icon: "▲", color: C.yellow },
-  info: { icon: "ℹ", color: C.accent },
+  info: { icon: "ⓘ", color: C.accent },
 } as const;
 
-export function ProblemsView({ width, height, focused, problems, checking, wheel, onJump, onClose }: Props) {
+export function ProblemsView({ width, height, focused, problems, checking, wheelPane, onJump, onClose }: Props) {
+  const wheel = usePaneWheel(wheelPane);
   const [cursor, setCursor] = useState(0);
   const [onlyErrors, setOnlyErrors] = useState(false);
   const windowFocused = useTerminalFocused();

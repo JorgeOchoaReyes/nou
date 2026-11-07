@@ -58,9 +58,27 @@ console.log("Fast text widths");
   }
   check(`every character on the fast path is one column wide${wrong.length ? ` (not: ${wrong.slice(0, 8).join(" ")})` : ""}`, wrong.length === 0);
   const fast = fastStringWidth(real);
-  const samples = ["", "plain ascii", "│ box ┃ ─ ▸ ✓ ✖ ☁ ⎇", "wide 中文 text", "emoji 🌞 and ✔️", "e\u0301 combining", "\x1b[31mred\x1b[39m", "tab\there", "👩‍💻 zwj", "☀\ufe0f"];
+  const samples = ["", "plain ascii", "│ box ┃ ─ ▸ ✓ ✖ ☁ ⎇", "wide 中文 text", "emoji and ✔️", "e\u0301 combining", "\x1b[31mred\x1b[39m", "tab\there", "👩‍💻 zwj", "☀\ufe0f"];
   check("same widths as string-width, fast path or not", samples.every((t) => fast(t) === real(t) && fast(t) === real(t)));
   check("options still reach string-width", fast("±", { ambiguousIsNarrow: false }) === real("±", { ambiguousIsNarrow: false }));
+  // Ink's line-update, and the fast path in front of it: the same bytes for any pair of lines.
+  const { fastLineUpdate } = await import("../src/ui/line-update-shim.js");
+  const inkDir = path.dirname(fileURLToPath(import.meta.resolve("ink")));
+  const realLine = (await import(pathToFileURL(path.join(inkDir, "line-update.js")).href + "?real")).default;
+  const fastLine = fastLineUpdate(realLine);
+  const parts = ["│ ", "abc", "─┃", "\x1b[31m", "\x1b[39m", "\x1b[1;38;2;1;2;3m", "▸ ✓", "中", "e\u0301", " ", "\t", "x", "✦◆"];
+  let seed = 7;
+  const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2147483648) % n);
+  const line = () => Array.from({ length: rand(12) }, () => parts[rand(parts.length)]).join("");
+  let same = 0;
+  const cases = 20_000;
+  for (let i = 0; i < cases; i++) {
+    const a = line();
+    const b = rand(3) ? a.slice(0, rand(a.length + 1)) + line() : line();
+    const cols = [undefined, 1, 8, 20, 80][rand(5)];
+    if (fastLine(a, b, cols) === realLine(a, b, cols)) same++;
+  }
+  check(`changed lines are redrawn exactly as Ink would (${same}/${cases})`, same === cases);
 }
 
 console.log("Go to definition and file links");
@@ -1140,17 +1158,26 @@ console.log("Workspaces (several Nous in one window)");
   type("s1\r");
   const switched = await waitFor(new RegExp(`\\[redraw 1 ${nameA}\\]`));
   out = "";
+  type("c2\r"); // workspace 1 (on screen) clicks workspace 2's ×
+  const closedByX = await waitFor(new RegExp(`\\[tabs ${nameA}\\*\\]`));
+  type(`n${b}\r`); // and opens it again
+  await waitFor(new RegExp(`\\[redraw 3 ${nameB}\\]`));
+  out = "";
   type("q\r");
-  const closed = await waitFor(new RegExp(`\\[redraw 2 ${nameB}\\]`));
+  const closed = await waitFor(new RegExp(`\\[redraw 1 ${nameA}\\]`));
   type("q\r");
   const code = await Promise.race([finished, new Promise((r) => setTimeout(() => r("hung"), 5000))]);
   (process.stdout as any).write = write;
   check("the last folder opened is on screen, drawn in full", opened);
   check("switching shows the other workspace, which redraws", switched);
+  check("a workspace's × closes it (it's asked to quit)", closedByX);
   check("closing one brings the other back", closed);
   check("closing the last one ends the window", code === 0);
   const zones = headerZones([{ id: "1", name: "app", folder: "/x/app", busy: false, active: true }, { id: "2", name: "api", folder: "/x/api", busy: true, active: false }]);
-  check("header clicks find each tab and the +", zones.length === 3 && zones[0]!.tab === 0 && zones[1]!.tab === 1 && zones[2]!.tab === "new" && zones[1]!.from === zones[0]!.to + 1);
+  const tabsOnly = zones.filter((z) => !z.close);
+  const closers = zones.filter((z) => z.close);
+  check("header clicks find each tab, its ×, and the +", tabsOnly.length === 3 && tabsOnly[0]!.tab === 0 && tabsOnly[1]!.tab === 1 && tabsOnly[2]!.tab === "new"
+    && closers.length === 2 && closers[0]!.tab === 0 && closers[0]!.from === tabsOnly[0]!.to && tabsOnly[1]!.from === closers[0]!.to + 1);
 }
 
 console.log("Codex sessions as current Codex writes them");
