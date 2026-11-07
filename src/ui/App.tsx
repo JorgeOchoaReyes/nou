@@ -1435,6 +1435,12 @@ export function App({ initialModel, permContext, resume }: Props) {
       if (focus !== "chat" && focus !== "terminal" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
       if (focus !== "chat" && input === "o" && pendingChange) return openPending();
     }
+    // Zoom the code panel from anywhere: Ctrl+= / Ctrl+- / Ctrl+0, in terminals that report Ctrl with those
+    // keys (the kitty keyboard protocol Nou asks for). Elsewhere Ctrl+- is the same key as Ctrl+/, so it's
+    // left alone; + and - in the code or the files work in every terminal.
+    if (key.ctrl && (input === "=" || input === "+" || input === "-" || input === "0") && !key.meta) {
+      return zoomCode(input === "0" ? 0 : input === "-" ? -1 : 1);
+    }
     if (key.ctrl && input === "p") {
       setQuickOpen("");
       return;
@@ -1486,7 +1492,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       setCodeZoom(0);
       setPaneWidths(null);
       updateSettings({ paneWidths: null });
-    } else if ((input === "+" || input === "-") && focus === "code") {
+    } else if ((input === "+" || input === "-") && (focus === "code" || focus === "tree")) {
       zoomCode(input === "+" ? 1 : -1);
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
@@ -2353,7 +2359,7 @@ ${snippet}
             ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
             : diff
               ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-              : [["double-click/e", "edit"], [FIND_KEY, "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+              : [["double-click/e", "edit"], [FIND_KEY, "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["+ -", "zoom"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const followChip = follow ? ` ◉ follow${followLag ? ` ·${followLag}` : ""} ` : " ○ follow ";
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✗ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
@@ -2368,7 +2374,7 @@ ${snippet}
     y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
     "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
-    e: startEditing, "double-click/e": startEditing, b: goBack, [FIND_KEY]: showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    "+ -": () => zoomCode(1), e: startEditing, "double-click/e": startEditing, b: goBack, [FIND_KEY]: showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
     Esc: busy ? stop : diff && !showEditor ? () => setDiffMode("off") : undefined,
   };

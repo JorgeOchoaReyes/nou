@@ -94,7 +94,7 @@ Every change is reviewed like a code review:
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
-| <kbd>+</kbd> / <kbd>-</kbd> (in the code) or `/zoom in` / `/zoom out` | make the code panel bigger or smaller, a step at a time: the files and chat give or take the room; <kbd>=</kbd> or `/zoom reset` puts it back (for bigger text, use your terminal's zoom, Cmd/Ctrl and +) |
+| <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> from anywhere (or <kbd>+</kbd> / <kbd>-</kbd> in the code or files) | zoom the code panel bigger or smaller, a step at a time: the files and chat give or take the room; <kbd>Ctrl</kbd>+<kbd>0</kbd> or <kbd>=</kbd> puts it back. Ctrl+= and Ctrl+- need a terminal with the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2). For bigger text, use your terminal's own zoom |
 | <kbd>b</kbd> | back to the previous file (press again to flip back) |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>Cmd</kbd>+<kbd>F</kbd> on a Mac, in terminals that report Cmd: Ghostty, kitty, WezTerm, iTerm2) | find in the open file, from any pane: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
 | 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, any tab's × to close it, ‹ › for ones that don't fit · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> or <kbd>Ctrl</kbd>+<kbd>W</kbd> close |
@@ -135,7 +135,7 @@ Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` 
 
 A small typo in a command still works when it only changes the screen (`/termnial` opens the terminal); for others Nou asks "Did you mean...?" instead of guessing.
 
-New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol), or type `\` and press <kbd>Enter</kbd> in any terminal.
+New lines in a message: <kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> in terminals that report them (kitty, Ghostty, WezTerm, iTerm2 and others with the kitty keyboard protocol, which Nou checks for before it starts; also xterm's modifyOtherKeys form), or type `\` and press <kbd>Enter</kbd> in any terminal.
 
 Conversations are saved per folder after each reply. `/resume` opens a picker (↑↓ and Enter, type to filter, or type its number) and `/resume 2` (or `nou --continue` for the last one, `nou --resume` for the list) picks one back up with the engine it was on: Nou's own engine restores its messages, Claude Code its session and Codex its thread; pi is handed the conversation so far. Sessions you started in Claude Code's or Codex's own CLI in this folder are listed too (marked "CLI"), and resuming one carries it on in that engine inside Nou.
 

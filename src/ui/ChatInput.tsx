@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput, usePaste } from "ink";
+import { Box, Text, useInput, usePaste, useStdin } from "ink";
 import { C } from "./theme.js";
 
 type Segment = { start: number; end: number };
@@ -50,9 +50,11 @@ type Props = {
   maxLines?: number;
   /** ↑/↓ belong to something else right now (the command menu). */
   arrowsTaken?: boolean;
+  /** The first this-many characters are a command Nou knows ("/zoom"): drawn in the command color. */
+  command?: number;
 };
 
-export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder, history, maxLines = 6, arrowsTaken = false }: Props) {
+export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder, history, maxLines = 6, arrowsTaken = false, command = 0 }: Props) {
   const [cursor, setCursor] = useState(value.length);
   const [recall, setRecall] = useState<number | null>(null);
   const stash = useRef("");
@@ -74,6 +76,23 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
     setCursor(Math.max(0, Math.min(next.length, nextCursor)));
   };
   const insert = (text: string) => set(value.slice(0, pos) + text + value.slice(pos), pos + text.length);
+
+  // Shift/Ctrl/Cmd+Enter as xterm's modifyOtherKeys sends them (ESC [27;<mods>;13~, from terminals set up that
+  // way): Ink drops these, so they're caught here and add a line, like the kitty protocol's form does.
+  const { stdin } = useStdin();
+  const insertLine = useRef(() => {});
+  insertLine.current = () => insert("\n");
+  useEffect(() => {
+    if (!focus || !stdin) return;
+    const onData = (data: Buffer | string) => {
+      // eslint-disable-next-line no-control-regex -- the sequence starts with ESC
+      if (/\x1b\[27;([2-9]|1[0-6]);13~/.test(String(data))) insertLine.current();
+    };
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+    };
+  }, [focus, stdin]);
 
   const recallHistory = (step: -1 | 1) => {
     if (!history.length) return false;
@@ -150,16 +169,26 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
       {shown.map((s, i) => {
         const text = value.slice(s.start, s.end).replace(/\n/g, "");
         const isCursor = focus && first + i === line;
+        // A known command at the start ("/zoom in") in the command color, the rest as typed.
+        const paint = (from: number, to: number) => {
+          const cmdEnd = Math.max(from, Math.min(to, command - s.start));
+          return (
+            <>
+              {cmdEnd > from && <Text color={C.accent2} bold>{text.slice(from, cmdEnd)}</Text>}
+              <Text color={C.text}>{text.slice(cmdEnd, to)}</Text>
+            </>
+          );
+        };
         if (!isCursor) {
-          return <Text key={first + i}>{prompt(i)}<Text color={C.text}>{text || " "}</Text></Text>;
+          return <Text key={first + i}>{prompt(i)}{text ? paint(0, text.length) : " "}</Text>;
         }
         const at = pos - s.start;
         return (
           <Text key={first + i}>
             {prompt(i)}
-            <Text color={C.text}>{text.slice(0, at)}</Text>
+            {paint(0, at)}
             <Text inverse>{text[at] ?? " "}</Text>
-            <Text color={C.text}>{text.slice(at + 1)}</Text>
+            {paint(at + 1, text.length)}
           </Text>
         );
       })}

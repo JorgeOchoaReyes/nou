@@ -838,6 +838,11 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press(KEY.enter, 150); // \ then Enter, in any terminal
   await type("line four");
   check("Ctrl+Enter, Cmd+Enter and \\+Enter add lines instead of sending", inputLines().length === 4 && !frame().includes("◆ nou") && !frame().includes("line three\\"));
+  await press("\x1b[13;2u", 150); // Shift+Enter (kitty keyboard protocol)
+  await type("line five");
+  await press("\x1b[27;2;13~", 150); // Shift+Enter (xterm modifyOtherKeys)
+  await type("line six");
+  check("Shift+Enter adds a line too, as either protocol sends it", frame().includes("line five") && frame().includes("line six") && !frame().includes("◆ nou") && !frame().includes("27;2;13"));
 });
 
 console.log("Show me how");
@@ -1100,6 +1105,10 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await type("zoom reset");
   await press(KEY.enter, 300);
   check("/zoom reset puts it back", await until(() => chatAt() === before.chat && treeEnd() === before.tree));
+  await press("\x1b[61;5u", 200); // Ctrl+=, as terminals with the kitty keyboard protocol send it
+  check("Ctrl+= zooms in from anywhere, even the chat, without a command", await until(() => chatAt() > before.chat) && !frame().includes("❯ ="));
+  await press("\x1b[48;5u", 200); // Ctrl+0
+  check("Ctrl+0 puts it back", await until(() => chatAt() === before.chat));
 });
 
 console.log("Show me how on another engine");
