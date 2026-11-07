@@ -577,7 +577,9 @@ console.log("Queueing and interrupting");
     await until(() => heard.at(-1) === "third");
     await type("urgent");
     await press("\x1b\r", 100);
-    check("Alt+Enter stops Nou and sends right away", await until(() => heard.at(-1) === "urgent" && frame().includes("Cancelled")));
+    check("Alt+Enter stops Nou and sends right away", await until(() => !!heard.at(-1)?.startsWith("urgent") && frame().includes("Cancelled")));
+    check("and Nou is told to finish what it was on after, not drop it", /finish the previous request[\s\S]*third\]$/.test(heard.at(-1) ?? ""));
+    check("the chat shows just what you typed", frame().includes("urgent") && !frame().includes("Sent while you were"));
     await idle();
     await type("later");
     await press(KEY.enter, 100);
@@ -600,7 +602,7 @@ console.log("Queueing and interrupting");
     check("what's queued says it can be sent now", await until(() => frame().includes("⧗ next: by command") && frame().includes("click to send now")));
     await type("/now");
     await press(KEY.enter, 100);
-    check("/now stops Nou and sends what's queued", await until(() => heard.at(-1) === "by command"));
+    check("/now stops Nou and sends what's queued", await until(() => !!heard.at(-1)?.startsWith("by command")));
     await idle();
     await type("once more");
     await press(KEY.enter, 100);
@@ -610,7 +612,7 @@ console.log("Queueing and interrupting");
     await until(() => frame().includes("⧗ next: by click"));
     const row = frame().split("\n").findIndex((l) => l.includes("⧗ next: by click"));
     await press(click(96, row), 100); // the chat is the right-hand pane of the 100-column screen
-    check("clicking a queued message sends it now", await until(() => heard.at(-1) === "by click"));
+    check("clicking a queued message sends it now", await until(() => !!heard.at(-1)?.startsWith("by click")));
   });
 }
 
