@@ -90,7 +90,7 @@ const ICONS: Record<string, [string, string]> = Object.fromEntries(Object.entrie
 
 export function fileIcon(file: string): { icon: string; color: string } {
   const base = path.basename(file).toLowerCase();
-  if (base.startsWith(".env")) return { icon: "⚿", color: C.yellow };
+  if (base.startsWith(".env")) return { icon: "⌁", color: C.yellow };
   if (base.startsWith(".git")) return { icon: "◌", color: C.orange };
   if (base === "package.json") return { icon: "⬢", color: C.green };
   const [icon, color] = ICONS[path.extname(base)] ?? ["•", C.dim];

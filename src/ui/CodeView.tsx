@@ -8,7 +8,7 @@ import { foldRanges, highlightLines, markAnsi, sideBySide, sliceAnsi, splitLines
 import { C, fileIcon, gradient } from "./theme.js";
 import { isFind } from "./keys.js";
 import { Pane } from "./Pane.js";
-import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
+import { Scrollbar, topFor, type ScrollTo, usePaneWheel } from "./scroll.js";
 
 type Props = {
   /** /showme is showing a place in this file: "2/6". The pane takes /showme's color, as it takes green for editing. */
@@ -36,7 +36,8 @@ type Props = {
   syntaxVersion: number;
   /** A one-line note for the problems count, e.g. "+2 problems" on a proposed edit. */
   diffNote?: string | null;
-  wheel?: Wheel | null;
+  /** Which pane's wheel scrolls this (see sendWheel). */
+  wheelPane?: string;
   /** A click or drag on the scrollbar. */
   scrollTo?: ScrollTo | null;
   /** The first and last file lines on screen, and every line shown (folds hide some in between). */
@@ -64,7 +65,8 @@ const CURRENT_MATCH = ["\x1b[43m\x1b[30m", "\x1b[49m\x1b[39m"] as const;
 const SIDE_STEP = 8;
 const EDIT_HINT = "   double-click or e to edit · v diff";
 
-export const CodeView = memo(function CodeView({ showing, width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheel, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest, foldClick, foldAll }: Props) {
+export const CodeView = memo(function CodeView({ showing, width, height, focused, filePath, content, diff, diffLabel, pending, marked, problems, focusLine, syntaxVersion, diffNote, wheelPane, scrollTo, onViewport, defineAt, onDefine, tabs, onFinding, findRequest, foldClick, foldAll }: Props) {
+  const wheel = usePaneWheel(wheelPane);
   const [top, setTop] = useState(0);
   // Columns scrolled sideways (colors are kept: see sliceAnsi).
   const [left, setLeft] = useState(0);
@@ -287,7 +289,7 @@ export const CodeView = memo(function CodeView({ showing, width, height, focused
             <Text key={i}>{gradient(line, i).map((g, j) => <Text key={j} color={g.color}>{g.ch}</Text>)}</Text>
           ))}
           <Text> </Text>
-          <Text bold color={C.text}>Hello, I am Nou! 🌞  Your terminal coding companion.</Text>
+          <Text bold color={C.text}>Hello, I am Nou!  Your terminal coding companion.</Text>
           <Text color={C.dim}>Ask in the chat on the right. Files I read or edit open here as I work.</Text>
           <Text> </Text>
           {tips.map(([k, d]) => (

@@ -8,7 +8,7 @@ import { C, fileIcon } from "./theme.js";
 import { FIND_KEY, isFind } from "./keys.js";
 import { SEVERITY_STYLE } from "./ProblemsView.js";
 import { Pane } from "./Pane.js";
-import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
+import { Scrollbar, topFor, type ScrollTo, usePaneWheel } from "./scroll.js";
 import { copyToClipboard, readClipboard } from "./clipboard.js";
 import { guideProgress } from "../guide/index.js";
 
@@ -38,7 +38,8 @@ type Props = {
   problems: Diagnostic[];
   autoSave: AutoSave;
   syntaxVersion: number;
-  wheel?: Wheel | null;
+  /** Which pane's wheel scrolls this (see sendWheel). */
+  wheelPane?: string;
   scrollTo?: ScrollTo | null;
   mouse?: EditorMouse[];
   onSave(text: string): void;
@@ -144,7 +145,8 @@ const PlainRow = memo(function PlainRow({ num, numColor, text }: { num: string; 
 });
 
 /** A text editor: arrows and the mouse to move, Shift to select, Ctrl+C/X/V clipboard, Ctrl+S save, Ctrl+Z undo, Esc leave. */
-export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheel, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs, guide, onGuideDone }: Props) {
+export const Editor = memo(function Editor({ width, height, focused, filePath, initial, baseline, startLine, startCol, problems, autoSave, syntaxVersion, wheelPane, scrollTo, mouse, onSave, onExit, onState, onHover, onDefinition, tabs, guide, onGuideDone }: Props) {
+  const wheel = usePaneWheel(wheelPane);
   const eol = useMemo(() => (baseline.includes("\r\n") ? "\r\n" : "\n"), [baseline]);
   const indentUnit = useMemo(() => (/^\t/m.test(initial) ? "\t" : "  "), [initial]);
   const comment = useMemo(() => commentFor(filePath), [filePath]);
@@ -651,7 +653,7 @@ export const Editor = memo(function Editor({ width, height, focused, filePath, i
   const cursorVisible = buf.row >= v.top && buf.row < v.top + rows;
 
   return (
-    <Pane title={<>{tabs ?? <> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}</>}  <Text backgroundColor={C.green} color={C.onBadge}> ✎ EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
+    <Pane title={<>{tabs ?? <> <Text color={color}>{icon}</Text> {filePath}{dirty ? <Text color={C.yellow}> ●</Text> : ""}</>}  <Text backgroundColor={C.green} color={C.onBadge}> ± EDITING </Text>{!cursorVisible ? <Text color={C.dim}>  cursor on line {buf.row + 1} · ↑↓ to go back</Text> : null}</>} width={width} height={height} focused={focused} accent={C.green}>
       <Box flexDirection="row" height={rows}>
         <Box flexDirection="column" width={width - 3} flexShrink={0}>
           {visible.map((line, i) => {

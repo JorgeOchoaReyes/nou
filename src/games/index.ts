@@ -264,7 +264,7 @@ export const breakout: Game<BreakoutState> = {
     return {
       lines: grid.map((r) => r.join("")),
       score: s.score,
-      status: `level ${s.level} · score ${s.score} · lives ${"♥".repeat(Math.max(0, s.lives))}`,
+      status: `level ${s.level} · score ${s.score} · lives ${"◆".repeat(Math.max(0, s.lives))}`,
       ...(s.lives <= 0 ? { over: `Game over: ${s.score} points, level ${s.level}.` } : {}),
     };
   },
@@ -278,13 +278,13 @@ type DodgeState = { w: number; h: number; x: number; rocks: Point[]; stars: Poin
 export const dodge: Game<DodgeState> = {
   id: "dodge",
   title: "Dodge",
-  blurb: "Rocks fall faster and thicker the longer you last. Catch ★ for points.",
+  blurb: "Rocks fall faster and thicker the longer you last. Catch ✦ for points.",
   controls: "←→ or a/d move",
   tickMs: 90,
   minWidth: 12,
   minHeight: 6,
   speed: (s) => Math.max(45, 90 - Math.floor(s.ticks / 60) * 5),
-  colors: { "▲": "#61afef", "●": "#d19a66", "★": "#e5c07b" },
+  colors: { "▲": "#61afef", "●": "#d19a66", "✦": "#e5c07b" },
   create(w, h, seed = Date.now()) {
     [w, h] = [Math.max(w, this.minWidth), Math.max(h, this.minHeight)];
     return { w, h, x: Math.floor(w / 2), rocks: [], stars: [], score: 0, ticks: 0, dead: false, random: rng(seed) };
@@ -313,7 +313,7 @@ export const dodge: Game<DodgeState> = {
   view(s) {
     const grid = blank(s.w, s.h);
     for (const r of s.rocks) put(grid, r.x, r.y, "●");
-    for (const r of s.stars) put(grid, r.x, r.y, "★");
+    for (const r of s.stars) put(grid, r.x, r.y, "✦");
     put(grid, s.x, s.h - 1, "▲");
     return { lines: grid.map((r) => r.join("")), score: s.score, status: `score ${s.score}`, ...(s.dead ? { over: `Hit! ${s.score} points.` } : {}) };
   },
@@ -367,7 +367,7 @@ export const hop: Game<HopState> = {
 // --- Pairs -----------------------------------------------------------------------------------------
 
 type PairsState = { cols: number; rows: number; w: number; h: number; cards: string[]; found: boolean[]; open: number[]; cursor: number; moves: number; wait: number };
-const SYMBOLS = ["◆", "●", "▲", "■", "★", "♥", "♣", "♠", "☀", "☂", "♪", "✿"];
+const SYMBOLS = ["◆", "●", "▲", "■", "✦", "◈", "⊕", "⊗", "◎", "△", "○", "✧"];
 
 /** Cards face down: flip two at a time and find every matching pair in as few moves as you can. */
 export const pairs: Game<PairsState> = {
@@ -378,7 +378,7 @@ export const pairs: Game<PairsState> = {
   tickMs: 100,
   minWidth: 16,
   minHeight: 5,
-  colors: { "◆": "#e06c75", "●": "#e5c07b", "▲": "#61afef", "■": "#98c379", "★": "#e5c07b", "♥": "#e06c75", "♣": "#98c379", "♠": "#c678dd", "☀": "#d19a66", "☂": "#56b6c2", "♪": "#c678dd", "✿": "#56b6c2", "▒": "#5c6370", "▸": "#e5c07b", "◂": "#e5c07b" },
+  colors: { "◆": "#e06c75", "●": "#e5c07b", "▲": "#61afef", "■": "#98c379", "✦": "#e5c07b", "◈": "#e06c75", "⊕": "#98c379", "⊗": "#c678dd", "◎": "#d19a66", "△": "#56b6c2", "○": "#c678dd", "✧": "#56b6c2", "▒": "#5c6370", "▸": "#e5c07b", "◂": "#e5c07b" },
   create(w, h, seed = Date.now()) {
     [w, h] = [Math.max(w, this.minWidth), Math.max(h, this.minHeight)];
     // As many cards as fit (each 4 wide, rows 2 apart), an even number, up to every symbol twice.

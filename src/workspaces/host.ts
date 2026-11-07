@@ -75,6 +75,13 @@ export async function runHost(folders: string[], firstArgs: string[], command = 
       } else if (msg.type === "switch") {
         const to = workspaces[msg.index];
         if (to && to !== active) activate(to);
+      } else if (msg.type === "close") {
+        const w = workspaces[msg.index];
+        if (!w) return;
+        // Asked to quit, it saves and exits as when you quit it; one that doesn't is stopped.
+        if (w.socket) send(w, { type: "quit" });
+        else w.pty.kill();
+        setTimeout(() => workspaces.includes(w) && w.pty.kill(), 3000);
       } else if (msg.type === "new") {
         const folder = workspaceFolder(msg.folder, from.folder);
         if (!folder) return send(from, { type: "error", text: `No such folder: ${msg.folder}` });

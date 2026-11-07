@@ -15,6 +15,8 @@ export type ToHost =
   | { type: "hello"; id: string; token: string }
   | { type: "switch"; index: number }
   | { type: "new"; folder: string }
+  /** Close that workspace (its × in the header). */
+  | { type: "close"; index: number }
   | { type: "state"; busy: boolean };
 
 /** Messages the host sends a workspace. */
@@ -22,7 +24,9 @@ export type FromHost =
   | { type: "tabs"; tabs: WorkspaceTab[] }
   /** You're on screen again: draw everything (the other workspace's picture is still there). */
   | { type: "redraw" }
-  | { type: "error"; text: string };
+  | { type: "error"; text: string }
+  /** Its tab's × was clicked: quit (saving as quitting does). */
+  | { type: "quit" };
 
 let tabs: WorkspaceTab[] = [];
 const listeners = new Set<() => void>();
@@ -61,7 +65,7 @@ export function lineReader(onMessage: (msg: any) => void): (chunk: Buffer | stri
 }
 
 /** Connects to the host (when hosted) and passes on what it says. */
-export function connectToHost(on: { redraw(): void; error(text: string): void }): void {
+export function connectToHost(on: { redraw(): void; error(text: string): void; quit(): void }): void {
   if (!isHosted() || socket) return;
   const s = net.connect(Number(process.env.NOU_HOST_PORT), "127.0.0.1");
   s.unref(); // never what keeps Nou running once you quit it
@@ -73,6 +77,7 @@ export function connectToHost(on: { redraw(): void; error(text: string): void })
       for (const fn of listeners) fn();
     } else if (msg.type === "redraw") on.redraw();
     else if (msg.type === "error") on.error(msg.text);
+    else if (msg.type === "quit") on.quit();
   }));
   s.on("error", () => {});
   s.on("close", () => (socket = null));

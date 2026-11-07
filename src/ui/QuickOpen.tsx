@@ -64,13 +64,15 @@ type Props = {
   initialQuery?: string;
   /** What the empty search box says (a picker of its own, like /resume's, says what you're picking). */
   placeholder?: string;
+  /** A line over the search box naming what this is, so it's never a mystery box (a picker says what it picks). */
+  title?: string;
   onPick(file: string): void;
   onRun(action: PaletteAction): void;
   onClose(): void;
 };
 
 /** Ctrl+P: find a file. Start with ">" (or press ?) for every action Nou has, with its shortcut. */
-export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", onPick, onRun, onClose }: Props) {
+export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", title, onPick, onRun, onClose }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [cursor, setCursor] = useState(0);
   const boxWidth = Math.min(80, Math.max(40, width - 10));
@@ -110,10 +112,16 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
   });
 
   const recentSet = useMemo(() => new Set(recent), [recent]);
+  /** Cut at the end (a title reads from the start). */
+  const fit = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s.padEnd(n));
   const pad = (s: string) => (s.length > inner ? `…${s.slice(-(inner - 1))}` : s.padEnd(inner));
 
   return (
     <Box position="absolute" top={top} left={Math.floor((width - boxWidth) / 2)} width={boxWidth} flexDirection="column" borderStyle="round" borderColor={C.accent2}>
+      <Text backgroundColor={C.panel}>
+        <Text color={C.accent2} bold>{fit(` ${title ?? (commandMode ? "Every action · type to filter (? or /actions)" : "Find a file · type part of its name (Ctrl+P or /files)")}`, inner - 6)}</Text>
+        <Text color={C.dim}>{"Esc ×".padStart(6)}</Text>
+      </Text>
       <Text backgroundColor={C.panel}>
         <Text color={C.accent2} bold> ⌕ </Text>
         <TextInput

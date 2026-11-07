@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import os from "os";
 import path from "path";
 import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 import { nouRulesOnly } from "../context/index.js";
@@ -35,7 +36,7 @@ import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
 import { SLASH_COMMANDS, closestCommand, onlyChangesScreen, runsWhileBusy, type SlashCommand } from "./commands.js";
-import { WHEEL_STEP, type ScrollTo, type Wheel } from "./scroll.js";
+import { WHEEL_STEP, sendWheel, type ScrollTo } from "./scroll.js";
 import { Chat, chatTabZones, type ChatSelect, type ChatTabItem } from "./Chat.js";
 import { copyToClipboard, openInBrowser } from "./clipboard.js";
 import { Header, headerZones } from "./Header.js";
@@ -157,6 +158,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
   /** /resume's picker: the conversations, in the palette's place while it's open. */
   const [resumePicker, setResumePicker] = useState<PaletteAction[] | null>(null);
+  /** What the open picker is for, said in its empty search box. */
+  const [pickerTitle, setPickerTitle] = useState("Resume a conversation");
   const [focus, setFocus] = useState<Focus>("chat");
   /** The Games panel: whether it's open, the pane it's being dragged over, and the pane to go back to. */
   const [gamesOpen, setGamesOpen] = useState(false);
@@ -275,7 +278,6 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [pendingNote, setPendingNote] = useState<{ short: string; detail: string | null } | null>(null);
   const [exitArmed, setExitArmed] = useState(false);
   const [update, setUpdate] = useState<string | null>(null);
-  const [wheel, setWheel] = useState<(Wheel & { pane: Focus }) | null>(null);
   const [scrollTo, setScrollTo] = useState<(ScrollTo & { pane: Focus }) | null>(null);
   const [editorMouse, setEditorMouse] = useState<EditorMouse[]>([]);
   /** Wheel events waiting for the next frame, added up per pane. */
@@ -313,6 +315,16 @@ export function App({ initialModel, permContext, resume }: Props) {
    * wider (taken from the files and chat) or narrower (given to them). 0 is the normal layout.
    */
   const [codeZoom, setCodeZoom] = useState(0);
+  // A resized terminal is drawn again in full: drawing only the lines that changed, over a screen the
+  // terminal has rewrapped, can leave pieces of the old layout behind.
+  const firstSize = useRef(true);
+  useEffect(() => {
+    if (firstSize.current) {
+      firstSize.current = false;
+      return;
+    }
+    redraw();
+  }, [columns, rows]);
   const zoomCode = (by: number) => setCodeZoom((z) => (by === 0 ? 0 : Math.max(-6, Math.min(8, z + by))));
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
@@ -486,9 +498,19 @@ export function App({ initialModel, permContext, resume }: Props) {
     switchChatTab(id);
   }
   /** Closes the conversation tab on screen (stopping its engine); the conversation stays saved for /resume. */
-  function closeChatTab() {
+  function closeChatTab(id = activeTab.current) {
     if (chatTabs.length < 2) return info("That's the only conversation tab. /clear starts a fresh conversation in it.");
-    const id = activeTab.current;
+    if (id !== activeTab.current) {
+      // A tab in the background (its ×): stop its agent and drop it; the one on screen stays.
+      const t = tabStore.current.get(id);
+      t?.approval?.resolve(false);
+      t?.agent.cancel();
+      t?.agent.dispose?.();
+      tabStore.current.delete(id);
+      tabHooks.current.delete(id);
+      setChatTabs((tabs) => tabs.filter((x) => x !== id));
+      return;
+    }
     const at = chatTabs.indexOf(id);
     const next = chatTabs[at + 1] ?? chatTabs[at - 1]!;
     const agent = agentRef.current!;
@@ -648,6 +670,7 @@ export function App({ initialModel, permContext, resume }: Props) {
         redraw();
       },
       error: (text) => info(text, "error"),
+      quit: () => quit(),
     });
   }, []);
   useEffect(() => {
@@ -717,6 +740,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       info(`Earlier conversations here (also in the picker: ↑↓ and Enter, or type a number here):\n${rows.join("\n")}`);
       // A picker over the screen: ↑↓ and Enter, or type to filter by title.
       setResumePicker(list.map((c, i) => ({ title: `${i + 1}. ${c.title}`, keys: `${where(c)} · ${ago(c.updated)}`, run: () => void resumePicked(c) })));
+      setPickerTitle("Resume a conversation · ↑↓ and Enter, or type its number");
       setQuickOpen(">");
       return;
     }
@@ -904,7 +928,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       if (cancelled) return;
       const added = newProblems(before, after);
       setPendingNote(added.length
-        ? { short: `⚠ +${added.length} problem${added.length === 1 ? "" : "s"}`, detail: added.slice(0, 3).map((d) => formatDiagnostic(d)).join("\n") }
+        ? { short: `▲ +${added.length} problem${added.length === 1 ? "" : "s"}`, detail: added.slice(0, 3).map((d) => formatDiagnostic(d)).join("\n") }
         : { short: "✓ no new problems", detail: null });
     })();
     return () => {
@@ -933,6 +957,9 @@ export function App({ initialModel, permContext, resume }: Props) {
     const tree = border === "tree" ? Math.min(Math.max(x + 1, MIN_TREE), columns - chatWidth - MIN_CODE) : treeWidth;
     const chat = border === "chat" ? Math.min(Math.max(columns - x, MIN_CHAT), columns - treeWidth - MIN_CODE) : chatWidth;
     const next = { tree: tree / columns, chat: chat / columns };
+    // Widths come from the panes as they are on screen (zoom included), so the zoom folds into them: the
+    // border lands where it's dropped instead of a zoom step away.
+    setCodeZoom(0);
     setPaneWidths(next);
     return next;
   };
@@ -966,7 +993,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     const { pane } = q;
     q.lines -= lines;
     q.columns -= columns;
-    setWheel((w) => ({ pane, lines, columns, nonce: (w?.nonce ?? 0) + 1 }));
+    sendWheel(pane, lines, columns);
     if (q.lines || q.columns) q.timer = setTimeout(flushWheel, 16);
   };
 
@@ -1078,8 +1105,8 @@ export function App({ initialModel, permContext, resume }: Props) {
     // Workspace tabs in the header: click one to switch to it, + to open another.
     if (event.kind === "click" && event.y === 0) {
       const zone = headerZones(workspaceTabs()).find((z) => event.x >= z.from && event.x < z.to);
-      if (zone?.tab === "new") return typeCommand("/workspace new ");
-      if (typeof zone?.tab === "number") return void sendToHost({ type: "switch", index: zone.tab });
+      if (zone?.tab === "new") return pickWorkspaceFolder();
+      if (typeof zone?.tab === "number") return void sendToHost({ type: zone.close ? "close" : "switch", index: zone.tab });
     }
     if (event.kind === "click" && event.y === paneHeight + 1) return clickable.current.status.find((z) => event.x >= z.from && event.x < z.to)?.run();
     if (event.y < 1 || event.y > paneHeight) return; // header or status bar
@@ -1109,6 +1136,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       const { zones, plus } = chatTabZones(chatTabItems());
       if (Math.abs(at - plus) <= 1) return newChatTab();
       const zone = zones.find((z) => at >= z.from && at < z.to);
+      if (zone?.close) return closeChatTab(zone.id);
       if (zone) return switchChatTab(zone.id);
     }
     // The code view's title row holds the tabs: a click switches, the × closes.
@@ -1533,7 +1561,7 @@ ${snippet}
   };
 
   const contextChip = openFile
-    ? `${openFile}${showEditor && editorState ? `:${editorState.line}${editorState.dirty ? " ✎ unsaved" : ""}` : viewport ? `:${viewport.top}-${viewport.bottom}` : ""}`
+    ? `${openFile}${showEditor && editorState ? `:${editorState.line}${editorState.dirty ? " ± unsaved" : ""}` : viewport ? `:${viewport.top}-${viewport.bottom}` : ""}`
     : null;
 
   /** /mcp: list servers; add (a preset, a command, or a URL), remove, or import the ones from other tools. */
@@ -1602,7 +1630,7 @@ ${snippet}
       }
     }
     if (action) return info("Usage: /plugins, /plugins add <name>, /plugins new <name>", "error");
-    const mark = { on: "●", off: "○", changed: "⚠" };
+    const mark = { on: "●", off: "○", changed: "▲" };
     const lines = allPlugins.map((p) =>
       p.scope === "starter"
         ? `  + ${p.id.padEnd(16)} ${p.plugin?.description ?? ""}`
@@ -1752,6 +1780,11 @@ ${snippet}
       if (/^(out|-|smaller)$/.test(arg)) return zoomCode(-1);
       if (/^(reset|0|off)$/.test(arg)) return zoomCode(0);
       return info("/zoom in makes the code panel bigger, /zoom out smaller, /zoom reset puts it back (or + and - with the code focused, = to reset). The files and chat give or take the room. For bigger text, use your terminal's own zoom (Cmd/Ctrl and +).");
+    case "files":
+      return setQuickOpen("");
+    case "actions":
+    case "palette":
+      return setQuickOpen(">");
     case "workspace":
     case "workspaces":
     case "ws":
@@ -1892,7 +1925,7 @@ ${snippet}
     stops = (stops ?? []).filter((s) => existsSync(s.file));
     if (!stops.length) return;
     const list = stops.map((s, i) => `${i + 1}. ${s.file}:${s.line}${s.end > s.line ? `-${s.end}` : ""}${s.note ? ` · ${s.note}` : ""}`).join("\n");
-    info(`📍 ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}; /showme stop clears the highlights):\n${list}`);
+    info(`◉ ${stops.length === 1 ? "Here it is" : `${stops.length} places`}, open in the code view (click one to jump there${stops.length > 1 ? "; /showme next and /showme back step through them" : ""}; /showme stop clears the highlights):\n${list}`);
     setTour({ stops, at: 0 });
   }, [busy]);
   // Each place: open it in the code view with its lines highlighted.
@@ -1916,7 +1949,7 @@ ${snippet}
       const at = tour.at + (words === "next" ? 1 : -1);
       if (at < 0 || at >= tour.stops.length) return info(at < 0 ? "That's the first place." : "That was the last place.");
       const stop = tour.stops[at]!;
-      info(`📍 ${at + 1} of ${tour.stops.length}: ${stop.file}:${stop.line}${stop.end > stop.line ? `-${stop.end}` : ""}${stop.note ? ` · ${stop.note}` : ""}`);
+      info(`◉ ${at + 1} of ${tour.stops.length}: ${stop.file}:${stop.line}${stop.end > stop.line ? `-${stop.end}` : ""}${stop.note ? ` · ${stop.note}` : ""}`);
       return setTour({ ...tour, at });
     }
     if (!words) return info("Ask how something works or where it happens, and Nou explains it and opens the places in the code, highlighted: /showme where do we check the login? (To be walked through typing a change yourself: /teach.)");
@@ -1961,7 +1994,7 @@ ${snippet}
       writeFileSync(step.file, "");
       setTreeVersion((v) => v + 1);
     }
-    info(`👉 Step ${guide.at + 1} of ${guide.steps.length}: ${step.file}:${step.line}\n${step.why}\n\n\`\`\`\n${step.code}\n\`\`\``);
+    info(`▸ Step ${guide.at + 1} of ${guide.steps.length}: ${step.file}:${step.line}\n${step.why}\n\n\`\`\`\n${step.code}\n\`\`\``);
     openAt(step.file, step.line, true);
   }, [guide?.at, guide?.steps]);
   const guideStep = guide?.steps[guide.at] ?? null;
@@ -1976,7 +2009,7 @@ ${snippet}
       info(`✓ Step ${guide.at + 1} done.`);
       setGuide({ ...guide, steps, at: guide.at + 1 });
     } else {
-      info(`🎉 That's it: all ${steps.length} step${steps.length > 1 ? "s" : ""} done and saved. Ask Nou to check it over if you like.`);
+      info(`✓ That's it: all ${steps.length} step${steps.length > 1 ? "s" : ""} done and saved. Ask Nou to check it over if you like.`);
       setGuide(null);
     }
   });
@@ -2178,7 +2211,6 @@ ${snippet}
   const dockLeft = gameDock === "tree" ? 0 : gameDock === "code" ? treeWidth : treeWidth + codeWidth;
   const dockWidth = gameDock === "tree" ? treeWidth : gameDock === "code" ? codeWidth : chatWidth;
   layout.current = { treeWidth, codeWidth, paneHeight: height, heights, game: gamesOpen ? { x: dockLeft, y: 1 + heights[gameDock] + (gameDock === "code" ? termHeight : 0), width: dockWidth, height: gameHeight } : null, terminal: termOpen ? { x: treeWidth, y: 1 + heights.code, width: codeWidth, height: termHeight } : null };
-  const wheelFor = (pane: Focus) => (wheel?.pane === pane ? wheel : null);
   const scrollFor = (pane: Focus) => (scrollTo?.pane === pane ? scrollTo : null);
   const totals = diagnostics.counts();
   const checking = diagnostics.busy;
@@ -2198,6 +2230,43 @@ ${snippet}
     setRepaint((n) => n + 1);
   }
   /** /workspace: list them, `new [folder]` opens one, a number switches. */
+  /**
+   * + in the header (or /workspace new on its own): a picker of folders to open as a workspace: this project
+   * again (a second workspace on the same code), then the projects beside it, latest first. Enter opens it.
+   */
+  function pickWorkspaceFolder() {
+    const here = process.cwd();
+    const parent = path.dirname(here);
+    const home = os.homedir();
+    const short = (p: string) => (p.startsWith(home) ? `~${p.slice(home.length)}` : p);
+    let beside: { path: string; time: number }[] = [];
+    try {
+      beside = readdirSync(parent, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith(".") && path.join(parent, d.name) !== here)
+        .map((d) => {
+          const full = path.join(parent, d.name);
+          let time = 0;
+          try {
+            time = statSync(full).mtimeMs;
+          } catch {
+            // unreadable: listed last
+          }
+          return { path: full, time };
+        })
+        .sort((a, b) => b.time - a.time)
+        .slice(0, 60);
+    } catch {
+      // the parent can't be listed: just this project, or type a path with /workspace new <folder>
+    }
+    const open = (folder: string) => () => void workspaceCommand(`new ${folder}`);
+    setResumePicker([
+      { title: `${path.basename(here)} (this project, another workspace)`, keys: short(here), run: open(here) },
+      ...beside.map((b) => ({ title: path.basename(b.path), keys: short(b.path), run: open(b.path) })),
+    ]);
+    setPickerTitle("Open a folder as a new workspace · any other: /workspace new <path>");
+    setQuickOpen(">");
+  }
+
   async function workspaceCommand(arg: string) {
     const [sub, ...more] = arg.split(/\s+/);
     const tabs = workspaceTabs();
@@ -2212,6 +2281,7 @@ ${snippet}
     }
     if (sub !== "new") return info("Try /workspace new <folder>, /workspace <n> or /workspace.", "error");
     const wanted = more.join(" ");
+    if (!wanted) return pickWorkspaceFolder();
     if (isHosted()) return void sendToHost({ type: "new", folder: wanted });
     const folder = workspaceFolder(wanted, process.cwd());
     if (!folder) return info(`No such folder: ${wanted}`, "error");
@@ -2415,7 +2485,7 @@ ${snippet}
           {...(tourFiles ? { showing: tourFiles } : {})}
           git={git}
           problemCounts={problemCounts}
-          wheel={wheelFor("tree")}
+          wheelPane="tree"
           scrollTo={scrollFor("tree")}
           click={treeClick}
           onOpen={onTreeOpen}
@@ -2428,7 +2498,7 @@ ${snippet}
             focused={focus === "code"}
             problems={diagnostics.all()}
             checking={checking}
-            wheel={wheelFor("code")}
+            wheelPane="code"
             onJump={onJump}
             onClose={onCloseProblems}
           />
@@ -2447,7 +2517,7 @@ ${snippet}
             problems={fileProblems}
             autoSave={settings.autoSave}
             syntaxVersion={syntaxVersion}
-            wheel={wheelFor("code")}
+            wheelPane="code"
             scrollTo={scrollFor("code")}
             mouse={editorMouse}
             onHover={onEditorHover}
@@ -2474,7 +2544,7 @@ ${snippet}
             focusLine={focusLine}
             syntaxVersion={syntaxVersion}
             diffNote={pendingChange && diff === pendingChange ? pendingNote?.short ?? (checking.length ? "checking…" : null) : null}
-            wheel={wheelFor("code")}
+            wheelPane="code"
             scrollTo={scrollFor("code")}
             onViewport={onViewport}
             defineAt={codeDefine}
@@ -2495,7 +2565,7 @@ ${snippet}
           approval={approval?.request ?? null}
           approvalNote={pendingChange ? pendingNote?.detail ?? null : null}
           contextChip={contextChip}
-          wheel={wheelFor("chat")}
+          wheelPane="chat"
           scrollTo={scrollFor("chat")}
           prefill={chatPrefill}
           extraCommands={pluginCommands}
@@ -2528,7 +2598,7 @@ ${snippet}
       </Box>
       {layout.current.terminal && shellRef.current && (
         <Box position="absolute" marginLeft={layout.current.terminal.x} marginTop={layout.current.terminal.y}>
-          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheel={wheelFor("terminal")} onLeave={leaveTerminal} onClose={() => toggleTerminal(false)} onResize={resizeTerminal} />
+          <Terminal shell={shellRef.current} version={termVersion} width={layout.current.terminal.width} height={layout.current.terminal.height} focused={focus === "terminal"} wheelPane="terminal" onLeave={leaveTerminal} onClose={() => toggleTerminal(false)} onResize={resizeTerminal} />
         </Box>
       )}
       {/* Placed over the rows its pane gave up, so it stays mounted (and the game keeps going) as it moves. */}
@@ -2547,7 +2617,7 @@ ${snippet}
           recent={recent}
           actions={resumePicker ?? paletteActions}
           initialQuery={quickOpen}
-          {...(resumePicker ? { placeholder: "Pick a conversation to resume (type to filter)" } : {})}
+          {...(resumePicker ? { placeholder: "type to filter", title: pickerTitle } : {})}
           onPick={(file) => {
             setQuickOpen(null);
             clearFollow();

@@ -7,7 +7,7 @@ import type { GitStatus } from "../git/index.js";
 import { C, GIT_COLORS, fileIcon, gradient, ANIMATION_MS } from "./theme.js";
 import { useTerminalFocused } from "./focus.js";
 import { Pane } from "./Pane.js";
-import { Scrollbar, topFor, type ScrollTo, type Wheel } from "./scroll.js";
+import { Scrollbar, topFor, type ScrollTo, usePaneWheel } from "./scroll.js";
 
 type Node = { path: string; name: string; depth: number; isDir: boolean };
 
@@ -29,7 +29,8 @@ type Props = {
   git: GitStatus;
   /** Problem counts per file, from the checkers. */
   problemCounts: Map<string, { errors: number; warnings: number }>;
-  wheel?: Wheel | null;
+  /** Which pane's wheel scrolls this (see sendWheel). */
+  wheelPane?: string;
   /** A click or drag on the scrollbar. */
   scrollTo?: ScrollTo | null;
   /** A click on a visible row (0 = first row under the title). */
@@ -62,7 +63,8 @@ function flatten(expanded: Set<string>): Node[] {
   return nodes;
 }
 
-export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, working, showing, git, problemCounts, wheel, scrollTo, click, onOpen, onHover }: Props) {
+export const FileTree = memo(function FileTree({ width, height, focused, openFile, reveal, version, changed, working, showing, git, problemCounts, wheelPane, scrollTo, click, onOpen, onHover }: Props) {
+  const wheel = usePaneWheel(wheelPane);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["src"]));
   const [cursor, setCursor] = useState(0);
   // The first row shown. The wheel moves it on its own; the keyboard moves the cursor and the view follows.

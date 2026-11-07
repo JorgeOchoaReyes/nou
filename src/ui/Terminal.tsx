@@ -2,7 +2,7 @@ import { memo, useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Shell } from "../terminal/index.js";
 import { C } from "./theme.js";
-import type { Wheel } from "./scroll.js";
+import { usePaneWheel } from "./scroll.js";
 
 type Props = {
   shell: Shell;
@@ -11,7 +11,8 @@ type Props = {
   width: number;
   height: number;
   focused: boolean;
-  wheel?: Wheel | null;
+  /** Which pane's wheel scrolls this (see sendWheel). */
+  wheelPane?: string;
   /** Esc: back to the pane you came from (the command keeps running). */
   onLeave(): void;
   /** `exit` (or `logout`) at the prompt: closes the terminal, as it would end a shell. */
@@ -27,7 +28,8 @@ const COLORS = { out: C.text, command: C.accent, info: C.dim, error: C.red } as 
  * what you type goes to it; Ctrl+C stops it. ↑↓ go through what you ran, Ctrl+L clears, Esc leaves.
  * Drag its top border (or Alt+↑/↓) to make it taller or shorter.
  */
-export const Terminal = memo(function Terminal({ shell, version, width, height, focused, wheel, onLeave, onClose, onResize }: Props) {
+export const Terminal = memo(function Terminal({ shell, version, width, height, focused, wheelPane, onLeave, onClose, onResize }: Props) {
+  const wheel = usePaneWheel(wheelPane);
   const [input, setInput] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [back, setBack] = useState(-1);

@@ -49,9 +49,14 @@ export function installFastWidth(): boolean {
   const { registerHooks } = nodeModule as Partial<typeof nodeModule>;
   if (typeof registerHooks !== "function" || process.env.NOU_NO_FAST_WIDTH) return false;
   const shim = new URL(`./width-shim${import.meta.url.endsWith(".ts") ? ".ts" : ".js"}`, import.meta.url).href;
+  const lineShim = new URL(`./line-update-shim${import.meta.url.endsWith(".ts") ? ".ts" : ".js"}`, import.meta.url).href;
   registerHooks({
     resolve(specifier, context, nextResolve) {
       const resolved = nextResolve(specifier, context);
+      // Ink's line-update gets a fast path too (see line-update-shim.ts).
+      if (specifier === "./line-update.js" && /[\\/]ink[\\/]build[\\/]log-update\.js$/.test(context.parentURL ?? "")) {
+        return { ...resolved, url: `${lineShim}?of=${encodeURIComponent(resolved.url)}` };
+      }
       if (specifier !== "string-width" || context.parentURL?.startsWith(shim)) return resolved;
       // Each copy of string-width (Ink may have its own) gets its own wrapper.
       return { ...resolved, url: `${shim}?of=${encodeURIComponent(resolved.url)}` };

@@ -228,7 +228,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                   <Text color={current ? C.green : C.dim}>{current ? " ● " : "   "}</Text>
                   <Text color={problem ? C.dim : C.text} bold={selected}>{p.label.padEnd(labelWidth).slice(0, labelWidth)}</Text>
                   <Text color={p.local ? C.green : C.accent2}>{p.local ? " local" : " cloud"}</Text>
-                  {problem ? <Text color={C.dim}> 🔒</Text> : null}
+                  {problem ? <Text color={C.dim}> ▣</Text> : null}
                 </Text>
               );
             })}
@@ -249,7 +249,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                   return (
                     <Box key={f.env} flexDirection="column">
                       <Text>
-                        <Text color={C.accent2}>✎ {f.label}{f.optional ? " (optional)" : ""}: </Text>
+                        <Text color={C.accent2}>± {f.label}{f.optional ? " (optional)" : ""}: </Text>
                         <TextInput value={field} onChange={setField} onSubmit={submitField} {...(f.secret ? { mask: "•" } : {})} {...(f.placeholder ? { placeholder: f.placeholder } : {})} />
                       </Text>
                       <Text color={C.dim} wrap="truncate-end">
@@ -276,7 +276,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
               <>
                 {typing ? (
                   <Text>
-                    <Text color={C.accent2}>✎ </Text>
+                    <Text color={C.accent2}>± </Text>
                     <TextInput
                       value={custom}
                       onChange={setCustom}
@@ -288,7 +288,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                     />
                   </Text>
                 ) : (
-                  <Text {...(column === "models" && modelRow === 0 ? { backgroundColor: C.panel } : {})} color={C.accent2}>✎ Type a model name…</Text>
+                  <Text {...(column === "models" && modelRow === 0 ? { backgroundColor: C.panel } : {})} color={C.accent2}>± Type a model name…</Text>
                 )}
                 {listed === "loading" && <Text color={C.accent2}>{SPINNER[frame % SPINNER.length]} loading models…</Text>}
                 {listed && typeof listed === "object" && !Array.isArray(listed) && (
@@ -393,7 +393,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
               <Box key={g.id} flexDirection="column" marginBottom={1}>
                 <Text {...(selected ? { backgroundColor: C.panel } : {})}>
                   <Text color={selected ? C.accent2 : C.dim}>{selected ? "▸ " : "  "}</Text>
-                  {added ? <Text color={C.green} bold>✓ ADDED</Text> : <Text color={C.accent2} bold>⬇ GET  </Text>}
+                  {added ? <Text color={C.green} bold>✓ ADDED</Text> : <Text color={C.accent2} bold>↓ GET  </Text>}
                   <Text color={C.text} bold> {g.title}</Text>
                   <Text color={C.dim}>  {g.controls}</Text>
                 </Text>
@@ -427,7 +427,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
                 <Text color={C.dim}> {p.plugin?.version ? `v${p.plugin.version} · ` : ""}{p.scope === "starter" ? "starter, optional" : p.scope}{parts.length ? ` · ${parts.join(", ")}` : ""}</Text>
               </Text>
               {state === "changed"
-                ? <Text color={C.yellow} wrap="truncate-end">    ⚠ Changed since you enabled it. Review the code, then press Enter to enable again.</Text>
+                ? <Text color={C.yellow} wrap="truncate-end">    ▲ Changed since you enabled it. Review the code, then press Enter to enable again.</Text>
                 : p.error
                   ? <Text color={C.red} wrap="truncate-end">    ✗ {p.error}</Text>
                   : <Text color={C.dim} wrap="truncate-end">    {p.plugin?.description ?? (enabled ? "" : "Enable to load it.")}</Text>}
@@ -448,7 +448,7 @@ export function Settings({ width, height, settings, choice, plugins, connectTo, 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1}>
       <Text>
-        <Text color={C.accent2} bold>⚙ Settings  </Text>
+        <Text color={C.accent2} bold>◇ Settings  </Text>
         {TABS.map((t) => (
           <Text key={t} {...(t === tab ? { backgroundColor: C.accent2, color: "black" } : { color: C.dim })} bold={t === tab}>{` ${t} `}</Text>
         ))}
