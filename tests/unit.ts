@@ -1077,6 +1077,10 @@ console.log("Readable colors on dark and light terminals");
   const { paletteFromColorFgBg, paletteFromOsc11 } = await import("../src/ui/background.js");
   const { C, setPalette } = await import("../src/ui/theme.js");
   check("COLORFGBG says which background it is", paletteFromColorFgBg("15;0") === "dark" && paletteFromColorFgBg("0;15") === "light" && paletteFromColorFgBg("0;default;15") === "light" && paletteFromColorFgBg(undefined) === null);
+  const { readTerminalReply } = await import("../src/ui/background.js");
+  check("a terminal that answers the kitty keyboard query gets the protocol (Shift+Enter adds a line)", readTerminalReply("\x1b]11;rgb:1a1a/1b1b/2626\x1b\\\x1b[?0u\x1b[?62;22c").kitty === true);
+  check("one that answers the rest but not that doesn't", readTerminalReply("\x1b[?62;22c").kitty === false);
+  check("one that answers nothing is left to Ink's own check", readTerminalReply("").kitty === null);
   check("the terminal's answer to OSC 11 is read, any digit count", paletteFromOsc11("\x1b]11;rgb:ffff/ffff/ffff\x1b\\") === "light" && paletteFromOsc11("\x1b]11;rgb:1a/1b/26\x07") === "dark" && paletteFromOsc11("junk") === null);
   const lum = (hex: string) => {
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));

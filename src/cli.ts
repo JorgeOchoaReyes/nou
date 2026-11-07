@@ -15,7 +15,7 @@ import { App } from "./ui/App.js";
 import { installFastOutput } from "./ui/fast-output.js";
 import { RENDER_OPTIONS } from "./ui/render-options.js";
 import { setScreenClear } from "./ui/redraw.js";
-import { detectBackground } from "./ui/background.js";
+import { detectTerminal } from "./ui/background.js";
 import { setPalette } from "./ui/theme.js";
 import { runHost, workspaceFolder } from "./workspaces/host.js";
 import { pendingWorkspaces } from "./workspaces/client.js";
@@ -95,7 +95,10 @@ async function main() {
     if (missing.length) console.error(`Not a folder, so not opened: ${missing.join(", ")}`);
     const uiTheme = loadSettings().uiTheme;
     // Every workspace uses the colors found for this terminal (they can't ask it themselves from the background).
-    process.env.NOU_PALETTE = uiTheme === "dark" || uiTheme === "light" ? uiTheme : (await detectBackground()) ?? "dark";
+    // The host asks the terminal once and tells every workspace (in the background they can't ask it).
+    const term = await detectTerminal();
+    process.env.NOU_PALETTE = uiTheme === "dark" || uiTheme === "light" ? uiTheme : term.palette ?? "dark";
+    if (term.kitty !== null) process.env.NOU_KITTY = term.kitty ? "1" : "0";
     const firstArgs = args.includes("--continue") || args.includes("-c") ? ["--continue"] : [];
     process.exit(await runHost(folders.length ? folders : [process.cwd()], firstArgs));
   }
@@ -167,7 +170,12 @@ async function main() {
   // Colors that are readable on this terminal: a dark or a light set, from the setting or the background.
   const uiTheme = loadSettings().uiTheme;
   const fromHost = process.env.NOU_PALETTE;
-  setPalette(uiTheme === "dark" || uiTheme === "light" ? uiTheme : fromHost === "light" || fromHost === "dark" ? fromHost : (await detectBackground()) ?? "dark");
+  const hostKnows = fromHost === "light" || fromHost === "dark";
+  const term = hostKnows ? { palette: fromHost as "light" | "dark", kitty: process.env.NOU_KITTY ? process.env.NOU_KITTY === "1" : null } : await detectTerminal();
+  setPalette(uiTheme === "dark" || uiTheme === "light" ? uiTheme : term.palette ?? "dark");
+  // Turn the kitty keyboard protocol on when the terminal said it speaks it (Shift/Ctrl/Cmd+Enter, Cmd+F and
+  // Ctrl+= need it), off when it answered without it; ask the way Ink does only if it answered nothing.
+  if (term.kitty !== null && RENDER_OPTIONS.kittyKeyboard) RENDER_OPTIONS.kittyKeyboard = { ...RENDER_OPTIONS.kittyKeyboard, mode: term.kitty ? "enabled" : "disabled" };
 
   await installFastOutput();
   // While Nou is on screen, anything a library prints (console.log, warnings, stderr) goes to a log file:

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput, usePaste } from "ink";
+import { Box, Text, useInput, usePaste, useStdin } from "ink";
 import { C } from "./theme.js";
 
 type Segment = { start: number; end: number };
@@ -76,6 +76,23 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
     setCursor(Math.max(0, Math.min(next.length, nextCursor)));
   };
   const insert = (text: string) => set(value.slice(0, pos) + text + value.slice(pos), pos + text.length);
+
+  // Shift/Ctrl/Cmd+Enter as xterm's modifyOtherKeys sends them (ESC [27;<mods>;13~, from terminals set up that
+  // way): Ink drops these, so they're caught here and add a line, like the kitty protocol's form does.
+  const { stdin } = useStdin();
+  const insertLine = useRef(() => {});
+  insertLine.current = () => insert("\n");
+  useEffect(() => {
+    if (!focus || !stdin) return;
+    const onData = (data: Buffer | string) => {
+      // eslint-disable-next-line no-control-regex -- the sequence starts with ESC
+      if (/\x1b\[27;([2-9]|1[0-6]);13~/.test(String(data))) insertLine.current();
+    };
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+    };
+  }, [focus, stdin]);
 
   const recallHistory = (step: -1 | 1) => {
     if (!history.length) return false;

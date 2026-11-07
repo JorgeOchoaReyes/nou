@@ -1,40 +1,60 @@
 import type { Palette } from "./theme.js";
 
+/** What Nou asks the terminal before it draws: its background, and whether it speaks the kitty keyboard protocol. */
+export type TerminalInfo = {
+  palette: Palette | null;
+  /** true: it answered the kitty keyboard query; false: it answered others but not that; null: it answered nothing. */
+  kitty: boolean | null;
+};
+
 /**
- * Whether the terminal's background is light or dark, so Nou can pick colors that are readable on it.
- *
- * COLORFGBG (set by rxvt, Konsole and others: "foreground;background" as color numbers) answers at once.
- * Otherwise Nou asks the terminal for its background color (OSC 11, answered by iTerm2, Terminal.app,
- * kitty, Ghostty, WezTerm, Alacritty, foot, GNOME's and VS Code's terminals and recent Windows Terminal).
- * A terminal that doesn't answer within `timeoutMs` gets null, and Nou keeps its dark colors.
+ * Asks the terminal, once, before Nou draws anything:
+ * - its background color (OSC 11), so the colors are readable on it (COLORFGBG answers that without asking);
+ * - whether it speaks the kitty keyboard protocol (CSI ? u), which tells Shift/Ctrl/Cmd+Enter, Cmd+F and
+ *   Ctrl+= apart from plain keys. Ink can ask too, but only after the first frame is drawn, and with a big
+ *   project the answer lands after its 200 ms timeout, so the protocol never came on (Shift+Enter sent).
+ * Then DA1 (CSI c), which every terminal answers, and in order: once its answer is in, so are the others.
  */
-export async function detectBackground(timeoutMs = 150): Promise<Palette | null> {
+export async function detectTerminal(timeoutMs = 400): Promise<TerminalInfo> {
   const fromEnv = paletteFromColorFgBg(process.env.COLORFGBG);
-  if (fromEnv) return fromEnv;
   const stdin = process.stdin;
-  if (!stdin.isTTY || !process.stdout.isTTY || typeof stdin.setRawMode !== "function") return null;
+  if (!stdin.isTTY || !process.stdout.isTTY || typeof stdin.setRawMode !== "function") return { palette: fromEnv, kitty: null };
   return new Promise((resolve) => {
     let reply = "";
     const wasRaw = stdin.isRaw;
-    const finish = (result: Palette | null) => {
+    const finish = () => {
       clearTimeout(timer);
       stdin.off("data", onData);
       stdin.setRawMode(wasRaw);
       stdin.pause();
-      resolve(result);
+      resolve(readTerminalReply(reply, fromEnv));
     };
     const onData = (data: Buffer) => {
       reply += data.toString("latin1");
-      const palette = paletteFromOsc11(reply);
-      if (palette) finish(palette);
+      if (DA1.test(reply)) finish();
     };
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    const timer = setTimeout(finish, timeoutMs);
     stdin.setRawMode(true);
     stdin.resume();
     stdin.on("data", onData);
-    // ST-terminated (ESC \): the form most terminals answer in kind.
-    process.stdout.write("\x1b]11;?\x1b\\");
+    // OSC 11 is ST-terminated (ESC \): the form most terminals answer in kind.
+    process.stdout.write(`${fromEnv ? "" : "\x1b]11;?\x1b\\"}\x1b[?u\x1b[c`);
   });
+}
+
+// eslint-disable-next-line no-control-regex -- terminal answers start with ESC
+const KITTY = /\x1b\[\?\d+u/;
+// eslint-disable-next-line no-control-regex -- terminal answers start with ESC
+const DA1 = /\x1b\[\?[\d;]*c/;
+
+/** What the terminal's answers say (see detectTerminal); `fromEnv` is the background COLORFGBG gave, if any. */
+export function readTerminalReply(reply: string, fromEnv: Palette | null = null): TerminalInfo {
+  return { palette: fromEnv ?? paletteFromOsc11(reply), kitty: KITTY.test(reply) ? true : DA1.test(reply) ? false : null };
+}
+
+/** Just the background (see detectTerminal). */
+export async function detectBackground(timeoutMs = 400): Promise<Palette | null> {
+  return (await detectTerminal(timeoutMs)).palette;
 }
 
 /** "15;0" (light text on black) → dark; "0;15" → light. The last number is the background's color index. */
