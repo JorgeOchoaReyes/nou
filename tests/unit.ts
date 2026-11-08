@@ -1120,8 +1120,11 @@ console.log("Readable colors on dark and light terminals");
   const contrast = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
   const readable = (bgs: string[]) => (["text", "dim", "accent", "accent2", "green", "yellow", "red", "cyan", "orange"] as const).every((k) => bgs.every((bg) => contrast(C[k], bg) >= 4.5));
   check("on dark terminals every text color is at least 4.5:1 (dim hints too)", readable(["#1a1b26", "#000000", "#1e1e1e", "#282c34"]));
+  const names = ["text", "accent2", "green", "yellow", "red", "cyan", "orange"] as const;
+  const onOpenRow = () => names.every((k) => contrast(C[k], C.openRow) >= 4.5);
+  check("the open file's band keeps every name color readable", onOpenRow());
   setPalette("light");
-  check("on light terminals too", readable(["#ffffff", "#fafafa"]) && C.text !== "#c0caf5");
+  check("on light terminals too", readable(["#ffffff", "#fafafa"]) && C.text !== "#c0caf5" && onOpenRow());
   setPalette("dark");
   check("and back to dark", C.text === "#c0caf5");
 }

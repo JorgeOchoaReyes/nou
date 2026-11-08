@@ -219,7 +219,9 @@ export const FileTree = memo(function FileTree({ width, height, focused, openFil
             const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label.padEnd(room);
             const iconAt = shown.indexOf(icon);
             return (
-              <Text key={node.path} wrap="truncate-end" {...(selected && focused ? { backgroundColor: C.panel } : {})}>
+              // The open file has its own band, whatever color its name takes (edited, a git change, shown):
+              // a name's color alone said too many things to also say "open".
+              <Text key={node.path} wrap="truncate-end" {...(isOpen ? { backgroundColor: C.openRow } : selected && focused ? { backgroundColor: C.panel } : {})}>
                 <Text {...(nameColor ? { color: nameColor } : {})} bold={isOpen}>{shown.slice(0, iconAt)}</Text>
                 <Text color={color}>{shown.slice(iconAt, iconAt + icon.length)}</Text>
                 {working?.has(node.path) ? (

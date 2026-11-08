@@ -17,6 +17,8 @@ const DARK = {
   /** Lines around panes that aren't focused: quieter than text, since they aren't read. */
   border: "#565f89",
   panel: "#1f2335",
+  /** The band behind the file that's open, wherever it's listed: every name color stays 4.5:1 on it. */
+  openRow: "#2a3352",
   /** Text on a colored badge (CHAT, CLOUD, EDITING...). */
   onBadge: "#1a1b26",
 };
@@ -34,6 +36,7 @@ const LIGHT: typeof DARK = {
   dim: "#5a607a",
   border: "#a8aecb",
   panel: "#e6e7ed",
+  openRow: "#edf1fc",
   onBadge: "#ffffff",
 };
 
