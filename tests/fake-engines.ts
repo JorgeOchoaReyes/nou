@@ -9,29 +9,36 @@ import path from "path";
 
 const CLAUDE = `
 import { readFileSync, writeFileSync } from "fs";
+// Like the real SDK in streaming-input mode: one process takes the user messages as they come, answers each
+// with a turn ending in a result, and keeps running in between (as it does with a background task going).
 export function query({ prompt, options }) {
   const log = (globalThis.__engines ??= {}).claude ??= { calls: [] };
-  log.calls.push({ prompt, options });
+  const call = { options, messages: [], closed: false };
+  log.calls.push(call);
   const pre = options.hooks.PreToolUse[0].hooks[0];
   const post = options.hooks.PostToolUse[0].hooks[0];
-  return (async function* () {
+  const gen = (async function* () {
     yield { type: "system", subtype: "init", session_id: "claude-session-1" };
-    const input = { file_path: "greet.js", old_string: "Hello", new_string: "Hi" };
-    const decision = await pre({ tool_name: "Edit", tool_input: input }, "t1", {});
-    log.decision = decision.hookSpecificOutput?.permissionDecision;
-    if (log.decision === "allow") {
-      writeFileSync("greet.js", readFileSync("greet.js", "utf-8").replace("Hello", "Hi"));
-      log.post = await post({ tool_name: "Edit", tool_input: input }, "t1", {});
+    for await (const message of prompt) {
+      call.messages.push(message.message.content);
+      const input = { file_path: "greet.js", old_string: "Hello", new_string: "Hi" };
+      const decision = await pre({ tool_name: "Edit", tool_input: input }, "t1", {});
+      log.decision = decision.hookSpecificOutput?.permissionDecision;
+      if (log.decision === "allow") {
+        writeFileSync("greet.js", readFileSync("greet.js", "utf-8").replace("Hello", "Hi"));
+        log.post = await post({ tool_name: "Edit", tool_input: input }, "t1", {});
+      }
+      const command = await pre({ tool_name: "Bash", tool_input: { command: "npm test" } }, "t2", {});
+      log.command = command.hookSpecificOutput?.permissionDecision;
+      log.read = await pre({ tool_name: "Read", tool_input: { file_path: "greet.js" } }, "t3", {});
+      yield { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "Do" } } };
+      yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Done." }] } };
+      yield { type: "result", subtype: "success", is_error: false, session_id: "claude-session-1" };
     }
-    const command = await pre({ tool_name: "Bash", tool_input: { command: "npm test" } }, "t2", {});
-    log.command = command.hookSpecificOutput?.permissionDecision;
-    log.read = await pre({ tool_name: "Read", tool_input: { file_path: "greet.js" } }, "t3", {});
-    yield { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "Do" } } };
-    yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Done." }] } };
-    yield { type: "result", subtype: "success", is_error: false, session_id: "claude-session-1" };
-    // Like the real one when something it started is still running: the stream stays open after the result.
-    await new Promise(() => {});
   })();
+  gen.close = () => { call.closed = true; };
+  gen.interrupt = async () => {};
+  return gen;
 }
 `;
 

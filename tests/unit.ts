@@ -1030,8 +1030,16 @@ console.log("Engines");
   check("problems from an edit are fed back to Claude Code", engines().claude.post.hookSpecificOutput?.additionalContext?.includes("something broke"));
   check("Nou's project context is added to Claude Code's prompt", options.systemPrompt.append.includes("be brief") && options.model === "claude-opus-5-5");
   check("Claude Code's reply shows in the chat", claude.entries.some((e) => e.kind === "assistant" && e.text === "Done."));
+  const back = process.cwd();
+  process.chdir(claude.dir); // the fake Claude Code edits greet.js where it runs
   await claude.engine.send("And again");
-  check("the next message resumes the same Claude Code session", engines().claude.calls[1].options.resume === "claude-session-1");
+  check("the next message goes to the same Claude Code, still running (a background task it started keeps going)", engines().claude.calls.length === 1 && engines().claude.calls[0].messages.length === 2 && engines().claude.calls[0].messages[1].startsWith("And again"));
+  claude.engine.setModel({ ...claude.engine.choice, model: "claude-sonnet-5-5" });
+  await claude.engine.send("With another model");
+  check("a new model starts a new Claude Code, resuming the session", engines().claude.calls.length === 2 && engines().claude.calls[0].closed && engines().claude.calls[1].options.resume === "claude-session-1" && engines().claude.calls[1].options.model === "claude-sonnet-5-5");
+  claude.engine.dispose?.();
+  check("and it's stopped when the engine goes", engines().claude.calls[1].closed);
+  process.chdir(back);
 
   const rejected = await runEngine("claude-code", "ollama:qwen3:8b", { change: true });
   check("a rejected edit is denied and never written", engines().claude.decision === "deny" && rejected.file.includes("Hello") && rejected.changes.some((c) => c.status === "rejected"));
