@@ -182,8 +182,25 @@ export function showPlacesTool(onStops: (stops: TourStop[]) => void): ExtraTool 
   };
 }
 
-/** The fenced block other engines (which can't call Nou's tools) list their places in. */
-const SHOW_BLOCK = /```nou-show\s*\n([\s\S]*?)\n```/;
+/**
+ * The fenced block other engines (which can't call Nou's tools) list their places in. Models also write it
+ * with ~~~, with CRLF, with the closing fence on the JSON's last line, or (unfenced) as a "nou-show" line
+ * followed by the JSON array at the end of the reply.
+ */
+const SHOW_BLOCK = /(?:```|~~~)[ \t]*nou-show[ \t]*\r?\n([\s\S]*?)\r?\n?[ \t]*(?:```|~~~)|(?:^|\n)[ \t]*nou-show[ \t]*\r?\n[ \t]*(\[[\s\S]*\])\s*$/;
+
+/**
+ * A reply as the chat shows it: Nou's blocks (nou-show, nou-steps) are for Nou, not you, so they're never
+ * drawn, including one still arriving mid-stream.
+ */
+export function hideNouBlocks(text: string): string {
+  if (!text.includes("nou-")) return text;
+  return text
+    .replace(/(?:```|~~~)[ \t]*nou-(?:show|steps)[ \t]*\r?\n[\s\S]*?(?:```|~~~)/g, "")
+    .replace(/(?:```|~~~)[ \t]*nou-(?:show|steps)[\s\S]*$/, "")
+    .replace(/(?:^|\n)[ \t]*nou-(?:show|steps)[ \t]*\r?\n[ \t]*\[[\s\S]*$/, "")
+    .trimEnd();
+}
 
 /**
  * For Claude Code, Codex and pi, which can't call show_places: how to point at places, added to what they
@@ -202,7 +219,7 @@ export function stopsFromReply(text: string): { stops: TourStop[]; rest: string 
   const m = SHOW_BLOCK.exec(text);
   if (!m) return null;
   try {
-    const stops = tidyStops(JSON.parse(m[1]!));
+    const stops = tidyStops(JSON.parse((m[1] ?? m[2])!));
     return { stops, rest: text.replace(m[0], "").trim() };
   } catch {
     return null;

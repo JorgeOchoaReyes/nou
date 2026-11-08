@@ -1144,6 +1144,14 @@ console.log("Show me where");
   const parsed = stopsFromReply("Look here.\n\n```nou-show\n[{\"file\": \"a.ts\", \"line\": 2, \"end_line\": 4, \"note\": \"x\"}]\n```");
   check("a nou-show block is read and taken out of the reply", parsed?.stops[0]?.line === 2 && parsed.rest === "Look here.");
   check("a reply without one has none", stopsFromReply("just text") === null);
+  const bare = stopsFromReply("Startup.\n\nnou-show\n[{\"file\": \"a.ts\", \"line\": 7, \"end_line\": 9, \"note\": \"y\"}]");
+  check("so is one written without its fence, at the end of the reply", bare?.stops[0]?.line === 7 && bare.rest === "Startup.");
+  const tilde = stopsFromReply("x\r\n~~~nou-show\r\n[{\"file\": \"a.ts\", \"line\": 1}]~~~");
+  check("and with ~~~, CRLF, or the fence on the JSON's line", tilde?.stops[0]?.line === 1);
+  const { hideNouBlocks } = await import("../src/guide/index.js");
+  check("the chat never shows Nou's blocks, finished or still arriving",
+    hideNouBlocks("Here.\n```nou-show\n[{}]\n```") === "Here." && hideNouBlocks("Here.\n```nou-show\n[{\"file\": \"a") === "Here." &&
+    hideNouBlocks("Here.\nnou-show\n[{\"file\"") === "Here." && hideNouBlocks("Use the nou-show block") === "Use the nou-show block");
   check("other engines are asked for the block, Nou's for the tool", explainPrompt("q", false).includes("nou-show") && explainPrompt("q", true).includes("show_places"));
 }
 

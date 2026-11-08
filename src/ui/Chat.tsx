@@ -1,3 +1,4 @@
+import { hideNouBlocks } from "../guide/index.js";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useAnimation, useInput } from "ink";
 import type { ApprovalRequest, ChatEntry } from "../agent/index.js";
@@ -108,7 +109,7 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
     out.push({ text: "" });
   } else if (entry.kind === "assistant") {
     out.push({ text: "◆ nou", color: C.accent2, bold: true, lead: BAR, leadColor: C.accent2 });
-    for (const line of renderMarkdown(entry.text, inner - 3, links ? isProjectFile : undefined)) {
+    for (const line of renderMarkdown(hideNouBlocks(entry.text), inner - 3, links ? isProjectFile : undefined)) {
       const color = line.kind === "heading" ? C.accent2 : line.kind === "quote" ? C.dim : undefined;
       out.push({ text: "", spans: line.spans, ...(color ? { color } : {}), lead: BAR, leadColor: C.accent2 });
     }
