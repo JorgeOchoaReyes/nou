@@ -16,9 +16,10 @@ import { installFastOutput } from "./ui/fast-output.js";
 import { RENDER_OPTIONS } from "./ui/render-options.js";
 import { setScreenClear } from "./ui/redraw.js";
 import { detectTerminal } from "./ui/background.js";
+import { setTerminalTitle } from "./ui/title.js";
 import { setPalette } from "./ui/theme.js";
 import { runHost, workspaceFolder } from "./workspaces/host.js";
-import { pendingWorkspaces } from "./workspaces/client.js";
+import { isHosted, pendingWorkspaces } from "./workspaces/client.js";
 import { spawn } from "child_process";
 import { appendFileSync, mkdirSync } from "fs";
 import path from "path";
@@ -96,6 +97,7 @@ async function main() {
     const uiTheme = loadSettings().uiTheme;
     // Every workspace uses the colors found for this terminal (they can't ask it themselves from the background).
     // The host asks the terminal once and tells every workspace (in the background they can't ask it).
+    setTerminalTitle();
     const term = await detectTerminal();
     process.env.NOU_PALETTE = uiTheme === "dark" || uiTheme === "light" ? uiTheme : term.palette ?? "dark";
     if (term.kitty !== null) process.env.NOU_KITTY = term.kitty ? "1" : "0";
@@ -107,6 +109,8 @@ async function main() {
     console.error("Nou needs an interactive terminal (try Windows Terminal, PowerShell, or Terminal/iTerm on macOS).");
     process.exit(1);
   }
+  // The tab says Nou CLI, not the shell it runs in (a workspace's host already set it).
+  if (!isHosted()) setTerminalTitle();
   p.intro(chalk.cyan(`${artWork} \n Hello I am Nou! 🌞  ${chalk.dim(`v${currentVersion()}`)}`));
 
   // A folder's files can run things (its MCP servers, plugins, the commands Nou is asked to run), so a

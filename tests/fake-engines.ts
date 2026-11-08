@@ -29,6 +29,8 @@ export function query({ prompt, options }) {
     yield { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "Do" } } };
     yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Done." }] } };
     yield { type: "result", subtype: "success", is_error: false, session_id: "claude-session-1" };
+    // Like the real one when something it started is still running: the stream stays open after the result.
+    await new Promise(() => {});
   })();
 }
 `;

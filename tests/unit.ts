@@ -1120,8 +1120,11 @@ console.log("Readable colors on dark and light terminals");
   const contrast = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
   const readable = (bgs: string[]) => (["text", "dim", "accent", "accent2", "green", "yellow", "red", "cyan", "orange"] as const).every((k) => bgs.every((bg) => contrast(C[k], bg) >= 4.5));
   check("on dark terminals every text color is at least 4.5:1 (dim hints too)", readable(["#1a1b26", "#000000", "#1e1e1e", "#282c34"]));
+  const names = ["text", "accent2", "green", "yellow", "red", "cyan", "orange"] as const;
+  const onOpenRow = () => names.every((k) => contrast(C[k], C.openRow) >= 4.5);
+  check("the open file's band keeps every name color readable", onOpenRow());
   setPalette("light");
-  check("on light terminals too", readable(["#ffffff", "#fafafa"]) && C.text !== "#c0caf5");
+  check("on light terminals too", readable(["#ffffff", "#fafafa"]) && C.text !== "#c0caf5" && onOpenRow());
   setPalette("dark");
   check("and back to dark", C.text === "#c0caf5");
 }
@@ -1144,6 +1147,14 @@ console.log("Show me where");
   const parsed = stopsFromReply("Look here.\n\n```nou-show\n[{\"file\": \"a.ts\", \"line\": 2, \"end_line\": 4, \"note\": \"x\"}]\n```");
   check("a nou-show block is read and taken out of the reply", parsed?.stops[0]?.line === 2 && parsed.rest === "Look here.");
   check("a reply without one has none", stopsFromReply("just text") === null);
+  const bare = stopsFromReply("Startup.\n\nnou-show\n[{\"file\": \"a.ts\", \"line\": 7, \"end_line\": 9, \"note\": \"y\"}]");
+  check("so is one written without its fence, at the end of the reply", bare?.stops[0]?.line === 7 && bare.rest === "Startup.");
+  const tilde = stopsFromReply("x\r\n~~~nou-show\r\n[{\"file\": \"a.ts\", \"line\": 1}]~~~");
+  check("and with ~~~, CRLF, or the fence on the JSON's line", tilde?.stops[0]?.line === 1);
+  const { hideNouBlocks } = await import("../src/guide/index.js");
+  check("the chat never shows Nou's blocks, finished or still arriving",
+    hideNouBlocks("Here.\n```nou-show\n[{}]\n```") === "Here." && hideNouBlocks("Here.\n```nou-show\n[{\"file\": \"a") === "Here." &&
+    hideNouBlocks("Here.\nnou-show\n[{\"file\"") === "Here." && hideNouBlocks("Use the nou-show block") === "Use the nou-show block");
   check("other engines are asked for the block, Nou's for the tool", explainPrompt("q", false).includes("nou-show") && explainPrompt("q", true).includes("show_places"));
 }
 

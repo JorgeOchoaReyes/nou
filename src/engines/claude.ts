@@ -160,6 +160,9 @@ export class ClaudeCodeEngine extends ExternalEngine {
           const detail = message.errors?.join("; ") || message.result || message.subtype;
           if (!signal.aborted) this.hooks.onEntry({ kind: "error", text: `Claude Code: ${detail}` });
         }
+        // The turn is over: don't wait for Claude Code's process to close its stream as well. Something it
+        // left running (a background command, an MCP server) kept that open, and Nou "working" forever.
+        break;
       }
     }
     if (signal.aborted) throw new Error("aborted");
