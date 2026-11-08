@@ -43,6 +43,8 @@ type Props = {
   sendNowFirst?: boolean;
   /** Stop Nou and send what's queued right away (a click on the queued messages). */
   onSendNow?(): void;
+  /** Whether text in the messages is highlighted now (then Ctrl+C copies it rather than stopping Nou). */
+  onSelecting?(selecting: boolean): void;
   /** Answers the approval waiting in the footer (y/n typed into an empty input). */
   onAnswer(ok: boolean): void;
   /** Conversation tabs (several agents at once): shown in the title row, with + for a new one. */
@@ -168,7 +170,7 @@ const WORD_CHAR = /[\p{L}\p{N}_.\-/@:~#%?=&+]/u;
 type Point = { line: number; col: number };
 const lineText = (line: Line) => (line.spans ? line.spans.map((s) => s.text).join("") : line.text ?? "");
 
-export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheelPane, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [], sendNowFirst = false, onSendNow }: Props) {
+export const Chat = memo(function Chat({ width, height, focused, entries, streaming, busy, approval, approvalNote, contextChip, wheelPane, scrollTo, prefill, extraCommands, onMenu, onSubmit, onAnswer, click, onOpenRef, select, tabs, queued = [], sendNowFirst = false, onSendNow, onSelecting }: Props) {
   const wheel = usePaneWheel(wheelPane);
   const [input, setInputText] = useState("");
   // Whether the chat has the keyboard right now: a key handler from a render before focus moved away can
@@ -377,6 +379,16 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
       setTimeout(() => setFlash(null), 2000);
     });
   };
+  useEffect(() => {
+    onSelecting?.(!!selection);
+  }, [!!selection]);
+  // Ctrl+C with text highlighted copies it (again), as it does everywhere else, and clears the highlight:
+  // it doesn't stop Nou. With nothing highlighted, Ctrl+C stops Nou as before.
+  useInput((input, key) => {
+    if (!key.ctrl || input !== "c" || !selection) return;
+    copySelection(selection);
+    setSelection(null);
+  }, { isActive: !!selection });
   // Typing or new messages leave the selection be; a new conversation clears it.
   useEffect(() => {
     if (!entries.length) setSelection(null);

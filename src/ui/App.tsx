@@ -408,7 +408,10 @@ export function App({ initialModel, permContext, resume }: Props) {
       return w.has(change.path) ? w : new Set(w).add(change.path);
     });
     // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
-    if (!background && ((status === "pending" && !draftActiveRef.current) || followRef.current)) {
+    // A proposed edit opens only when it waits for your OK; approved by auto-edit, it's just Nou working,
+    // which follow mode shows if it's on (it used to open anyway, so follow off still followed edits).
+    const waitsForYou = status === "pending" && !settingsRef.current.autoApproveEdits && !guideAsk.current;
+    if (!background && ((waitsForYou && !draftActiveRef.current) || followRef.current)) {
       clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
       setOpenFile(change.path);
       setContent(status === "applied" ? change.after : readText(change.path));
@@ -1201,11 +1204,16 @@ export function App({ initialModel, permContext, resume }: Props) {
     }
   }, settings.mouse);
 
+  const chatSelecting = useRef(false);
+  const onChatSelecting = useEvent((selecting: boolean) => {
+    chatSelecting.current = selecting;
+  });
   // Ctrl+C: stop Nou if it's working; otherwise press twice to quit.
   useInput((input, key) => {
     if (!(key.ctrl && input === "c")) return;
     if (showEditor && focus === "code" && editorStateRef.current?.selection) return; // the editor copies it
     if (focus === "terminal") return; // the terminal stops its command
+    if (chatSelecting.current) return; // the chat copies what's highlighted
     if (busy || approval) {
       stop();
       approval?.resolve(false);
@@ -1516,7 +1524,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       // Commands work from anywhere: / jumps to the chat's command box.
       setFocus("chat");
       setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
-    } else if (input === "f") toggleFollow();
+    } else if (input === "f" || input === "F") toggleFollow();
     else if (input === "m") toggleMouse();
     else if (input === "`") toggleTerminal();
     else if (input === "p") toggleProblems();
@@ -2606,6 +2614,7 @@ ${snippet}
           queued={queued}
           sendNowFirst={settings.sendNowWhileBusy}
           onSendNow={sendNow}
+          onSelecting={onChatSelecting}
           onAnswer={onAnswer}
           click={chatClick}
           select={chatSelect}
