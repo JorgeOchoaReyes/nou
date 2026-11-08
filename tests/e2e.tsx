@@ -451,7 +451,7 @@ console.log("Finding things for you: open_file and clickable paths");
     const y = rows.findIndex((l) => l.includes("a.ts has"));
     const x = rows[y]!.indexOf("a.ts has");
     await press(click(x + 1, y), 500);
-    check("clicking a file named in a reply opens it", frame().split("\n")[2]!.includes(" a.ts"));
+    check("clicking a file named in a reply opens it", await until(() => frame().split("\n")[2]!.includes(" a.ts")));
     const urlRow = frame().split("\n").findIndex((l) => l.includes("https://"));
     await press(click(frame().split("\n")[urlRow]!.indexOf("https://") + 2, urlRow), 300);
     check("clicking a web address opens it in the browser", await until(() => (globalThis as any).__opened === "https://example.com/guide"));
