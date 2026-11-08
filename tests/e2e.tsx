@@ -852,6 +852,9 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   await press("\x1b[27;2;13~", 150); // Shift+Enter (xterm modifyOtherKeys)
   await type("line six");
   check("Shift+Enter adds a line too, as either protocol sends it", frame().includes("line five") && frame().includes("line six") && !frame().includes("◆ nou") && !frame().includes("27;2;13"));
+  await press("\n", 150); // Ctrl+Enter as Windows Terminal and the Windows console send it: a line feed
+  await type("line seven");
+  check("Ctrl+Enter adds a line on Windows too (a line feed)", frame().includes("line six") && frame().includes("line seven") && !frame().includes("line sixline seven") && !frame().includes("◆ nou"));
 });
 
 console.log("Show me how");
