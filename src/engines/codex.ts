@@ -4,7 +4,7 @@ import path from "path";
 import { transientMessage, type AgentHooks } from "../agent/index.js";
 import type { ModelChoice } from "../providers/index.js";
 import { listAllFiles } from "../ui/QuickOpen.js";
-import { ExternalEngine } from "./external.js";
+import { ExternalEngine, readsInCommand } from "./external.js";
 import { loadPackage } from "./index.js";
 
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -164,6 +164,8 @@ export class CodexEngine extends ExternalEngine {
       this.hooks.onStream(event.item.text);
     } else if (event.type === "item.started" && event.item.type === "command_execution") {
       this.hooks.onBusy(`Codex: ${event.item.command}`);
+      // Codex reads files with shell commands: follow mode shows them as it would a read.
+      for (const read of readsInCommand(event.item.command)) this.hooks.onRead(read.path, read.line, read.to);
     } else if (event.type === "item.completed") {
       const item = event.item;
       if (item.type === "agent_message") {

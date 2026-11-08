@@ -968,6 +968,19 @@ console.log("Compaction");
   }
 }
 
+console.log("Follow mode sees what a shell command reads");
+{
+  const { readsInCommand } = await import("../src/engines/external.js");
+  mkdirSync("follow/src", { recursive: true });
+  writeFileSync("follow/src/app.ts", "x\n");
+  writeFileSync("follow/README.md", "y\n");
+  const show = (c: string) => JSON.stringify(readsInCommand(c));
+  check("sed -n '10,80p' reads those lines", show("sed -n '10,80p' follow/src/app.ts") === JSON.stringify([{ path: "follow/src/app.ts", line: 10, to: 80 }]));
+  check("inside Codex's bash -lc, with nl and a pipe", show(`/bin/bash -lc "nl -ba follow/src/app.ts | sed -n '5,9p'"`) === JSON.stringify([{ path: "follow/src/app.ts", line: 5, to: 9 }]));
+  check("cat, and head -n", show("cat follow/README.md && head -n 40 follow/src/app.ts") === JSON.stringify([{ path: "follow/README.md" }, { path: "follow/src/app.ts", line: 1, to: 40 }]));
+  check("files that aren't there, and other commands, aren't reads", show("cat nope.ts; rg foo follow/src; ls follow") === "[]");
+}
+
 console.log("Engines");
 {
   const { ENGINES, createEngine, isInstalled } = await import("../src/engines/index.js");
