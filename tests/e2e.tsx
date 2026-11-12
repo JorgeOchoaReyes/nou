@@ -527,7 +527,7 @@ console.log("Queueing and interrupting");
 {
   const heard: string[] = [];
   /** Replies to these stay open until the test lets them go, so what's typed meanwhile is queued however slow the machine. */
-  const held = new Set(["first", "busy now", "third"]);
+  const held = new Set(["first", "busy now", "third", "again", "once more"]); // the last two end by /now and a click
   let release: (() => void) | null = null;
   const slow: any = {
     id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
