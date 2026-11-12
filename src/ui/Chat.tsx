@@ -7,6 +7,7 @@ import path from "path";
 import { closeOpenMarkdown, linkAt, linkFileRefs, linkUrls, renderMarkdown, wrap, type FileRef, type Span } from "./text.js";
 import { ChatInput, inputHeight } from "./ChatInput.js";
 import { copyToClipboard } from "./clipboard.js";
+import { fitAround } from "./Tabs.js";
 import { C, SPINNER, ANIMATION_MS } from "./theme.js";
 import { useTerminalFocused } from "./focus.js";
 import { Pane } from "./Pane.js";
@@ -142,21 +143,42 @@ export type ChatTabItem = { id: string; label: string; state: "idle" | "busy" | 
 
 /**
  * Where each tab sits in the chat's title row (columns from the pane's inner left edge), and the "+"
- * that opens a new one: shared by the drawing and the clicks.
+ * that opens a new one: shared by the drawing and the clicks. Only the tabs that fit are shown, around the
+ * active one; ‹ and › stand for the rest and go to the tab before or after.
  */
-export function chatTabZones(tabs: ChatTabItem[]): { zones: { id: string; from: number; to: number; close?: boolean }[]; plus: number; width: number } {
+export function chatTabZones(all: ChatTabItem[], active?: string, paneWidth = 10_000): { zones: { id: string; from: number; to: number; close?: boolean }[]; plus: number; width: number; from: number; to: number; tabs: ChatTabItem[] } {
   // One tab: just "Chat +", to leave the title row its room.
-  if (tabs.length === 1) return { zones: [{ id: tabs[0]!.id, from: 3, to: 7 }], plus: 8, width: 9 };
+  if (all.length === 1) return { zones: [{ id: all[0]!.id, from: 3, to: 7 }], plus: 8, width: 9, from: 0, to: 1, tabs: all };
+  const room = paneWidth - 2 - 3 - 3; // the borders, " ◆ " and " + "
+  const sizeOf = (t: ChatTabItem) => tabText(t).length + TAB_CLOSE.length + 1;
+  // Short of room, names are shortened first (down to a few letters each), so every tab stays in view;
+  // only then do the ones that still don't fit go behind ‹ ›.
+  let tabs = all;
+  for (let max = 14; max >= 6 && tabs.reduce((n, t) => n + sizeOf(t), 0) > room; max--) {
+    tabs = all.map((t) => (t.label.length > max ? { ...t, label: `${t.label.slice(0, max - 1)}…` } : t));
+  }
+  const sizes = tabs.map(sizeOf);
+  const { from, to } = fitAround(sizes, Math.max(0, tabs.findIndex((t) => t.id === active)), room, TAB_PREV.length + TAB_NEXT.length);
   let x = 3; // " ◆ "
+  const zones: { id: string; from: number; to: number; close?: boolean }[] = [];
+  if (from > 0) {
+    zones.push({ id: tabs[from - 1]!.id, from: x, to: x + TAB_PREV.length });
+    x += TAB_PREV.length;
+  }
   // Each tab, then its × (which closes it).
-  const zones = tabs.flatMap((t) => {
+  for (const t of tabs.slice(from, to)) {
     const w = tabText(t).length;
-    const both = [{ id: t.id, from: x, to: x + w }, { id: t.id, from: x + w, to: x + w + TAB_CLOSE.length, close: true }];
+    zones.push({ id: t.id, from: x, to: x + w }, { id: t.id, from: x + w, to: x + w + TAB_CLOSE.length, close: true });
     x += w + TAB_CLOSE.length + 1;
-    return both;
-  });
-  return { zones, plus: x + 1, width: x + 3 };
+  }
+  if (to < tabs.length) {
+    zones.push({ id: tabs[to]!.id, from: x, to: x + TAB_NEXT.length });
+    x += TAB_NEXT.length;
+  }
+  return { zones, plus: x + 1, width: x + 3, from, to, tabs };
 }
+const TAB_PREV = "‹ ";
+const TAB_NEXT = "› ";
 const TAB_CLOSE = "× ";
 const tabText = (t: ChatTabItem) => ` ${t.state === "busy" ? "● " : t.state === "waiting" ? "! " : ""}${t.label} `;
 
@@ -436,12 +458,14 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   );
 
   const empty = entries.length === 0 && !streaming;
+  const strip = tabs ? chatTabZones(tabs.items, tabs.active, width) : { from: 0, to: 0, tabs: [] as ChatTabItem[] };
   const title = (
     <>
       {" "}<Text color={C.accent2}>◆</Text>{" "}
       {tabs && tabs.items.length > 1 ? (
         <>
-          {tabs.items.map((t) => (
+          {strip.from > 0 ? <Text color={C.accent2}>{TAB_PREV}</Text> : null}
+          {strip.tabs.slice(strip.from, strip.to).map((t) => (
             <Text key={t.id}>
               <Text {...(t.id === tabs.active ? { backgroundColor: C.panel, color: C.text, bold: true } : { color: t.state === "waiting" ? C.yellow : C.dim })}>
                 {tabText(t)}
@@ -450,6 +474,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
               {" "}
             </Text>
           ))}
+          {strip.to < tabs.items.length ? <Text color={C.accent2}>{TAB_NEXT}</Text> : null}
           <Text color={C.accent2} bold> + </Text>
         </>
       ) : <>Chat{tabs ? <Text color={C.accent2} bold> +</Text> : null}</>}

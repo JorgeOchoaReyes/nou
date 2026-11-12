@@ -969,6 +969,12 @@ console.log("Conversation tabs");
     const y = rows.findIndex((l) => l.includes(" slow job "));
     await press(click(rows[y]!.indexOf("slow job"), y), 300);
     check("clicking its tab shows it, reply and all", await until(() => frame().includes("done: slow job")) && !frame().includes("done: quick one"));
+    await type("/rename plan");
+    await press(KEY.enter, 300);
+    check("/rename names the chat's tab", await until(() => /│ ◆ .* plan ×/.test(frame()) && !frame().includes(" slow job ×")));
+    await type("/rename");
+    await press(KEY.enter, 300);
+    check("/rename alone names it by its first message again", await until(() => frame().includes(" slow job ×")));
     // The other tab's × closes it, leaving this one on screen.
     const tabRow = frame().split("\n").findIndex((l) => l.includes(" slow job "));
     const line = frame().split("\n")[tabRow]!;
