@@ -63,7 +63,7 @@ export async function readClipboard(): Promise<string | null> {
 
 /** Opens a web address in the default browser (the terminal's own link handling can't: Nou has the mouse). */
 export function openInBrowser(url: string): boolean {
-  if (!/^https?:\/\//.test(url)) return false;
+  if (!/^(https?|file):\/\//.test(url)) return false; // web pages, and pages Nou writes (a diagram)
   if (process.env.NOU_TEST_OPEN) return ((globalThis as any).__opened = url), true; // tests: note it, open nothing
   const [cmd, args] = process.platform === "darwin" ? ["open", [url]]
     : process.platform === "win32" ? ["cmd", ["/c", "start", "", url.replace(/&/g, "^&")]]

@@ -33,6 +33,8 @@ import { PTY_PACKAGE, workspaceFolder } from "../workspaces/host.js";
 import { C, palette } from "./theme.js";
 import { FIND_KEY, isFind, isSearchAll } from "./keys.js";
 import { searchText } from "../search/index.js";
+import { DIAGRAM_NOTE, DIAGRAM_TAB, diagramPage, diagramsFromReply, isDiagramTab, visualizePrompt, type Diagram } from "../diagram/index.js";
+import { DiagramView } from "./DiagramView.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
@@ -259,6 +261,9 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [reveal, setReveal] = useState<string | null>(null);
   /** The open files, as tabs over the code view, in the order they were opened. */
   const [tabs, setTabs] = useState<string[]>([]);
+  /** Diagrams the agent drew, by their tab ("diagram:/<title>"). */
+  const diagrams = useRef(new Map<string, Diagram>());
+  const [diagramClick, setDiagramClick] = useState<{ x: number; y: number; nonce: number } | null>(null);
   /** Files opened this session, latest first: Ctrl+P lists them first, and b goes back to the previous one. */
   const [recent, setRecent] = useState<string[]>([]);
   const [treeVersion, setTreeVersion] = useState(0);
@@ -368,6 +373,15 @@ export function App({ initialModel, permContext, resume }: Props) {
   const branch = useMemo(() => (repo ? gitBranch() : null), [repo, git]);
 
   const open = useCallback((filePath: string) => {
+    if (isDiagramTab(filePath)) {
+      // A diagram's tab: nothing to read from disk.
+      setOpenFile(filePath);
+      setContent("");
+      setDiffMode("off");
+      setEditing(false);
+      setCodePanel("code");
+      return;
+    }
     setOpenFile(filePath);
     setRecent((r) => [filePath, ...r.filter((f) => f !== filePath)].slice(0, 30));
     setContent(readText(filePath));
@@ -638,7 +652,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   useEffect(() => {
     const { extras, extraTools } = harness({ diagnostics, plugins: activePlugins.map((p) => p.plugin!), git: settings.gitContext && repo });
     // Other engines read AGENTS.md / CLAUDE.md themselves: they get only the NOU.md rules on top.
-    engineConfig.current = { system: buildSystemPrompt(permContext, extras), extras: [...extras, nouRulesOnly(permContext), SHOW_PLACES_NOTE].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), showPlacesTool((stops) => (tourFound.current = stops)), ...mcpRef.current!.tools()], effort: settings.effort };
+    engineConfig.current = { system: buildSystemPrompt(permContext, [...extras, DIAGRAM_NOTE]), extras: [...extras, nouRulesOnly(permContext), SHOW_PLACES_NOTE, DIAGRAM_NOTE].filter(Boolean), extraTools: [...extraTools, showStepsTool((steps) => (guideFound.current = steps)), showPlacesTool((stops) => (tourFound.current = stops)), ...mcpRef.current!.tools()], effort: settings.effort };
     agentRef.current!.configure(engineConfig.current);
   }, [settings.gitContext, settings.effort, activePlugins, mcpVersion]);
 
@@ -929,7 +943,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   const diff = (pendingChange && pendingChange.path === openFile ? pendingChange : null) ?? (diffMode === "git" ? gitChange
     : diffMode === "nou" && record ? record.change
       : diffMode === "session" ? sessionChange : null);
-  const showEditor = editing && !!openFile && !(pendingChange && pendingChange.path === openFile);
+  const showEditor = editing && !!openFile && !isDiagramTab(openFile) && !(pendingChange && pendingChange.path === openFile);
   draftActiveRef.current = showEditor;
 
   // Check Nou's proposed edit before you approve it: does it add problems?
@@ -1165,6 +1179,12 @@ export function App({ initialModel, permContext, resume }: Props) {
       if (!zone) return;
       if (Math.abs(at - zone.close) <= 1) closeTab(zone.file);
       else switchTab(zone.file);
+      return;
+    }
+    // A click on a diagram: its box opens the file it names.
+    if (event.kind === "click" && pane === "code" && event.y >= 3 && codePanel === "code" && openFile && isDiagramTab(openFile)) {
+      setFocus("code");
+      setDiagramClick((c) => ({ x: event.x - codeLeft - 1, y: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
       return;
     }
     // Ctrl/Alt+click or right-click on code: go to the definition of what's under the pointer.
@@ -1568,7 +1588,7 @@ export function App({ initialModel, permContext, resume }: Props) {
 
   /** What the user is looking at, attached to each message so "this file" / "here" make sense. */
   const editorContext = (): string | null => {
-    if (!openFile) return null;
+    if (!openFile || isDiagramTab(openFile)) return null; // a diagram isn't a file to show the agent
     const editorState = editorStateRef.current;
     const unsaved = showEditor && editorState?.dirty;
     const lines = showEditor && editorState ? editorState.lines : content.replace(/\r\n/g, "\n").split("\n");
@@ -1591,7 +1611,7 @@ ${snippet}
 </editor_context>`;
   };
 
-  const contextChip = openFile
+  const contextChip = openFile && !isDiagramTab(openFile)
     ? `${openFile}${showEditor && editorState ? `:${editorState.line}${editorState.dirty ? " ± unsaved" : ""}` : viewport ? `:${viewport.top}-${viewport.bottom}` : ""}`
     : null;
 
@@ -1826,6 +1846,15 @@ ${snippet}
       return info("/zoom in makes the code panel bigger, /zoom out smaller, /zoom reset puts it back (or + and - with the code focused, = to reset). The files and chat give or take the room. For bigger text, use your terminal's own zoom (Cmd/Ctrl and +).");
     case "files":
       return setQuickOpen("");
+    case "visualize":
+    case "visualise":
+    case "diagram": {
+      // /visualize <question>: the agent explains it with a diagram, drawn in the code view.
+      const question = arg.trim() || (git.size ? "what the current changes in this project do and how they connect" : openFile && !isDiagramTab(openFile) ? `how ${openFile} works` : "how this project is put together");
+      if (busy) return info("Wait for the current reply to finish (or press Esc) first.", "error");
+      // The chat shows what you asked; the agent gets how to answer it.
+      return send(`Visualize: ${question}`, visualizePrompt(question));
+    }
     case "search":
     case "grep":
       return setSearching(arg.trim());
@@ -1977,6 +2006,13 @@ ${snippet}
     let stops = tourFound.current;
     tourFound.current = null;
     const reply = [...entries].reverse().find((e) => e.kind === "assistant");
+    // A diagram in the reply opens in the code view; the reply says so where the diagram was.
+    const drawn = reply && diagramsFromReply(reply.text);
+    if (reply && drawn?.diagrams.length) {
+      setEntries((prev) => prev.map((e) => (e === reply ? { ...e, text: drawn.rest } : e)));
+      for (const d of drawn.diagrams) showDiagram(d);
+      return;
+    }
     const found = reply && stopsFromReply(reply.text);
     if (found) {
       stops = stops?.length ? stops : found.stops;
@@ -1994,6 +2030,21 @@ ${snippet}
     if (!stop) return;
     openRef({ path: stop.file, line: stop.line, ...(stop.end > stop.line ? { to: stop.end } : {}) });
   }, [tour?.at, tour?.stops]);
+  /** Opens a diagram in a tab of the code view (one tab per title: drawing it again replaces it). */
+  function showDiagram(d: Diagram) {
+    const tab = `${DIAGRAM_TAB}${d.title}`;
+    diagrams.current.set(tab, d);
+    clearFollow();
+    open(tab);
+    setFocus("code");
+  }
+  /** o in a diagram: the same diagram, drawn by Mermaid, in the browser. */
+  function openDiagramInBrowser() {
+    const d = openFile ? diagrams.current.get(openFile) : undefined;
+    if (!d) return;
+    const url = diagramPage(d, palette() === "dark");
+    info(openInBrowser(url) ? `Opened ${d.title} in the browser.` : `Open this in a browser to see it: ${url}`);
+  }
   /** /showme <question>: explains it and opens the places in the code; /showme next|back|stop steps through them. */
   const showPlaces = (arg: string) => {
     const words = arg.trim();
@@ -2572,6 +2623,18 @@ ${snippet}
             wheelPane="code"
             onJump={onJump}
             onClose={onCloseProblems}
+          />
+        ) : openFile && isDiagramTab(openFile) && diagrams.current.has(openFile) ? (
+          <DiagramView
+            {...(tabStrip ? { tabs: tabStrip } : {})}
+            width={codeWidth}
+            height={heights.code}
+            focused={focus === "code"}
+            diagram={diagrams.current.get(openFile)!}
+            wheelPane="code"
+            click={diagramClick}
+            onOpenRef={openRef}
+            onOpenBrowser={openDiagramInBrowser}
           />
         ) : showEditor ? (
           <Editor
