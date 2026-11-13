@@ -194,10 +194,12 @@ const SHOW_BLOCK = /(?:```|~~~)[ \t]*nou-show[ \t]*\r?\n([\s\S]*?)\r?\n?[ \t]*(?
  * drawn, including one still arriving mid-stream.
  */
 export function hideNouBlocks(text: string): string {
-  if (!text.includes("nou-")) return text;
+  if (!text.includes("nou-") && !text.includes("mermaid")) return text;
   return text
     .replace(/(?:```|~~~)[ \t]*nou-(?:show|steps)[ \t]*\r?\n[\s\S]*?(?:```|~~~)/g, "")
     .replace(/(?:```|~~~)[ \t]*nou-(?:show|steps)[\s\S]*$/, "")
+    // A diagram still arriving: it opens in the code view when the reply is done.
+    .replace(/(?:```|~~~)[ \t]*(?:nou-diagram|mermaid)[ \t]*\r?\n(?![\s\S]*?(?:```|~~~))[\s\S]*$/, "")
     .replace(/(?:^|\n)[ \t]*nou-(?:show|steps)[ \t]*\r?\n[ \t]*\[[\s\S]*$/, "")
     .trimEnd();
 }

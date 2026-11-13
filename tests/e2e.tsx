@@ -1074,6 +1074,33 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("switching engines hands over the conversation so far", frame().includes("It has the conversation so"));
 });
 
+console.log("Visualize: a diagram in the code view");
+{
+  writeFileSync(path.join(dir, "auth.ts"), "export function login(user: string) {\n  if (!user) return false;\n  return check(user);\n}\n\nfunction check(user: string) {\n  return user.length > 2;\n}\n");
+  let asked = "";
+  const drawer: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      asked = String(messages[messages.length - 1].content);
+      return { text: "Login goes through two steps.\n\n```nou-diagram\n%% title: login flow\nflowchart TD\n  form[\"Login form\"] -->|submits| login[\"login NEW · auth.ts:1\"]\n  login -->|calls| check[\"check ± · auth.ts:6\"]\n```", toolCalls: [] };
+    },
+  };
+  await session({ provider: drawer, model: "fake" }, async ({ press, type, frame }) => {
+    await type("/visualize how does login work?");
+    await press(KEY.enter, 300);
+    check("/visualize asks the agent for a diagram", await until(() => asked.startsWith("[Visualize] how does login work?") && asked.includes("nou-diagram")));
+    check("the diagram opens in the code view, boxes and arrows, in its own tab", await until(() => /◈ login flow/.test(frame()) && frame().includes("login NEW") && frame().includes("check ±") && frame().includes("▼")));
+    check("the reply says where it is, and the block itself isn't shown", frame().includes("◈ Diagram: login flow") && !frame().includes("flowchart TD"));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes("check ±"));
+    const x = rows[y]!.indexOf("check ±");
+    await press("o", 200);
+    check("o opens it, drawn by Mermaid, in the browser", await until(() => String((globalThis as any).__opened).startsWith("file://") && String((globalThis as any).__opened).endsWith("login-flow.html")));
+    await press(click(x + 2, y), 400);
+    check("clicking a box opens the file it names, at its line", await until(() => frame().includes("function check(user")));
+  });
+}
+
 console.log("Show me where (explain with the code open)");
 {
   writeFileSync(path.join(dir, "auth.ts"), "export function login(user: string) {\n  if (!user) return false;\n  return check(user);\n}\n\nfunction check(user: string) {\n  return user.length > 2;\n}\n");

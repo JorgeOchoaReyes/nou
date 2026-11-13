@@ -1157,6 +1157,29 @@ console.log("Mistyped commands");
   check("a typo of a screen-only command runs while Nou works", runsWhileBusy("/termnial") && !runsWhileBusy("/claer"));
 }
 
+console.log("Diagrams");
+{
+  const { parseFlowchart, drawFlowchart, diagramsFromReply } = await import("../src/diagram/index.js");
+  const { hideNouBlocks } = await import("../src/guide/index.js");
+  const chart = parseFlowchart("%% title: x\nflowchart TD\n  a[\"docs/*.md\"] -->|read| b[\"build NEW · scripts/build.ts:12\"]\n  b --> c(\"index\")\n  d[\"Layout ± · Layout.tsx\"] -->|renders| e\n  c -- fetched --> e{Search}\n  e --> f\n  a --> f")!;
+  check("a flowchart's nodes, edges and labels are read (any arrow style)", chart.nodes.size === 6 && chart.edges.length === 6 && chart.edges.some((x) => x.label === "fetched"));
+  check("NEW and ± mark what a change adds and changes", chart.nodes.get("b")!.kind === "new" && chart.nodes.get("d")!.kind === "changed" && chart.nodes.get("a")!.kind === "plain");
+  check("a box's file is the one with a line, else one with a folder", JSON.stringify(chart.nodes.get("b")!.ref) === JSON.stringify({ path: "scripts/build.ts", line: 12 }) && chart.nodes.get("d")!.ref?.path === "Layout.tsx");
+  const drawn = drawFlowchart(chart);
+  const overlap = drawn.boxes.some((p, i) => drawn.boxes.some((q, j) => i < j && p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h));
+  check("every node is drawn as a box, and no two boxes overlap", drawn.boxes.length === 6 && !overlap);
+  const text = drawn.cells.map((r) => r.map((c) => c.ch).join("")).join("\n");
+  check("an arrow points down into every box something points at, labels beside them", (text.match(/▼/g) ?? []).length === new Set(chart.edges.map((x) => x.to)).size && text.includes("read") && text.includes("renders"));
+  const below = (from: string, to: string) => drawn.boxes.find((b) => b.id === to)!.y > drawn.boxes.find((b) => b.id === from)!.y;
+  check("each box is below the ones pointing at it", chart.edges.every((x) => below(x.from, x.to)));
+  check("a cycle doesn't hang the layout", drawFlowchart(parseFlowchart("graph TD\n a-->b\n b-->a")!).boxes.length === 2);
+  check("only flowcharts are drawn in text", parseFlowchart("sequenceDiagram\n A->>B: hi") === null);
+  const reply = diagramsFromReply("Here.\n\n```nou-diagram\n%% title: login flow\nflowchart TD\n a-->b\n```\nDone.");
+  check("a diagram block is taken out of the reply, named by its title", reply.diagrams[0]?.title === "login flow" && !reply.rest.includes("flowchart") && reply.rest.includes("◈ Diagram: login flow"));
+  check("a plain ```mermaid block counts too", diagramsFromReply("```mermaid\ngraph LR\n a-->b\n```").diagrams.length === 1);
+  check("a diagram still arriving isn't shown as text", hideNouBlocks("Look:\n```nou-diagram\nflowchart TD\n a-->") === "Look:");
+}
+
 console.log("Show me where");
 {
   const { tidyStops, stopsFromReply, explainPrompt } = await import("../src/guide/index.js");

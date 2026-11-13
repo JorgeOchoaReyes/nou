@@ -92,6 +92,7 @@ const ICON_SHAPES: Record<string, string> = {
 const ICONS: Record<string, [string, string]> = Object.fromEntries(Object.entries(iconColors()).map(([ext, color]) => [ext, [ICON_SHAPES[ext]!, color]]));
 
 export function fileIcon(file: string): { icon: string; color: string } {
+  if (file.startsWith("diagram:/")) return { icon: "◈", color: C.accent2 }; // a diagram's tab
   const base = path.basename(file).toLowerCase();
   if (base.startsWith(".env")) return { icon: "⌁", color: C.yellow };
   if (base.startsWith(".git")) return { icon: "◌", color: C.orange };

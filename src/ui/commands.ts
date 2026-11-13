@@ -60,6 +60,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "models", args: "[provider]", description: "list the models a provider offers" },
   { name: "connect", args: "<provider>", description: "enter an API key (and URL) for a provider" },
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
+  { name: "visualize", args: "[question]", description: "explain with a diagram, drawn in the code view (o: in the browser)" },
   { name: "search", args: "[text]", description: "search the text of every file; Enter opens the line (Ctrl+Shift+F)" },
   { name: "rename", args: "[name]", description: "name this chat's tab (alone: back to its first message)" },
   { name: "follow", args: "[on|off]", description: "the code view shows each file the agent reads or edits as it works" },
