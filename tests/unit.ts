@@ -1190,6 +1190,11 @@ console.log("Workspaces (several Nous in one window)");
   type("s1\r");
   const switched = await waitFor(new RegExp(`\\[redraw 1 ${nameA}\\]`));
   out = "";
+  type("rmy api\r"); // workspace 1 names its tab
+  const renamed = await waitFor(new RegExp(`\\[tabs my api\\*,${nameB}\\]`));
+  type("r\r"); // and back to its folder's name
+  const unnamed = await waitFor(new RegExp(`\\[tabs ${nameA}\\*,${nameB}\\]`));
+  out = "";
   type("c2\r"); // workspace 1 (on screen) clicks workspace 2's ×
   const closedByX = await waitFor(new RegExp(`\\[tabs ${nameA}\\*\\]`));
   type(`n${b}\r`); // and opens it again
@@ -1202,6 +1207,7 @@ console.log("Workspaces (several Nous in one window)");
   (process.stdout as any).write = write;
   check("the last folder opened is on screen, drawn in full", opened);
   check("switching shows the other workspace, which redraws", switched);
+  check("a workspace's tab can be named, and named by its folder again", renamed && unnamed);
   check("a workspace's × closes it (it's asked to quit)", closedByX);
   check("closing one brings the other back", closed);
   check("closing the last one ends the window", code === 0);
@@ -1210,6 +1216,21 @@ console.log("Workspaces (several Nous in one window)");
   const closers = zones.filter((z) => z.close);
   check("header clicks find each tab, its ×, and the +", tabsOnly.length === 3 && tabsOnly[0]!.tab === 0 && tabsOnly[1]!.tab === 1 && tabsOnly[2]!.tab === "new"
     && closers.length === 2 && closers[0]!.tab === 0 && closers[0]!.from === tabsOnly[0]!.to && tabsOnly[1]!.from === closers[0]!.to + 1);
+  // Many workspaces in a narrow window: the ones around the active one show, ‹ › stand for the rest, + stays.
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: String(i), name: `project-${i}`, folder: `/x/p${i}`, busy: false, active: i === 8 }));
+  const narrow = headerZones(many, 100, "fake:fake", true, null);
+  const shownTabs = narrow.filter((z) => typeof z.tab === "number" && !z.close);
+  const plus = narrow.find((z) => z.tab === "new")!;
+  check("with many workspaces the header shows those that fit, around the active one, and the + stays",
+    shownTabs.some((z) => z.tab === 8) && shownTabs.length < 12 && plus.to < 100 - 20);
+  check("‹ and › go to the workspace before and after the ones shown", shownTabs[0]!.tab < shownTabs[1]!.tab && narrow[0]!.to - narrow[0]!.from === 2);
+  const { chatTabZones } = await import("../src/ui/Chat.js");
+  const chats = Array.from({ length: 9 }, (_, i) => ({ id: `t${i}`, label: `conversation ${i}`, state: "idle" as const }));
+  const strip = chatTabZones(chats, "t7", 40);
+  check("with many chats the tab row shows those that fit around the active one, + included",
+    strip.from <= 7 && strip.to > 7 && strip.to - strip.from < 9 && strip.plus + 2 <= 40 - 2);
+  const two = chatTabZones(chats.slice(0, 2), "t0", 34);
+  check("two chats in a narrow pane both show, their names shortened", two.from === 0 && two.to === 2 && two.tabs[0]!.label.endsWith("…"));
 }
 
 console.log("Codex sessions as current Codex writes them");

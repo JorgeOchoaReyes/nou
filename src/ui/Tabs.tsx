@@ -16,6 +16,32 @@ function labels(tabs: string[]): string[] {
 }
 
 /**
+ * Which of a row of tabs fit in `room` columns, kept around the active one: grows right, then left, while
+ * they fit, keeping `markers` columns for the ‹ › that stand for the ones left out. Returns [from, to).
+ */
+export function fitAround(sizes: number[], active: number, room: number, markers = 2): { from: number; to: number } {
+  const at = Math.max(0, Math.min(sizes.length - 1, active));
+  if (!sizes.length) return { from: 0, to: 0 };
+  let from = at;
+  let to = at + 1;
+  let used = sizes[at]!;
+  const total = sizes.reduce((a, b) => a + b, 0);
+  if (total <= room) return { from: 0, to: sizes.length };
+  for (let grew = true; grew;) {
+    grew = false;
+    if (to < sizes.length && used + sizes[to]! <= room - markers) {
+      used += sizes[to++]!;
+      grew = true;
+    }
+    if (from > 0 && used + sizes[from - 1]! <= room - markers) {
+      used += sizes[--from]!;
+      grew = true;
+    }
+  }
+  return { from, to };
+}
+
+/**
  * Lays out the tabs that fit in `width` columns, keeping the active one in view: the ones that don't fit
  * are left out at the ends, marked with ‹ ›.
  */

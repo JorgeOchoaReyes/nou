@@ -17,7 +17,7 @@ type Pty = {
   kill(): void;
 };
 
-type Workspace = { id: string; folder: string; pty: Pty; busy: boolean; socket: net.Socket | null };
+type Workspace = { id: string; folder: string; pty: Pty; busy: boolean; socket: net.Socket | null; name?: string | undefined };
 
 /** A folder for a new workspace: `~` and relative paths (from `from`) resolved; null when it isn't a folder. */
 export function workspaceFolder(folder: string, from: string): string | null {
@@ -46,7 +46,7 @@ export async function runHost(folders: string[], firstArgs: string[], command = 
   const size = () => ({ cols: process.stdout.columns || 120, rows: process.stdout.rows || 40 });
 
   const send = (w: Workspace, msg: FromHost) => w.socket?.write(`${JSON.stringify(msg)}\n`);
-  const tabs = (): WorkspaceTab[] => workspaces.map((w) => ({ id: w.id, name: tabName(w.folder), folder: w.folder, busy: w.busy, active: w === active }));
+  const tabs = (): WorkspaceTab[] => workspaces.map((w) => ({ id: w.id, name: w.name || tabName(w.folder), folder: w.folder, busy: w.busy, active: w === active }));
   const broadcast = () => {
     const list = tabs();
     for (const w of workspaces) send(w, { type: "tabs", tabs: list });
@@ -71,6 +71,9 @@ export async function runHost(folders: string[], firstArgs: string[], command = 
       if (!from) return;
       if (msg.type === "state") {
         from.busy = msg.busy;
+        broadcast();
+      } else if (msg.type === "rename") {
+        from.name = msg.name.trim().slice(0, 30) || undefined;
         broadcast();
       } else if (msg.type === "switch") {
         const to = workspaces[msg.index];

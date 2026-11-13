@@ -153,6 +153,7 @@ console.log("Approvals and auto mode");
     await type("another");
     await press(KEY.enter, 1500);
     check("in auto-edit mode edits apply without asking", existsSync("auto3.txt") && !frame().includes("Nou wants to"));
+    check("and with follow off they don't take over the code view (only an edit waiting for you does)", frame().includes("auto1.txt ×") && !frame().includes("auto3.txt ×"));
     await type("/auto ask");
     await press(KEY.enter, 200);
     check("/auto ask goes back to asking", frame().includes("Ask mode"));
@@ -450,7 +451,7 @@ console.log("Finding things for you: open_file and clickable paths");
     const y = rows.findIndex((l) => l.includes("a.ts has"));
     const x = rows[y]!.indexOf("a.ts has");
     await press(click(x + 1, y), 500);
-    check("clicking a file named in a reply opens it", frame().split("\n")[2]!.includes(" a.ts"));
+    check("clicking a file named in a reply opens it", await until(() => frame().split("\n")[2]!.includes(" a.ts")));
     const urlRow = frame().split("\n").findIndex((l) => l.includes("https://"));
     await press(click(frame().split("\n")[urlRow]!.indexOf("https://") + 2, urlRow), 300);
     check("clicking a web address opens it in the browser", await until(() => (globalThis as any).__opened === "https://example.com/guide"));
@@ -526,7 +527,7 @@ console.log("Queueing and interrupting");
 {
   const heard: string[] = [];
   /** Replies to these stay open until the test lets them go, so what's typed meanwhile is queued however slow the machine. */
-  const held = new Set(["first", "busy now", "third"]);
+  const held = new Set(["first", "busy now", "third", "again", "once more"]); // the last two end by /now and a click
   let release: (() => void) | null = null;
   const slow: any = {
     id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
@@ -786,6 +787,12 @@ console.log("Taking back a message");
     await press(`\x1b[<32;${x + 6 + 1};${y + 1}M`, 50);
     await press(`\x1b[<0;${x + 6 + 1};${y + 1}m`, 400);
     check("dragging over the chat selects and copies it", /Copied it ✓|Can't copy/.test(frame()));
+    await delay(2100); // the "Copied" note goes
+    await press("\x03", 300); // Ctrl+C with the text still highlighted
+    check("Ctrl+C with chat text highlighted copies it, it doesn't stop or quit", /Copied it ✓|Can't copy/.test(frame()) && !frame().includes("Press again to quit"));
+    await press("\x03", 300); // nothing highlighted now: Ctrl+C is Ctrl+C again
+    check("then Ctrl+C with nothing highlighted works as before", frame().includes("Press again to quit"));
+    await delay(2100);
     await until(() => !/Copied it ✓|Can't copy/.test(frame()), 4000);
     await press(click(x + 1, y), 30);
     await press(`\x1b[<0;${x + 2};${y + 1}m`, 30);
@@ -969,6 +976,12 @@ console.log("Conversation tabs");
     const y = rows.findIndex((l) => l.includes(" slow job "));
     await press(click(rows[y]!.indexOf("slow job"), y), 300);
     check("clicking its tab shows it, reply and all", await until(() => frame().includes("done: slow job")) && !frame().includes("done: quick one"));
+    await type("/rename plan");
+    await press(KEY.enter, 300);
+    check("/rename names the chat's tab", await until(() => /│ ◆ .* plan ×/.test(frame()) && !frame().includes(" slow job ×")));
+    await type("/rename");
+    await press(KEY.enter, 300);
+    check("/rename alone names it by its first message again", await until(() => frame().includes(" slow job ×")));
     // The other tab's × closes it, leaving this one on screen.
     const tabRow = frame().split("\n").findIndex((l) => l.includes(" slow job "));
     const line = frame().split("\n")[tabRow]!;

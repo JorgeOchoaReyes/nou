@@ -204,6 +204,11 @@ export function App({ initialModel, permContext, resume }: Props) {
   }, [tour]);
   const shellRef = useRef<Shell | null>(null);
   const beforeTerm = useRef<Focus>("code");
+  /** Names you gave conversations (/rename), by conversation: their tab and /resume show them. */
+  const chatNames = useRef(new Map<string, string>());
+  const [namesVersion, setNamesVersion] = useState(0);
+  /** What the header calls this workspace when it's the only one (/workspace rename). */
+  const [projectName, setProjectName] = useState(path.basename(process.cwd()));
   const [follow, setFollow] = useState(settings.followMode);
   // Follow mode replays what the agent reads a step at a time (it reads far faster than you can watch):
   // the steps waiting, and the timer that shows the next one.
@@ -408,7 +413,10 @@ export function App({ initialModel, permContext, resume }: Props) {
       return w.has(change.path) ? w : new Set(w).add(change.path);
     });
     // Diffs awaiting approval are shown unless you're in the middle of editing a file (the chat says what's waiting).
-    if (!background && ((status === "pending" && !draftActiveRef.current) || followRef.current)) {
+    // A proposed edit opens only when it waits for your OK; approved by auto-edit, it's just Nou working,
+    // which follow mode shows if it's on (it used to open anyway, so follow off still followed edits).
+    const waitsForYou = status === "pending" && !settingsRef.current.autoApproveEdits && !guideAsk.current;
+    if (!background && ((waitsForYou && !draftActiveRef.current) || followRef.current)) {
       clearFollow(); // an edit is shown as it happens, ahead of reads still waiting
       setOpenFile(change.path);
       setContent(status === "applied" ? change.after : readText(change.path));
@@ -525,8 +533,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** The tabs as the chat's title row shows them: named for what you asked first, marked when working or waiting. */
   function chatTabItems(): ChatTabItem[] {
     return chatTabs.map((id, i) => {
-      const t = id === activeTab.current ? { entries, busy, approval } : tabStore.current.get(id);
-      const first = t?.entries.find((e) => e.kind === "user")?.text.replace(/\s+/g, " ");
+      const t = id === activeTab.current ? { entries, busy, approval, conversationId } : tabStore.current.get(id);
+      const first = chatNames.current.get(t?.conversationId ?? "") ?? t?.entries.find((e) => e.kind === "user")?.text.replace(/\s+/g, " ");
       const label = first ? (first.length > 14 ? `${first.slice(0, 13)}…` : first) : `chat ${i + 1}`;
       return { id, label, state: t?.approval ? "waiting" : t?.busy ? "busy" : "idle" };
     });
@@ -539,7 +547,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   }
   function saveTab(t: TabState) {
     const first = t.entries.find((e) => e.kind === "user");
-    if (first) saveConversation({ id: t.conversationId, title: first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: t.agent.id, entries: t.entries, state: t.agent.snapshot?.() });
+    if (first) saveConversation({ id: t.conversationId, title: chatNames.current.get(t.conversationId) ?? first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: t.agent.id, entries: t.entries, state: t.agent.snapshot?.() });
   }
   if (!agentRef.current) {
     const saved = loadSettings().engine;
@@ -561,8 +569,8 @@ export function App({ initialModel, permContext, resume }: Props) {
     const first = entries.find((e) => e.kind === "user");
     if (busy || !first) return;
     const engine = agentRef.current!;
-    saveConversation({ id: conversationId, title: first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: engine.id, entries, state: engine.snapshot?.() });
-  }, [!busy, entries.length, conversationId]);
+    saveConversation({ id: conversationId, title: chatNames.current.get(conversationId) ?? first.text.replace(/\s+/g, " ").slice(0, 80), updated: Date.now(), engine: engine.id, entries, state: engine.snapshot?.() });
+  }, [!busy, entries.length, conversationId, namesVersion]);
   /** Earlier conversations for the palette, read from disk when it opens. */
   const recentChats = useMemo(() => (quickOpen !== null ? resumable() : []), [quickOpen !== null]);
   useEffect(() => {
@@ -1104,7 +1112,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (event.kind === "click" && !approval && event.y === 0 && event.x >= clickable.current.modelFrom) return setView("settings");
     // Workspace tabs in the header: click one to switch to it, + to open another.
     if (event.kind === "click" && event.y === 0) {
-      const zone = headerZones(workspaceTabs()).find((z) => event.x >= z.from && event.x < z.to);
+      const zone = headerZones(workspaceTabs(), columns, modelLabel, choice.provider.local, update, projectName).find((z) => event.x >= z.from && event.x < z.to);
       if (zone?.tab === "new") return pickWorkspaceFolder();
       if (typeof zone?.tab === "number") return void sendToHost({ type: zone.close ? "close" : "switch", index: zone.tab });
     }
@@ -1133,7 +1141,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     // The chat's title row holds the conversation tabs: a click switches, + opens a new one.
     if (event.kind === "click" && pane === "chat" && event.y === 2) {
       const at = event.x - treeWidth - codeWidth - 1;
-      const { zones, plus } = chatTabZones(chatTabItems());
+      const { zones, plus } = chatTabZones(chatTabItems(), activeTab.current, columns - treeWidth - codeWidth);
       if (Math.abs(at - plus) <= 1) return newChatTab();
       const zone = zones.find((z) => at >= z.from && at < z.to);
       if (zone?.close) return closeChatTab(zone.id);
@@ -1201,11 +1209,16 @@ export function App({ initialModel, permContext, resume }: Props) {
     }
   }, settings.mouse);
 
+  const chatSelecting = useRef(false);
+  const onChatSelecting = useEvent((selecting: boolean) => {
+    chatSelecting.current = selecting;
+  });
   // Ctrl+C: stop Nou if it's working; otherwise press twice to quit.
   useInput((input, key) => {
     if (!(key.ctrl && input === "c")) return;
     if (showEditor && focus === "code" && editorStateRef.current?.selection) return; // the editor copies it
     if (focus === "terminal") return; // the terminal stops its command
+    if (chatSelecting.current) return; // the chat copies what's highlighted
     if (busy || approval) {
       stop();
       approval?.resolve(false);
@@ -1516,7 +1529,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       // Commands work from anywhere: / jumps to the chat's command box.
       setFocus("chat");
       setChatPrefill((p) => ({ text: "/", nonce: (p?.nonce ?? 0) + 1 }));
-    } else if (input === "f") toggleFollow();
+    } else if (input === "f" || input === "F") toggleFollow();
     else if (input === "m") toggleMouse();
     else if (input === "`") toggleTerminal();
     else if (input === "p") toggleProblems();
@@ -1674,6 +1687,14 @@ ${snippet}
         .sort((a, b) => b.m!.score - a.m!.score)[0]?.f;
       if (!file) return info(`No file matches "${wanted}". To find where something is in the code, ask in the chat.`, "error");
       return openRef({ path: file, ...(m[2] ? { line: Number(m[2]) } : {}), ...(m[3] ? { to: Number(m[3]) } : {}) });
+    }
+    case "rename": {
+      // Names this conversation: its tab, and /resume, show the name (/rename alone: back to the first message).
+      const name = arg.trim().slice(0, 40);
+      if (name) chatNames.current.set(conversationId, name);
+      else chatNames.current.delete(conversationId);
+      setNamesVersion((v) => v + 1);
+      return info(name ? `This chat is now called ${name}. (/workspace rename <name> names the workspace.)` : "This chat is named by its first message again.");
     }
     case "follow": {
       const want = arg.trim().toLowerCase();
@@ -2311,7 +2332,13 @@ ${snippet}
       if (!isHosted() || !tabs[n - 1]) return info(`There's no workspace ${n}. /workspace lists them.`, "error");
       return void sendToHost({ type: "switch", index: n - 1 });
     }
-    if (sub !== "new") return info("Try /workspace new <folder>, /workspace <n> or /workspace.", "error");
+    if (sub === "rename") {
+      const name = more.join(" ").trim().slice(0, 30);
+      if (isHosted()) sendToHost({ type: "rename", name });
+      else setProjectName(name || path.basename(process.cwd()));
+      return info(name ? `This workspace is now called ${name}.` : "This workspace is called by its folder's name again.");
+    }
+    if (sub !== "new") return info("Try /workspace new <folder>, /workspace <n>, /workspace rename <name> or /workspace.", "error");
     const wanted = more.join(" ");
     if (!wanted) return pickWorkspaceFolder();
     if (isHosted()) return void sendToHost({ type: "new", folder: wanted });
@@ -2503,7 +2530,7 @@ ${snippet}
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} tabs={tabsOfWorkspaces} />
+      <Header width={columns} branch={branch} changes={git.size} model={modelLabel} local={choice.provider.local} busy={busy} update={update} tabs={tabsOfWorkspaces} project={projectName} />
       <Box flexDirection="row" height={height}>
         <FileTree
           width={treeWidth}
@@ -2606,6 +2633,7 @@ ${snippet}
           queued={queued}
           sendNowFirst={settings.sendNowWhileBusy}
           onSendNow={sendNow}
+          onSelecting={onChatSelecting}
           onAnswer={onAnswer}
           click={chatClick}
           select={chatSelect}

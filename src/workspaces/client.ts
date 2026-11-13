@@ -17,6 +17,8 @@ export type ToHost =
   | { type: "new"; folder: string }
   /** Close that workspace (its × in the header). */
   | { type: "close"; index: number }
+  /** Names this workspace's tab (empty: back to its folder's name). */
+  | { type: "rename"; name: string }
   | { type: "state"; busy: boolean };
 
 /** Messages the host sends a workspace. */

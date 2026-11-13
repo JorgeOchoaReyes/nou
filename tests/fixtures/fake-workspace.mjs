@@ -1,5 +1,5 @@
 // A stand-in for a workspace (a whole Nou) in the host tests: says hello, prints what the host tells it, and
-// does what it's typed: "s<n>" switches to workspace n, "n<folder>" opens one, "c<n>" closes workspace n (its ×), "q" quits.
+// does what it's typed: "s<n>" switches to workspace n, "n<folder>" opens one, "c<n>" closes workspace n (its ×), "r<name>" renames this one, "q" quits.
 import net from "net";
 const id = process.env.NOU_WORKSPACE_ID;
 const socket = net.connect(Number(process.env.NOU_HOST_PORT), "127.0.0.1");
@@ -27,4 +27,5 @@ process.stdin.on("data", (d) => {
   if (line.startsWith("s")) send({ type: "switch", index: Number(line.slice(1)) - 1 });
   if (line.startsWith("n")) send({ type: "new", folder: line.slice(1) });
   if (line.startsWith("c")) send({ type: "close", index: Number(line.slice(1)) - 1 });
+  if (line.startsWith("r")) send({ type: "rename", name: line.slice(1) });
 });
