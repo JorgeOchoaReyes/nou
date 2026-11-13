@@ -62,8 +62,6 @@ const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
 const NO_FILES = new Set<string>();
-const NO_SEARCH_FILES: string[] = [];
-const NO_SEARCH_ACTIONS: PaletteAction[] = [];
 const DOUBLE_CLICK_MS = 500;
 /** A step follow mode shows: a file the agent read, and the lines when it read part of it. */
 type FollowStep = { file: string; line?: number; to?: number };
@@ -159,8 +157,12 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [setupReason, setSetupReason] = useState<string | null>(null);
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
-  /** Searching the text of every file (Ctrl+Shift+F, /search): what's typed so far, or null when closed. */
-  const [searching, setSearching] = useState<string | null>(null);
+  /** The quick-open popup opens on searching inside files (/search, Ctrl+Shift+F) rather than file names. */
+  const [quickText, setQuickText] = useState(false);
+  const setSearching = (query: string) => {
+    setQuickText(true);
+    setQuickOpen(query);
+  };
   /** /resume's picker: the conversations, in the palette's place while it's open. */
   const [resumePicker, setResumePicker] = useState<PaletteAction[] | null>(null);
   /** What the open picker is for, said in its empty search box. */
@@ -2679,27 +2681,6 @@ ${snippet}
           </GameGuard>
         </Box>
       )}
-      {searching !== null && (
-        <QuickOpen
-          width={columns}
-          top={3}
-          files={NO_SEARCH_FILES}
-          actions={NO_SEARCH_ACTIONS}
-          initialQuery={searching}
-          placeholder="Search every file…"
-          searchText={searchText}
-          onPick={() => {}}
-          onPickHit={(hit) => {
-            setSearching(null);
-            clearFollow();
-            // Opens the line with the match, highlighted, and puts the keyboard there.
-            openAt(hit.file, hit.line, false, hit.line);
-            setFocus("code");
-          }}
-          onRun={() => {}}
-          onClose={() => setSearching(null)}
-        />
-      )}
       {quickOpen !== null && (
         <QuickOpen
           width={columns}
@@ -2708,9 +2689,18 @@ ${snippet}
           recent={recent}
           actions={resumePicker ?? paletteActions}
           initialQuery={quickOpen}
-          {...(resumePicker ? { placeholder: "type to filter", title: pickerTitle } : {})}
+          {...(resumePicker ? { placeholder: "type to filter", title: pickerTitle } : { searchText, startInText: quickText })}
+          onPickHit={(hit) => {
+            setQuickOpen(null);
+            setQuickText(false);
+            clearFollow();
+            // Opens the line with the match, highlighted, and puts the keyboard there.
+            openAt(hit.file, hit.line, false, hit.line);
+            setFocus("code");
+          }}
           onPick={(file) => {
             setQuickOpen(null);
+            setQuickText(false);
             clearFollow();
             open(file);
             setReveal(file);
@@ -2718,11 +2708,13 @@ ${snippet}
           }}
           onRun={(action) => {
             setQuickOpen(null);
+            setQuickText(false);
             setResumePicker(null);
             action.run();
           }}
           onClose={() => {
             setQuickOpen(null);
+            setQuickText(false);
             setResumePicker(null);
           }}
         />

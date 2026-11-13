@@ -68,8 +68,10 @@ type Props = {
   /** A line over the search box naming what this is, so it's never a mystery box (a picker says what it picks). */
   title?: string;
   onPick(file: string): void;
-  /** Search mode (Ctrl+Shift+F, /search): finds text in every file instead of file names. */
+  /** Searches the text inside every file: Tab switches between that and file names. Left out for pickers. */
   searchText?: (query: string) => { hits: TextHit[]; more: boolean };
+  /** Open on searching inside files (/search, Ctrl+Shift+F) rather than on file names. */
+  startInText?: boolean;
   /** A line found in search mode was picked. */
   onPickHit?(hit: TextHit): void;
   onRun(action: PaletteAction): void;
@@ -77,17 +79,19 @@ type Props = {
 };
 
 /** Ctrl+P: find a file. Start with ">" (or press ?) for every action Nou has, with its shortcut. */
-export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", title, onPick, searchText, onPickHit, onRun, onClose }: Props) {
+export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", title, onPick, searchText, startInText = false, onPickHit, onRun, onClose }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [cursor, setCursor] = useState(0);
-  // Search mode reads every file, so it waits for a pause in the typing (each search is one pass, cached).
-  const textMode = !!searchText;
+  // One popup for both: file names, or (Tab) the text inside every file. Searching inside reads every file,
+  // so it waits for a pause in the typing (each search is one pass, cached).
+  const [inText, setInText] = useState(startInText);
+  const textMode = !!searchText && inText;
   const [searched, setSearched] = useState<{ query: string; hits: TextHit[]; more: boolean }>({ query: "", hits: [], more: false });
   useEffect(() => {
-    if (!searchText) return;
+    if (!searchText || !textMode) return;
     const timer = setTimeout(() => setSearched({ query, ...searchText(query) }), query === searched.query ? 0 : 120);
     return () => clearTimeout(timer);
-  }, [query, !!searchText]);
+  }, [query, textMode]);
   const boxWidth = Math.min(80, Math.max(40, width - 10));
   const inner = boxWidth - 2; // fill every cell so the screen underneath doesn't show through
   const commandMode = !textMode && query.startsWith(">");
@@ -119,6 +123,11 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
 
   useInput((_input, key) => {
     if (key.escape) onClose();
+    else if (key.tab && searchText && !query.startsWith(">")) {
+      // Tab: file names <-> the text inside files, keeping what's typed.
+      setInText((t) => !t);
+      setCursor(0);
+    }
     else if (key.upArrow) setCursor((c) => (c - 1 + Math.max(1, count)) % Math.max(1, count));
     else if (key.downArrow) setCursor((c) => (c + 1) % Math.max(1, count));
     else if (key.pageUp) setCursor((c) => Math.max(0, c - rowsShown));
@@ -133,7 +142,7 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
   return (
     <Box position="absolute" top={top} left={Math.floor((width - boxWidth) / 2)} width={boxWidth} flexDirection="column" borderStyle="round" borderColor={C.accent2}>
       <Text backgroundColor={C.panel}>
-        <Text color={C.accent2} bold>{fit(` ${title ?? (textMode ? "Search every file · type a word or phrase (/search)" : commandMode ? "Every action · type to filter (? or /actions)" : "Find a file · type part of its name (Ctrl+P or /files)")}`, inner - 6)}</Text>
+        <Text color={C.accent2} bold>{fit(` ${title ?? (textMode ? "Search inside files · Tab: file names instead" : commandMode ? "Every action · type to filter (? or /actions)" : searchText ? "Find a file by name · Tab: search inside files" : "Find a file · type part of its name")}`, inner - 6)}</Text>
         <Text color={C.dim}>{"Esc ×".padStart(6)}</Text>
       </Text>
       <Text backgroundColor={C.panel}>
@@ -226,8 +235,8 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
         );
       })}
       <Text color={C.dim}>{pad(textMode
-        ? ` ↑↓ select · Enter opens the line · Esc close   ${searched.query === query && query.trim() ? `${hits.length}${searched.more ? "+" : ""} lines` : ""}`
-        : commandMode ? ` ↑↓ select · Enter run · Esc close   ${found.length} commands` : " ↑↓ select · Enter open · > commands · Esc close")}</Text>
+        ? ` ↑↓ select · Enter opens the line · Tab names · Esc close   ${searched.query === query && query.trim() ? `${hits.length}${searched.more ? "+" : ""} lines` : ""}`
+        : commandMode ? ` ↑↓ select · Enter run · Esc close   ${found.length} commands` : ` ↑↓ select · Enter open${searchText ? " · Tab inside files" : ""} · > commands · Esc close`)}</Text>
     </Box>
   );
 }
