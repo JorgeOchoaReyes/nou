@@ -48,8 +48,36 @@ export function visualizePrompt(question: string): string {
 }
 
 const NODE = /^([A-Za-z0-9_.$-]+)\s*(?:\[\[(.*?)\]\]|\[\((.*?)\)\]|\(\((.*?)\)\)|\[\/(.*?)\/\]|\[(.*?)\]|\((.*?)\)|\{\{(.*?)\}\}|\{(.*?)\}|>(.*?)\])?/;
-const ARROW = /^\s*(-->|---|-\.->|-\.-|==>|===|--[ox]|<-->)\s*(?:\|([^|]*)\|)?\s*/;
-const TEXT_ARROW = /^\s*--\s+([^-]+?)\s+-->\s*/;
+// Arrows, longest first. Read without a regex: Mermaid's "-->" is not an HTML comment, but scanners read it as one.
+const ARROWS = ["<-->", "-.->", "-->", "---", "-.-", "==>", "===", "--o", "--x"];
+
+/** The arrow at the start of `rest` ("-->", "-->|label|", "-- label -->"): its label, whether dotted, and its length. */
+function readArrow(rest: string): { label: string; dotted: boolean; length: number } | null {
+  const start = rest.length - rest.trimStart().length;
+  const at = rest.slice(start);
+  const arrow = ARROWS.find((a) => at.startsWith(a));
+  if (arrow) {
+    let end = start + arrow.length;
+    let label = "";
+    const after = rest.slice(end).trimStart();
+    if (after.startsWith("|")) {
+      const close = after.indexOf("|", 1);
+      if (close > 0) {
+        label = after.slice(1, close);
+        end = rest.length - after.length + close + 1;
+      }
+    }
+    end = rest.length - rest.slice(end).trimStart().length;
+    return { label, dotted: arrow.includes("."), length: end };
+  }
+  // "A -- label --> B"
+  if (!at.startsWith("-- ")) return null;
+  const close = at.indexOf("-->", 3);
+  const label = close > 0 ? at.slice(3, close) : "";
+  if (!label.trim() || label.includes("-")) return null;
+  const end = start + close + 3;
+  return { label, dotted: false, length: rest.length - rest.slice(end).trimStart().length };
+}
 
 /** Reads a Mermaid flowchart (flowchart/graph TD, LR...); null for anything else. */
 export function parseFlowchart(source: string): Flowchart | null {
@@ -81,11 +109,10 @@ export function parseFlowchart(source: string): Flowchart | null {
       rest = rest.slice(m[0].length);
       // "A & B --> C": both start the edge; kept simple, the last one does.
       rest = rest.replace(/^\s*&\s*/, "");
-      const arrow = ARROW.exec(rest);
-      const worded = arrow ? null : TEXT_ARROW.exec(rest); // "A -- label --> B"
-      if (!arrow && !worded) break;
-      pending = { label: ((arrow ? arrow[2] : worded![1]) ?? "").trim().replace(/^"|"$/g, ""), dotted: !!arrow?.[1]?.includes(".") };
-      rest = rest.slice((arrow ?? worded)![0].length);
+      const arrow = readArrow(rest);
+      if (!arrow) break;
+      pending = { label: arrow.label.trim().replace(/^"|"$/g, ""), dotted: arrow.dotted };
+      rest = rest.slice(arrow.length);
     }
   }
   return nodes.size ? { nodes, edges } : null;
