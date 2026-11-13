@@ -173,3 +173,54 @@ export function grep(options: GrepOptions): string {
   }
   return `${out.join("\n")}${total > shownMatches ? `\n[${total} matches in ${matchedFiles.length} files; showing the first ${limit}. Narrow the pattern, path or glob, or use files_only.]` : ""}`;
 }
+
+/** A line where searched-for text appears: 1-based line, 0-based column of the match in that line. */
+export type TextHit = { file: string; line: number; col: number; text: string };
+
+/** What's been read, kept while a file doesn't change, so searching as you type doesn't reread the project. */
+const textCache = new Map<string, { mtime: number; lines: string[] | null }>();
+
+function linesOf(file: string): string[] | null {
+  let stat;
+  try {
+    stat = statSync(file);
+  } catch {
+    return null;
+  }
+  const cached = textCache.get(file);
+  if (cached && cached.mtime === stat.mtimeMs) return cached.lines;
+  let lines: string[] | null = null;
+  if (stat.size <= MAX_FILE_BYTES) {
+    try {
+      const text = readFileSync(file, "utf-8");
+      if (!text.includes("\0")) lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+    } catch {
+      // unreadable: skipped
+    }
+  }
+  textCache.set(file, { mtime: stat.mtimeMs, lines });
+  return lines;
+}
+
+/**
+ * Every line in the project's files containing `query` (plain text, not a pattern), for searching as you
+ * type. Smart case: all lowercase ignores case, any capital matches case exactly. Stops at `limit` hits.
+ */
+export function searchText(query: string, limit = 200): { hits: TextHit[]; more: boolean } {
+  const hits: TextHit[] = [];
+  if (!query.trim()) return { hits, more: false };
+  const exact = query !== query.toLowerCase();
+  const needle = exact ? query : query.toLowerCase();
+  for (const file of projectFiles()) {
+    const lines = linesOf(file);
+    if (!lines) continue;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      const col = (exact ? line : line.toLowerCase()).indexOf(needle);
+      if (col < 0) continue;
+      if (hits.length >= limit) return { hits, more: true };
+      hits.push({ file, line: i + 1, col, text: line });
+    }
+  }
+  return { hits, more: false };
+}

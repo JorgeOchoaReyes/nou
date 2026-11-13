@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["rename", "follow", "files", "actions", "palette", "zoom", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["search", "grep", "rename", "follow", "files", "actions", "palette", "zoom", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 /**
@@ -60,6 +60,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "models", args: "[provider]", description: "list the models a provider offers" },
   { name: "connect", args: "<provider>", description: "enter an API key (and URL) for a provider" },
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
+  { name: "search", args: "[text]", description: "search the text of every file; Enter opens the line (Ctrl+Shift+F)" },
   { name: "rename", args: "[name]", description: "name this chat's tab (alone: back to its first message)" },
   { name: "follow", args: "[on|off]", description: "the code view shows each file the agent reads or edits as it works" },
   { name: "effort", args: "[fastest|fast|balanced|smarter|smartest]", description: "speed vs smarts: how hard the model thinks (cheaper + faster, or smarter)" },

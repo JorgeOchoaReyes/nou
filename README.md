@@ -70,6 +70,7 @@ Needs **Node 22.12+** and an interactive terminal (Windows Terminal, PowerShell,
 | 🛞 **Pick your agent** | Nou's own, or Claude Code, Codex or pi, switchable like models, with the same diffs, approvals and undo. |
 | 🧩 **Plugins** | Add your own tools and slash commands with a single file. |
 | 🔎 **Quick open** | <kbd>Ctrl</kbd>+<kbd>P</kbd> (or `/files`) fuzzy-finds any file; <kbd>?</kbd> (or `/actions`) lists every action. |
+| 🔍 **Search every file** | `/search <text>` (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> in terminals that report it) finds the text in every file as you type, each line as `file:line` with the match highlighted; <kbd>Enter</kbd> opens that line. Lowercase ignores case; a capital letter matches case exactly. |
 | 🔋 **Easy on your battery** | Idle, Nou uses next to no CPU. When its window is in the background (in terminals that report focus: iTerm2, Terminal.app, kitty, Ghostty, WezTerm, Windows Terminal, VS Code), spinners and git polling pause until you come back, and TypeScript checks are incremental. |
 | 👓 **Easy to read** | Hints and secondary text keep at least 4.5:1 contrast. Nou asks your terminal whether its background is light or dark and picks matching colors (code switches to GitHub Light on a light background); set it yourself in <kbd>s</kbd> settings → **Nou's colors**. |
 
@@ -131,7 +132,7 @@ In the editor:
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/effort [fastest|fast|balanced|smarter|smartest]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/zoom` · `/workspace [new <folder> | n | rename <name>]` · `/rename [name]` · `/files` · `/actions` · `/now` · `/showme <question>` · `/teach <change>` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/effort [fastest|fast|balanced|smarter|smartest]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/zoom` · `/workspace [new <folder> | n | rename <name>]` · `/rename [name]` · `/files` · `/search [text]` · `/actions` · `/now` · `/showme <question>` · `/teach <change>` · `/help`
 
 A small typo in a command still works when it only changes the screen (`/termnial` opens the terminal); for others Nou asks "Did you mean...?" instead of guessing.
 

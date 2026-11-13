@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { readdirSync } from "fs";
 import path from "path";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { IGNORED } from "../commands/index.js";
 import { C, fileIcon } from "./theme.js";
+import type { TextHit } from "../search/index.js";
 
 export function listAllFiles(limit = 5000): string[] {
   const files: string[] = [];
@@ -67,21 +68,33 @@ type Props = {
   /** A line over the search box naming what this is, so it's never a mystery box (a picker says what it picks). */
   title?: string;
   onPick(file: string): void;
+  /** Search mode (Ctrl+Shift+F, /search): finds text in every file instead of file names. */
+  searchText?: (query: string) => { hits: TextHit[]; more: boolean };
+  /** A line found in search mode was picked. */
+  onPickHit?(hit: TextHit): void;
   onRun(action: PaletteAction): void;
   onClose(): void;
 };
 
 /** Ctrl+P: find a file. Start with ">" (or press ?) for every action Nou has, with its shortcut. */
-export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", title, onPick, onRun, onClose }: Props) {
+export function QuickOpen({ width, top, files, recent = [], actions, initialQuery = "", placeholder = "Go to file…  (> for commands)", title, onPick, searchText, onPickHit, onRun, onClose }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [cursor, setCursor] = useState(0);
+  // Search mode reads every file, so it waits for a pause in the typing (each search is one pass, cached).
+  const textMode = !!searchText;
+  const [searched, setSearched] = useState<{ query: string; hits: TextHit[]; more: boolean }>({ query: "", hits: [], more: false });
+  useEffect(() => {
+    if (!searchText) return;
+    const timer = setTimeout(() => setSearched({ query, ...searchText(query) }), query === searched.query ? 0 : 120);
+    return () => clearTimeout(timer);
+  }, [query, !!searchText]);
   const boxWidth = Math.min(80, Math.max(40, width - 10));
   const inner = boxWidth - 2; // fill every cell so the screen underneath doesn't show through
-  const commandMode = query.startsWith(">");
+  const commandMode = !textMode && query.startsWith(">");
   const rowsShown = 12;
 
   const results = useMemo(() => {
-    if (commandMode) return [];
+    if (commandMode || textMode) return [];
     // Recent files first when nothing's typed; a small boost otherwise, so the one you just had wins a tie.
     const rank = new Map(recent.map((f, i) => [f, i]));
     const boost = (f: string) => (rank.has(f) ? (query ? 3 : 1000) - rank.get(f)! * 0.01 : 0);
@@ -100,7 +113,8 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
       .filter((r): r is { action: PaletteAction; m: { score: number; hits: number[] }; order: number } => r.m !== null)
       .sort((a, b) => (q ? b.m.score - a.m.score : a.order - b.order));
   }, [actions, query, commandMode]);
-  const count = commandMode ? found.length : results.length;
+  const hits = textMode ? searched.hits : [];
+  const count = textMode ? hits.length : commandMode ? found.length : results.length;
   const first = Math.max(0, Math.min(cursor - rowsShown + 1, count - rowsShown));
 
   useInput((_input, key) => {
@@ -119,7 +133,7 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
   return (
     <Box position="absolute" top={top} left={Math.floor((width - boxWidth) / 2)} width={boxWidth} flexDirection="column" borderStyle="round" borderColor={C.accent2}>
       <Text backgroundColor={C.panel}>
-        <Text color={C.accent2} bold>{fit(` ${title ?? (commandMode ? "Every action · type to filter (? or /actions)" : "Find a file · type part of its name (Ctrl+P or /files)")}`, inner - 6)}</Text>
+        <Text color={C.accent2} bold>{fit(` ${title ?? (textMode ? "Search every file · type a word or phrase (/search)" : commandMode ? "Every action · type to filter (? or /actions)" : "Find a file · type part of its name (Ctrl+P or /files)")}`, inner - 6)}</Text>
         <Text color={C.dim}>{"Esc ×".padStart(6)}</Text>
       </Text>
       <Text backgroundColor={C.panel}>
@@ -131,7 +145,9 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
             setCursor(0);
           }}
           onSubmit={() => {
-            if (commandMode) {
+            if (textMode) {
+              if (hits[cursor]) onPickHit?.(hits[cursor]);
+            } else if (commandMode) {
               // A number picks that row of a numbered list (/resume's: "1. ...", "2. ...").
               const n = /^\s*(\d+)\s*$/.exec(query.slice(1))?.[1];
               const numbered = n ? actions.find((a) => a.title.startsWith(`${n}. `)) : undefined;
@@ -162,7 +178,36 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
           </Text>
         );
       })}
-      {!commandMode && results.length === 0 && <Text color={C.dim}>{pad("  No matching files")}</Text>}
+      {textMode && (
+        !query.trim() ? <Text color={C.dim}>{pad("  Type to search the text of every file in the project")}</Text>
+          : searched.query !== query ? <Text color={C.dim}>{pad("  Searching…")}</Text>
+            : !hits.length ? <Text color={C.dim}>{pad(`  No file contains "${query}"`)}</Text>
+              : null
+      )}
+      {textMode && searched.query === query && hits.slice(first, first + rowsShown).map((h, i) => {
+        const selected = first + i === cursor;
+        const { icon, color } = fileIcon(h.file);
+        const where = ` ${h.file}:${h.line} `;
+        // The line around the match, so the match is always in view however long the line.
+        const room = Math.max(10, inner - 2 - where.length);
+        const lead = h.text.slice(0, h.col).trimStart();
+        const keep = Math.max(0, Math.min(lead.length, Math.floor(room / 3)));
+        const before = (lead.length > keep ? "…" : "") + lead.slice(lead.length - keep);
+        const match = h.text.slice(h.col, h.col + query.length);
+        const after = h.text.slice(h.col + query.length);
+        const rest = Math.max(0, room - before.length - match.length);
+        return (
+          <Text key={`${h.file}:${h.line}`} {...(selected ? { backgroundColor: C.panel } : {})}>
+            <Text color={selected ? C.accent2 : C.dim}>{selected ? "▌" : " "}</Text>
+            <Text color={color}>{icon}</Text>
+            <Text color={selected ? C.text : C.dim}>{where}</Text>
+            <Text color={selected ? C.text : C.dim}>{before}</Text>
+            <Text color={C.yellow} bold>{match}</Text>
+            <Text color={selected ? C.text : C.dim}>{(after.length > rest ? `${after.slice(0, Math.max(0, rest - 1))}…` : after).padEnd(rest)}</Text>
+          </Text>
+        );
+      })}
+      {!commandMode && !textMode && results.length === 0 && <Text color={C.dim}>{pad("  No matching files")}</Text>}
       {results.map((r, i) => {
         const selected = i === cursor;
         const { icon, color } = fileIcon(r.file);
@@ -180,7 +225,9 @@ export function QuickOpen({ width, top, files, recent = [], actions, initialQuer
           </Text>
         );
       })}
-      <Text color={C.dim}>{pad(commandMode ? ` ↑↓ select · Enter run · Esc close   ${found.length} commands` : " ↑↓ select · Enter open · > commands · Esc close")}</Text>
+      <Text color={C.dim}>{pad(textMode
+        ? ` ↑↓ select · Enter opens the line · Esc close   ${searched.query === query && query.trim() ? `${hits.length}${searched.more ? "+" : ""} lines` : ""}`
+        : commandMode ? ` ↑↓ select · Enter run · Esc close   ${found.length} commands` : " ↑↓ select · Enter open · > commands · Esc close")}</Text>
     </Box>
   );
 }
