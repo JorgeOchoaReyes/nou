@@ -460,9 +460,17 @@ console.log("Finding things for you: open_file and clickable paths");
     check("/open opens a file from part of its name", frame().split("\n")[2]!.includes("long.ts"));
     await type("/search line77 =");
     await press(KEY.enter, 300);
-    check("/search finds the text in every file, as file:line", await until(() => frame().includes("Search every file") && frame().includes("many.ts:77") && /1 lines/.test(frame())));
+    check("/search finds the text in every file, as file:line", await until(() => frame().includes("Search inside files") && frame().includes("many.ts:77") && /1 lines/.test(frame())));
     await press(KEY.enter, 400);
     check("Enter opens that line, highlighted", await until(() => frame().split("\n")[2]!.includes("many.ts") && /▌.*const line77 = 77;/.test(frame().replace(/\x1b\[[\d;]*m/g, ""))));
+    await press("\x10", 300); // Ctrl+P: file names
+    await type("line77 =");
+    check("Ctrl+P finds files by name, and says Tab searches inside them", await until(() => frame().includes("Find a file by name · Tab: search inside files") && frame().includes("No matching files")));
+    await press(KEY.tab, 300);
+    check("Tab switches the same popup to searching inside files, keeping what's typed", await until(() => frame().includes("Search inside files") && frame().includes("many.ts:77")));
+    await press(KEY.tab, 300);
+    check("and Tab again goes back to file names", await until(() => frame().includes("Find a file by name")));
+    await press(KEY.esc, 200);
     await type("/search nothing-has-this-text");
     await press(KEY.enter, 300);
     check("and says so when no file has it", await until(() => frame().includes('No file contains "nothing-has-this-text"')));
