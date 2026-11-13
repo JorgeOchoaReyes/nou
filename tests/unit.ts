@@ -893,6 +893,16 @@ console.log("Evals");
 
 console.log("Search tools");
 {
+  const { searchText } = await import("../src/search/index.js");
+  mkdirSync("textsearch", { recursive: true });
+  writeFileSync("textsearch/a.ts", "const LockOn = 1;\nfunction lockOn() {}\n");
+  const lower = searchText("lockon").hits.filter((h) => h.file.startsWith("textsearch/"));
+  const exact = searchText("LockOn").hits.filter((h) => h.file.startsWith("textsearch/"));
+  check("searching the text of every file: lowercase ignores case, with line and column", lower.length === 2 && lower[1]!.line === 2 && lower[1]!.col === 9);
+  check("and a capital letter matches case exactly", exact.length === 1 && exact[0]!.line === 1);
+  check("an empty search finds nothing, and a limit stops it", searchText("  ").hits.length === 0 && searchText("e", 3).more === true);
+}
+{
   const { grep, globFiles, globToRegex } = await import("../src/search/index.js");
   const dir = mkdtempSync(path.join(os.tmpdir(), "nou-search-"));
   const home = process.cwd();

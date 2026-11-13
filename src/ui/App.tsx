@@ -31,7 +31,8 @@ import { ENABLE as MOUSE_ON, useMouse } from "./mouse.js";
 import { connectToHost, isHosted, reopenAsWorkspaces, sendToHost, useWorkspaceTabs, workspaceTabs } from "../workspaces/client.js";
 import { PTY_PACKAGE, workspaceFolder } from "../workspaces/host.js";
 import { C, palette } from "./theme.js";
-import { FIND_KEY, isFind } from "./keys.js";
+import { FIND_KEY, isFind, isSearchAll } from "./keys.js";
+import { searchText } from "../search/index.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
@@ -61,6 +62,8 @@ const MIN_CODE = 20;
 const MIN_CHAT = 24;
 const NO_LINES = new Set<number>();
 const NO_FILES = new Set<string>();
+const NO_SEARCH_FILES: string[] = [];
+const NO_SEARCH_ACTIONS: PaletteAction[] = [];
 const DOUBLE_CLICK_MS = 500;
 /** A step follow mode shows: a file the agent read, and the lines when it read part of it. */
 type FollowStep = { file: string; line?: number; to?: number };
@@ -156,6 +159,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [setupReason, setSetupReason] = useState<string | null>(null);
   /** The file finder / command palette: closed (null), or open with this query (">" for commands). */
   const [quickOpen, setQuickOpen] = useState<string | null>(null);
+  /** Searching the text of every file (Ctrl+Shift+F, /search): what's typed so far, or null when closed. */
+  const [searching, setSearching] = useState<string | null>(null);
   /** /resume's picker: the conversations, in the palette's place while it's open. */
   const [resumePicker, setResumePicker] = useState<PaletteAction[] | null>(null);
   /** What the open picker is for, said in its empty search box. */
@@ -1492,6 +1497,7 @@ export function App({ initialModel, permContext, resume }: Props) {
     if (key.ctrl && (input === "=" || input === "+" || input === "-" || input === "0") && !key.meta) {
       return zoomCode(input === "0" ? 0 : input === "-" ? -1 : 1);
     }
+    if (isSearchAll(input, key)) return setSearching("");
     if (key.ctrl && input === "p") {
       setQuickOpen("");
       return;
@@ -1818,6 +1824,9 @@ ${snippet}
       return info("/zoom in makes the code panel bigger, /zoom out smaller, /zoom reset puts it back (or + and - with the code focused, = to reset). The files and chat give or take the room. For bigger text, use your terminal's own zoom (Cmd/Ctrl and +).");
     case "files":
       return setQuickOpen("");
+    case "search":
+    case "grep":
+      return setSearching(arg.trim());
     case "actions":
     case "palette":
       return setQuickOpen(">");
@@ -2410,6 +2419,7 @@ ${snippet}
   // Everything Nou can do, for the command palette (? or Ctrl+P then >), with the key that does it.
   const paletteActions: PaletteAction[] = [
     { title: "Find a file", keys: "Ctrl+P", run: () => setQuickOpen("") },
+    { title: "Search the text of every file", keys: "/search", run: () => setSearching("") },
     { title: "Find in the open file", keys: FIND_KEY, run: startFind },
     { title: "Open a file at a line", keys: "/open", run: () => typeCommand("/open ") },
     { title: "Go back to the previous file", keys: "b", run: goBack },
@@ -2668,6 +2678,27 @@ ${snippet}
             <GamePanel width={layout.current.game.width} height={layout.current.game.height} focused={focus === "game"} moving={!!gameDrag} installed={settings.games} best={settings.gameBest ?? {}} onScore={onGameScore} onLeave={leaveGames} onOpenSettings={gamesSettings} />
           </GameGuard>
         </Box>
+      )}
+      {searching !== null && (
+        <QuickOpen
+          width={columns}
+          top={3}
+          files={NO_SEARCH_FILES}
+          actions={NO_SEARCH_ACTIONS}
+          initialQuery={searching}
+          placeholder="Search every file…"
+          searchText={searchText}
+          onPick={() => {}}
+          onPickHit={(hit) => {
+            setSearching(null);
+            clearFollow();
+            // Opens the line with the match, highlighted, and puts the keyboard there.
+            openAt(hit.file, hit.line, false, hit.line);
+            setFocus("code");
+          }}
+          onRun={() => {}}
+          onClose={() => setSearching(null)}
+        />
       )}
       {quickOpen !== null && (
         <QuickOpen
