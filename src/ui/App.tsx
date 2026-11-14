@@ -327,11 +327,6 @@ export function App({ initialModel, permContext, resume }: Props) {
   const layout = useRef({ treeWidth: 0, codeWidth: 0, paneHeight: 0, heights: { tree: 0, code: 0, chat: 0 } as Record<Dock, number>, game: null as Rect | null, terminal: null as Rect | null });
   /** Pane widths while a border is dragged (saved on release); the saved ones otherwise. */
   const [paneWidths, setPaneWidths] = useState(settings.paneWidths);
-  /**
-   * How far the code panel is zoomed (+ and - in the code, /zoom in|out): each step makes it a few columns
-   * wider (taken from the files and chat) or narrower (given to them). 0 is the normal layout.
-   */
-  const [codeZoom, setCodeZoom] = useState(0);
   // A resized terminal is drawn again in full: drawing only the lines that changed, over a screen the
   // terminal has rewrapped, can leave pieces of the old layout behind.
   const firstSize = useRef(true);
@@ -342,7 +337,6 @@ export function App({ initialModel, permContext, resume }: Props) {
     }
     redraw();
   }, [columns, rows]);
-  const zoomCode = (by: number) => setCodeZoom((z) => (by === 0 ? 0 : Math.max(-6, Math.min(8, z + by))));
   const paneWidthsRef = useRef(paneWidths);
   paneWidthsRef.current = paneWidths;
   /** What a mouse drag is moving: a pane border, a pane's scrollbar, or the editor's selection. */
@@ -986,9 +980,6 @@ export function App({ initialModel, permContext, resume }: Props) {
     const tree = border === "tree" ? Math.min(Math.max(x + 1, MIN_TREE), columns - chatWidth - MIN_CODE) : treeWidth;
     const chat = border === "chat" ? Math.min(Math.max(columns - x, MIN_CHAT), columns - treeWidth - MIN_CODE) : chatWidth;
     const next = { tree: tree / columns, chat: chat / columns };
-    // Widths come from the panes as they are on screen (zoom included), so the zoom folds into them: the
-    // border lands where it's dropped instead of a zoom step away.
-    setCodeZoom(0);
     setPaneWidths(next);
     return next;
   };
@@ -1213,7 +1204,11 @@ export function App({ initialModel, permContext, resume }: Props) {
     // The chat counts a third click too (the whole paragraph); elsewhere a double-click starts over.
     lastClick.current = double && pane !== "chat" ? null : count >= 3 ? null : { x: event.x, y: event.y, time: Date.now(), count };
     // In the chat: a double-click selects and copies the word (or path, or link), a triple-click the paragraph.
-    if (pane === "chat" && event.y >= 3 && count >= 2) chatAt(event.x, event.y, count === 2 ? "word" : "block");
+    if (pane === "chat" && event.y >= 3 && count >= 2) {
+      // Not a drag: the button coming up mustn't send a release that lands before the chat has taken the word.
+      dragging.current = null;
+      chatAt(event.x, event.y, count === 2 ? "word" : "block");
+    }
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
       // As the code view counts them (a last empty line after the final newline isn't shown).
       const digits = String(splitLines(content).length).length;
@@ -1513,12 +1508,6 @@ export function App({ initialModel, permContext, resume }: Props) {
       if (focus !== "chat" && focus !== "terminal" && /^[yYnN]$/.test(input)) return answer(/[yY]/.test(input));
       if (focus !== "chat" && input === "o" && pendingChange) return openPending();
     }
-    // Zoom the code panel from anywhere: Ctrl+= / Ctrl+- / Ctrl+0, in terminals that report Ctrl with those
-    // keys (the kitty keyboard protocol Nou asks for). Elsewhere Ctrl+- is the same key as Ctrl+/, so it's
-    // left alone; + and - in the code or the files work in every terminal.
-    if (key.ctrl && (input === "=" || input === "+" || input === "-" || input === "0") && !key.meta) {
-      return zoomCode(input === "0" ? 0 : input === "-" ? -1 : 1);
-    }
     if (isSearchAll(input, key)) return setSearching("");
     if (key.ctrl && input === "p") {
       setQuickOpen("");
@@ -1568,11 +1557,8 @@ export function App({ initialModel, permContext, resume }: Props) {
       const step = input === ">" ? 2 : -2;
       updateSettings({ paneWidths: moveBorder(focus === "tree" ? "tree" : "chat", (focus === "tree" ? treeWidth - 1 : treeWidth + codeWidth) + step) });
     } else if (input === "=") {
-      setCodeZoom(0);
       setPaneWidths(null);
       updateSettings({ paneWidths: null });
-    } else if ((input === "+" || input === "-") && (focus === "code" || focus === "tree")) {
-      zoomCode(input === "+" ? 1 : -1);
     } else if (input === "v") cycleDiff();
     else if ((input === "]" || input === "[") && diffMode === "session") stepSessionFile(input === "]" ? 1 : -1);
     else if (input === "]" || input === "[") cycleTab(input === "]" ? 1 : -1);
@@ -1839,11 +1825,6 @@ ${snippet}
       return toggleTerminal();
     case "redraw":
       return redraw();
-    case "zoom":
-      if (/^(in|\+|bigger)$/.test(arg)) return zoomCode(1);
-      if (/^(out|-|smaller)$/.test(arg)) return zoomCode(-1);
-      if (/^(reset|0|off)$/.test(arg)) return zoomCode(0);
-      return info("/zoom in makes the code panel bigger, /zoom out smaller, /zoom reset puts it back (or + and - with the code focused, = to reset). The files and chat give or take the room. For bigger text, use your terminal's own zoom (Cmd/Ctrl and +).");
     case "files":
       return setQuickOpen("");
     case "visualize":
@@ -2298,14 +2279,8 @@ ${snippet}
   const height = Math.max(10, rows - 2);
   const baseTree = paneWidths ? Math.max(MIN_TREE, Math.round(columns * paneWidths.tree)) : Math.max(24, Math.floor(columns * 0.2));
   const baseChat = paneWidths ? Math.max(MIN_CHAT, Math.min(Math.round(columns * paneWidths.chat), columns - baseTree - MIN_CODE)) : Math.max(34, Math.floor(columns * 0.3));
-  // Zooming the code panel: each step moves a few columns between it and the files and chat, as far as their
-  // minimums (zooming in) or its own (zooming out) allow.
-  const zoomCols = codeZoom * Math.max(4, Math.round(columns * 0.06));
-  const spare = { tree: baseTree - MIN_TREE, chat: baseChat - MIN_CHAT };
-  const taken = zoomCols > 0 ? Math.min(zoomCols, spare.tree + spare.chat) : -Math.min(-zoomCols, Math.max(0, columns - baseTree - baseChat - MIN_CODE));
-  const fromTree = zoomCols > 0 ? Math.round(taken * (spare.tree / Math.max(1, spare.tree + spare.chat))) : Math.round(taken / 2);
-  const treeWidth = baseTree - fromTree;
-  const chatWidth = baseChat - (taken - fromTree);
+  const treeWidth = baseTree;
+  const chatWidth = baseChat;
   const codeWidth = Math.max(MIN_CODE, columns - treeWidth - chatWidth);
   const tabKey = tabs.length && openFile ? `${tabs.join("\0")}|${openFile}|${tabsWidth(codeWidth)}|${showEditor && !!editorState?.dirty}` : "";
   if (tabStripCache.current?.key !== tabKey) {
@@ -2551,7 +2526,7 @@ ${snippet}
             ? [["Enter", "open"], ["e", "edit"], ["/", "command"], ["c", "changes"], ["Ctrl+P", "find"], ["u", "undo"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]]
             : diff
               ? [["Esc", "close diff"], ["n/N", "next/prev change"], ...(diffMode === "session" ? [["[ ]", "prev/next file"] as [string, string]] : []), ["v", "cycle diff"]]
-              : [["double-click/e", "edit"], [FIND_KEY, "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["+ -", "zoom"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
+              : [["double-click/e", "edit"], [FIND_KEY, "find"], ["v", "diff"], ...(recent.length > 1 ? [["b", "back"] as [string, string]] : []), ["u", "undo"], ["/", "command"], ["p", "problems"], ["< >", "resize"], ["m", "select text"], ["s", "settings"]];
   const followChip = follow ? ` ◉ follow${followLag ? ` ·${followLag}` : ""} ` : " ○ follow ";
   const statusUsed = mode.label.length + 2 + autoMode.length + 2 + followChip.length + ` ✗ ${totals.errors} ▲ ${totals.warnings} `.length + (checking.length ? 4 + checking.join(", ").length : 0) + 2;
   const shownHints: [string, string][] = [];
@@ -2566,7 +2541,7 @@ ${snippet}
     y: () => answer(true), n: approval ? () => answer(false) : undefined, o: openPending,
     "Shift+Tab": () => cycleAutoMode(), "/": () => typeCommand("/"), "Ctrl+P": () => setQuickOpen(""),
     Tab: () => setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!),
-    "+ -": () => zoomCode(1), e: startEditing, "double-click/e": startEditing, b: goBack, [FIND_KEY]: showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
+    e: startEditing, "double-click/e": startEditing, b: goBack, [FIND_KEY]: showEditor ? undefined : startFind, v: cycleDiff, u: undoLast, p: toggleProblems, m: toggleMouse,
     s: () => setView("settings"), "/help": () => void runCommand("/help"),
     Esc: busy ? stop : diff && !showEditor ? () => setDiffMode("off") : undefined,
   };

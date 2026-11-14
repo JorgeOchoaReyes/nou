@@ -95,7 +95,6 @@ Every change is reviewed like a code review:
 | <kbd>Tab</kbd> | switch between files, code and chat |
 | <kbd>Shift</kbd>+<kbd>Tab</kbd> | ask → auto-edit (edits apply without asking) → auto (commands too); everything stays undoable |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | fuzzy-find a file; the files you've opened are listed first |
-| <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> from anywhere (or <kbd>+</kbd> / <kbd>-</kbd> in the code or files) | widen or narrow the code panel, a step at a time: the files and chat give or take the room (a terminal can't change one pane's text size); <kbd>Ctrl</kbd>+<kbd>0</kbd> or <kbd>=</kbd> puts it back. Ctrl+= and Ctrl+- need a terminal with the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2). For bigger text, use your terminal's own zoom |
 | <kbd>b</kbd> | back to the previous file (press again to flip back) |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>Cmd</kbd>+<kbd>F</kbd> on a Mac, in terminals that report Cmd: Ghostty, kitty, WezTerm, iTerm2) | find in the open file, from any pane: matches are highlighted and counted; <kbd>Enter</kbd>/<kbd>↓</kbd> next, <kbd>↑</kbd> previous, <kbd>Esc</kbd> close |
 | 🗂️ Tabs | every file you open gets a tab over the code: click one to switch, any tab's × to close it, ‹ › for ones that don't fit · <kbd>[</kbd>/<kbd>]</kbd> previous/next · <kbd>x</kbd> or <kbd>Ctrl</kbd>+<kbd>W</kbd> close |
@@ -132,7 +131,7 @@ In the editor:
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> | hover info · go to definition (with a language server) |
 | <kbd>Esc</kbd> | clear the selection, or leave the editor |
 
-Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/effort [fastest|fast|balanced|smarter|smartest]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/zoom` · `/workspace [new <folder> | n | rename <name>]` · `/rename [name]` · `/files` · `/search [text]` · `/visualize [question]` · `/actions` · `/now` · `/showme <question>` · `/teach <change>` · `/help`
+Chat commands: `/settings` · `/model [provider:model]` · `/models [provider]` · `/pull <model>` · `/engine [name]` · `/effort [fastest|fast|balanced|smarter|smartest]` · `/auto [ask|auto-edit|auto]` · `/copy [code|file]` · `/undo` · `/rewind` · `/history` · `/diff [file or n]` · `/sessions` · `/problems` · `/compact` · `/clear` · `/resume [n|last]` · `/terminal` · `/workspace [new <folder> | n | rename <name>]` · `/rename [name]` · `/files` · `/search [text]` · `/visualize [question]` · `/actions` · `/now` · `/showme <question>` · `/teach <change>` · `/help`
 
 A small typo in a command still works when it only changes the screen (`/termnial` opens the terminal); for others Nou asks "Did you mean...?" instead of guessing.
 
