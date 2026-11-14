@@ -813,8 +813,8 @@ console.log("Taking back a message");
     await until(() => !/Copied it ✓|Can't copy/.test(frame()), 4000);
     await press(click(x + 1, y), 30);
     await press(`\x1b[<0;${x + 2};${y + 1}m`, 30);
-    await press(click(x + 1, y), 30);
-    await press(`\x1b[<0;${x + 2};${y + 1}m`, 400);
+    // The second click and its release in one go, as a busy machine can deliver them: the release mustn't undo the word.
+    await press(click(x + 1, y) + `\x1b[<0;${x + 2};${y + 1}m`, 400);
     check("a double-click in the chat selects the word and copies it", await until(() => /Copied it ✓|Can't copy/.test(frame()), 3000));
     await type("/cancel");
     await press(KEY.enter, 600);

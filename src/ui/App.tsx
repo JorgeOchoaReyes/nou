@@ -1204,7 +1204,11 @@ export function App({ initialModel, permContext, resume }: Props) {
     // The chat counts a third click too (the whole paragraph); elsewhere a double-click starts over.
     lastClick.current = double && pane !== "chat" ? null : count >= 3 ? null : { x: event.x, y: event.y, time: Date.now(), count };
     // In the chat: a double-click selects and copies the word (or path, or link), a triple-click the paragraph.
-    if (pane === "chat" && event.y >= 3 && count >= 2) chatAt(event.x, event.y, count === 2 ? "word" : "block");
+    if (pane === "chat" && event.y >= 3 && count >= 2) {
+      // Not a drag: the button coming up mustn't send a release that lands before the chat has taken the word.
+      dragging.current = null;
+      chatAt(event.x, event.y, count === 2 ? "word" : "block");
+    }
     if (pane === "code" && event.y >= 3 && codePanel === "code") {
       // As the code view counts them (a last empty line after the final newline isn't shown).
       const digits = String(splitLines(content).length).length;
