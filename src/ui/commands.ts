@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["search", "grep", "rename", "follow", "files", "actions", "palette", "zoom", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["search", "grep", "rename", "follow", "files", "actions", "palette", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 /**
@@ -68,7 +68,6 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "workspace", args: "[new <folder> | n | rename <name>]", description: "several projects in this window, a tab each in the header: open one, or switch" },
   { name: "files", description: "find a file by part of its name (also Ctrl+P)" },
   { name: "actions", description: "every action Nou has, searchable, with its key (also ?)" },
-  { name: "zoom", args: "in|out|reset", description: "make the code panel bigger or smaller (+ and - with the code focused, = resets)" },
   { name: "now", description: "stop Nou and send your queued messages right away (or click them)" },
   { name: "settings", description: "models, engine, preferences and plugins" },
   { name: "auto", args: "[ask|auto-edit|auto]", description: "how much Nou does without asking" },

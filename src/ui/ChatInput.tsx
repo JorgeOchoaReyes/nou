@@ -50,7 +50,7 @@ type Props = {
   maxLines?: number;
   /** ↑/↓ belong to something else right now (the command menu). */
   arrowsTaken?: boolean;
-  /** The first this-many characters are a command Nou knows ("/zoom"): drawn in the command color. */
+  /** The first this-many characters are a command Nou knows ("/follow"): drawn in the command color. */
   command?: number;
 };
 
@@ -169,7 +169,7 @@ export function ChatInput({ value, onChange, onSubmit, focus, width, placeholder
       {shown.map((s, i) => {
         const text = value.slice(s.start, s.end).replace(/\n/g, "");
         const isCursor = focus && first + i === line;
-        // A known command at the start ("/zoom in") in the command color, the rest as typed.
+        // A known command at the start ("/follow off") in the command color, the rest as typed.
         const paint = (from: number, to: number) => {
           const cmdEnd = Math.max(from, Math.min(to, command - s.start));
           return (

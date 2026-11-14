@@ -285,7 +285,7 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const menuOpen = focused && !approval && input.startsWith("/") && !input.includes(" ") && !input.includes("\n");
   const matches = useMemo(() => (menuOpen ? matchCommands(input, extraCommands) : []), [menuOpen, input, extraCommands]);
   const showMenu = matches.length > 0;
-  // A known command typed at the start of the input ("/zoom in") is drawn in the command color.
+  // A known command typed at the start of the input ("/follow off") is drawn in the command color.
   const commandLength = useMemo(() => {
     const name = /^\/(\S+)/.exec(input)?.[1];
     if (!name) return 0;

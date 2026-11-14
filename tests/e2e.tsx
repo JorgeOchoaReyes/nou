@@ -1158,33 +1158,6 @@ await session(resolveModel("ollama"), async ({ press, type, frame }) => {
   check("a folder that isn't there is refused", await until(() => frame().includes("No such folder")));
 });
 
-console.log("Zooming the code panel");
-await session(resolveModel("ollama"), async ({ press, type, frame }) => {
-  const chatAt = () => frame().split("\n")[2]!.indexOf("Chat");
-  const treeEnd = () => frame().split("\n")[1]!.indexOf("┐");
-  const before = { chat: chatAt(), tree: treeEnd() };
-  await type("/zoom in");
-  await press(KEY.enter, 300);
-  check("/zoom in makes the code panel bigger, the files and chat give up the room", await until(() => chatAt() > before.chat && treeEnd() < before.tree));
-  const zoomed = chatAt();
-  await press(KEY.tab, 100); // off the chat...
-  await press(KEY.tab, 100); // ...to the code
-  await press("-", 200);
-  await press("-", 200);
-  check("- with the code focused makes it smaller again, then smaller than normal", await until(() => chatAt() < before.chat));
-  await press("+", 200);
-  await press("+", 200);
-  check("+ makes it bigger", await until(() => chatAt() === zoomed));
-  await press("/", 100);
-  await type("zoom reset");
-  await press(KEY.enter, 300);
-  check("/zoom reset puts it back", await until(() => chatAt() === before.chat && treeEnd() === before.tree));
-  await press("\x1b[61;5u", 200); // Ctrl+=, as terminals with the kitty keyboard protocol send it
-  check("Ctrl+= zooms in from anywhere, even the chat, without a command", await until(() => chatAt() > before.chat) && !frame().includes("❯ ="));
-  await press("\x1b[48;5u", 200); // Ctrl+0
-  check("Ctrl+0 puts it back", await until(() => chatAt() === before.chat));
-});
-
 console.log("Show me how on another engine");
 writeFileSync(path.join(dir, "greet.js"), "export const greet = (name) => 'Hello ' + name;\n");
 await session(resolveModel("ollama"), async ({ press, type, frame }) => {
