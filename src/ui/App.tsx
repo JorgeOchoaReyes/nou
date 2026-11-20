@@ -585,6 +585,9 @@ export function App({ initialModel, permContext, resume }: Props) {
   const inbox = useRef(new Map<string, string[]>());
   const turnRunning = useRef(new Set<string>());
   const [turnsEnded, setTurnsEnded] = useState<string[]>([]);
+  /** The chat selected in the sessions view, and what it's picking another chat for (h, w, d, y). */
+  const [flowSel, setFlowSel] = useState<string | null>(null);
+  const [flowPick, setFlowPick] = useState<{ action: "link" | "when" | "unlink" | "send"; from: string } | null>(null);
   const setFlowNode = (id: string, change: (node: FlowNode) => FlowNode) => {
     flowNodes.current.set(id, change(flowNodes.current.get(id) ?? { links: [] }));
     setFlowVersion((v) => v + 1);
@@ -1596,6 +1599,8 @@ export function App({ initialModel, permContext, resume }: Props) {
       setFocus((f) => FOCUS_ORDER[(FOCUS_ORDER.indexOf(f) + 1) % FOCUS_ORDER.length]!);
       return;
     }
+    // The sessions view (/flow) has its own keys while it has the keyboard.
+    if (focus === "code" && openFile === SESSIONS_TAB && flowKey(input, key)) return;
     if (key.escape) {
       if (busy) stop();
       else if (diffMode !== "off") {
@@ -2391,15 +2396,123 @@ ${snippet}
   });
   const onTreeHover = useEvent(() => {});
   const onJump = useEvent((file: string, line: number) => openAt(file, line));
-  // A box in the sessions view: that chat comes up in the chat pane.
-  const onSessionNode = useEvent((node: string) => {
+  // A box in the sessions view (clicked, or Enter on the selected one): it's selected and its chat comes up in the
+  // chat pane; Enter also puts you in it. While picking a chat (h, w, d, y), it's the one picked.
+  const onSessionNode = useEvent((node: string, how: "click" | "enter") => {
     if (openFile !== SESSIONS_TAB) return false;
     const id = tabOfNode(node);
     if (!id || !chatTabs.includes(id)) return false;
+    if (flowPick) {
+      finishPick(flowPick, id);
+      return true;
+    }
+    setFlowSel(id);
     if (id !== activeTab.current) switchChatTab(id);
-    setFocus("code");
+    setFocus(how === "enter" ? "chat" : "code");
     return true;
   });
+  const onSessionSelect = useEvent((node: string) => {
+    const id = tabOfNode(node);
+    if (id) setFlowSel(id);
+  });
+  /** The chat a pick was for, and the chat picked: add or remove that arrow, or send the waiting handoff there. */
+  function finishPick(pick: { action: "link" | "when" | "unlink" | "send"; from: string }, to: string) {
+    const tabs = flowTabs();
+    const name = (id: string) => tabs.find((t) => t.id === id)?.name ?? "?";
+    if (to === pick.from) return info("Pick another chat: a chat can't hand its reply to itself.", "error");
+    setFlowPick(null);
+    setFlowSel(pick.from);
+    if (pick.action === "link" || pick.action === "when") {
+      setFlowNode(pick.from, (n) => ({ ...n, links: [...n.links.filter((l) => l.to !== to), { to }] }));
+      if (pick.action === "when") {
+        // The condition is typed in the chat, as the chat it's for: /handoff there replaces the plain arrow.
+        if (pick.from !== activeTab.current) switchChatTab(pick.from);
+        return setChatPrefill((p) => ({ text: `/handoff ${name(to)} when `, nonce: (p?.nonce ?? 0) + 1 }));
+      }
+      return info(`${name(pick.from)} now hands its replies to ${name(to)}.`);
+    }
+    if (pick.action === "unlink") {
+      setFlowNode(pick.from, (n) => ({ ...n, links: n.links.filter((l) => l.to !== to) }));
+      return info(`${name(pick.from)} no longer hands its replies to ${name(to)}.`);
+    }
+    const pending = pendingHandoffs.find((h) => h.from === pick.from);
+    if (!pending) return;
+    setPendingHandoffs((p) => p.filter((h) => h !== pending));
+    handOff(pick.from, to, pending.text);
+  }
+  /** The sessions view's keys (it has the keyboard): true when the key was one of them. */
+  function flowKey(input: string, key: { escape?: boolean; ctrl?: boolean; meta?: boolean }): boolean {
+    if (key.escape && flowPick) {
+      setFlowPick(null);
+      return true;
+    }
+    if (key.ctrl || key.meta || !/^[nrhwdyxsa]$/.test(input)) return false;
+    const sel = flowSel && chatTabs.includes(flowSel) ? flowSel : activeTab.current;
+    const tabs = flowTabs();
+    const name = tabs.find((t) => t.id === sel)?.name ?? "this chat";
+    const node = flowNodes.current.get(sel);
+    const pending = pendingHandoffs.find((h) => h.from === sel);
+    const prefill = (text: string) => setChatPrefill((p) => ({ text, nonce: (p?.nonce ?? 0) + 1 }));
+    switch (input) {
+    case "n": // a new chat, named and given its job in the chat
+      newChatTab();
+      prefill("/role ");
+      info("A new chat. Give it a name and a job: /role Name: what it does");
+      return true;
+    case "r":
+      if (sel !== activeTab.current) switchChatTab(sel);
+      prefill(`/role ${name}: ${node?.role ?? ""}`);
+      return true;
+    case "h":
+    case "w":
+      if (tabs.length < 2) {
+        info("Add another chat first (n), then pick it.");
+        return true;
+      }
+      setFlowPick({ action: input === "h" ? "link" : "when", from: sel });
+      return true;
+    case "d":
+      if (!node?.links.length) info(`${name} doesn't hand its replies on.`);
+      else if (node.links.length === 1) finishPick({ action: "unlink", from: sel }, node.links[0]!.to);
+      else setFlowPick({ action: "unlink", from: sel });
+      return true;
+    case "y":
+      if (!pending) info(`No handoff from ${name} is waiting.`);
+      else if (pending.to) finishPick({ action: "send", from: sel }, pending.to);
+      else setFlowPick({ action: "send", from: sel });
+      return true;
+    case "x":
+      if (!pending) info(`No handoff from ${name} is waiting.`);
+      else {
+        setPendingHandoffs((p) => p.filter((h) => h !== pending));
+        info(`Kept ${name}'s reply there: not handed on.`);
+      }
+      return true;
+    case "s": {
+      const t = sel === activeTab.current ? null : tabStore.current.get(sel);
+      if (sel === activeTab.current ? !busy : !t?.busy) info(`${name} isn't working.`);
+      else if (sel === activeTab.current) stop();
+      else t!.agent.cancel();
+      return true;
+    }
+    case "a": {
+      const on = !node?.ask;
+      setFlowNode(sel, (n) => ({ ...n, ask: on }));
+      info(on ? `${name}'s replies wait for your OK before they're handed on (y sends, x keeps).` : `${name}'s replies are handed on as soon as it finishes.`);
+      return true;
+    }
+    }
+    return false;
+  }
+  /** What the sessions view's keys do, or what you're picking. */
+  function flowHint(): string {
+    if (flowPick) {
+      const from = flowTabs().find((t) => t.id === flowPick.from)?.name ?? "";
+      const what = flowPick.action === "unlink" ? `the arrow from ${from} to remove` : flowPick.action === "send" ? `where ${from}'s reply goes` : `the chat ${from} hands its replies to`;
+      return `Pick ${what}: ←↑↓→ then Enter (or click it) · Esc cancels`;
+    }
+    return "↑↓←→ select · ⏎ chat · n new · r role · h arrow · w if… · d del · y/x send/keep · s stop · a ask";
+  }
   const onCloseProblems = useEvent(() => setCodePanel("code"));
   const onViewport = useEvent((top: number, bottom: number, lines?: number[]) =>
     setViewport((v) => (v?.top === top && v.bottom === bottom && v.lines?.join() === lines?.join() ? v : { top, bottom, ...(lines ? { lines } : {}) })));
@@ -2812,6 +2925,7 @@ ${snippet}
             click={diagramClick}
             onOpenRef={openRef}
             onNode={onSessionNode}
+            {...(openFile === SESSIONS_TAB ? { selected: `t${flowSel && chatTabs.includes(flowSel) ? flowSel : activeTabId}`, onSelect: onSessionSelect, hint: flowHint() } : {})}
             onOpenBrowser={openDiagramInBrowser}
           />
         ) : showEditor ? (

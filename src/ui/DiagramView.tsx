@@ -15,18 +15,25 @@ type Props = {
   /** A click in the diagram, in columns and rows from the top left of what's drawn on screen. */
   click: { x: number; y: number; nonce: number } | null;
   onOpenRef(ref: { path: string; line?: number }): void;
-  /** A click on a box: true when it was handled (the sessions view switches to that chat). */
-  onNode?(id: string): boolean;
+  /** A click on a box, or Enter on the selected one: true when it was handled (the sessions view's chats). */
+  onNode?(id: string, how: "click" | "enter"): boolean;
+  /** Boxes can be selected (the sessions view): the one selected, drawn heavier, and moving it with the arrows. */
+  selected?: string | null;
+  onSelect?(id: string): void;
+  /** What the keys do, on a line under the legend. */
+  hint?: string;
   onOpenBrowser(): void;
 };
 
+/** The selected box's border, in heavy lines. */
+const HEAVY: Record<string, string> = { "┌": "┏", "┐": "┓", "└": "┗", "┘": "┛", "─": "━", "│": "┃" };
 const BORDER: Record<Kind, string> = { new: "green", changed: "yellow", removed: "red", plain: "accent" };
 
 /**
  * A diagram the agent drew, in the code view: boxes and arrows in text that scroll like code. A box naming a
  * file opens it when clicked; o opens the same diagram, fully drawn, in the browser.
  */
-export const DiagramView = memo(function DiagramView({ width, height, focused, diagram, tabs, wheelPane, click, onOpenRef, onNode, onOpenBrowser }: Props) {
+export const DiagramView = memo(function DiagramView({ width, height, focused, diagram, tabs, wheelPane, click, onOpenRef, onNode, selected, onSelect, hint, onOpenBrowser }: Props) {
   const kindsKey = JSON.stringify(diagram.kinds ?? {});
   const chart = useMemo(() => {
     const parsed = parseFlowchart(diagram.source);
@@ -38,7 +45,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
   }, [diagram.source, kindsKey]);
   const drawn = useMemo(() => (chart ? drawFlowchart(chart) : null), [chart]);
   const inner = width - 2;
-  const rows = Math.max(1, height - 4); // border, title, footer
+  const rows = Math.max(1, height - 4 - (hint ? 1 : 0)); // border, title, footer (and the hint)
   const [top, setTop] = useState(0);
   const [left, setLeft] = useState(0);
   const maxTop = Math.max(0, (drawn?.height ?? 0) - rows);
@@ -53,7 +60,30 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
     setTop(0);
     setLeft(0);
   }, [diagram.title]);
+  // Selecting boxes: the arrows go to the nearest box that way, and the view scrolls to keep it in sight.
+  const boxOf = (id: string | null | undefined) => (id ? drawn?.boxes.find((b) => b.id === id) : undefined);
+  const moveSelection = (dx: number, dy: number) => {
+    const from = boxOf(selected) ?? drawn?.boxes[0];
+    if (!from || !drawn) return;
+    const cx = (b: typeof from) => b.x + b.w / 2;
+    const cy = (b: typeof from) => b.y + b.h / 2;
+    const ahead = drawn.boxes.filter((b) => b !== from && (dx ? Math.sign(cx(b) - cx(from)) === dx : Math.sign(cy(b) - cy(from)) === dy));
+    // Along the way you pressed counts once; across it, three times, so ↓ goes down rather than sideways.
+    const cost = (b: typeof from) => (dx ? Math.abs(cx(b) - cx(from)) + 3 * Math.abs(cy(b) - cy(from)) : Math.abs(cy(b) - cy(from)) + 3 * Math.abs(cx(b) - cx(from)));
+    const next = ahead.sort((a, b) => cost(a) - cost(b))[0];
+    if (next) onSelect!(next.id);
+  };
+  useEffect(() => {
+    const b = boxOf(selected);
+    if (!b) return;
+    setTop((t) => (b.y < t ? b.y : b.y + b.h > t + rows ? Math.min(maxTop, b.y + b.h - rows) : t));
+    setLeft((l) => (b.x < l ? b.x : b.x + b.w > l + inner ? Math.min(maxLeft, b.x + b.w - inner + 1) : l));
+  }, [selected, drawn]);
   useInput((input, key) => {
+    if (onSelect && (key.upArrow || key.downArrow || key.leftArrow || key.rightArrow)) {
+      return moveSelection(key.leftArrow ? -1 : key.rightArrow ? 1 : 0, key.upArrow ? -1 : key.downArrow ? 1 : 0);
+    }
+    if (onSelect && key.return && selected) return void onNode?.(selected, "enter");
     if (key.upArrow) setTop((t) => Math.max(0, t - 1));
     else if (key.downArrow) setTop((t) => Math.min(maxTop, t + 1));
     else if (key.leftArrow) setLeft((l) => Math.max(0, l - 4));
@@ -68,7 +98,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
   useEffect(() => {
     if (!click || !drawn || !chart) return;
     const id = drawn.cells[top + click.y]?.[left + click.x]?.node;
-    if (id && onNode?.(id)) return;
+    if (id && onNode?.(id, "click")) return;
     const ref = id ? chart.nodes.get(id)?.ref : null;
     if (ref) onOpenRef(ref);
   }, [click?.nonce]);
@@ -78,6 +108,8 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
     if (cell.style === "edge") return { color: C.dim };
     if (cell.style === "edgeLabel") return { color: C.dim, italic: true };
     const kind = cell.node ? kindOf.get(cell.node) ?? "plain" : "plain";
+    // The selected box: heavier, in the highlight colour (its state still shows in its title).
+    if (cell.style === "border" && selected && cell.node === selected) return { color: C.accent2, bold: true };
     if (cell.style === "border") return { color: (C as Record<string, string>)[BORDER[kind]]! };
     if (cell.style === "title") return { color: kind === "plain" ? C.text : (C as Record<string, string>)[BORDER[kind]]!, bold: true };
     return { color: C.text };
@@ -105,9 +137,10 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
         const runs: { text: string; look: ReturnType<typeof colorOf> }[] = [];
         for (const cell of cells) {
           const look = cell.style ? colorOf(cell) : { color: C.text };
+          const ch = cell.style === "border" && selected && cell.node === selected ? HEAVY[cell.ch] ?? cell.ch : cell.ch;
           const last = runs.at(-1);
-          if (last && last.look.color === look.color && last.look.bold === look.bold && last.look.italic === look.italic) last.text += cell.ch;
-          else runs.push({ text: cell.ch, look });
+          if (last && last.look.color === look.color && last.look.bold === look.bold && last.look.italic === look.italic) last.text += ch;
+          else runs.push({ text: ch, look });
         }
         return (
           <Text key={top + i} wrap="truncate-end">
@@ -120,7 +153,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
         {diagram.legend ? (
           <>
             {diagram.legend.map((l, i) => <Text key={i}><Text color={(C as Record<string, string>)[BORDER[l.kind]]!}>{i ? "" : " "}■</Text><Text color={C.dim}> {l.text} </Text></Text>)}
-            <Text color={C.dim}>· click a box: open that chat · </Text>
+            <Text color={C.dim}>· </Text>
           </>
         ) : (
           <>
@@ -130,6 +163,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
         )}
         <Text color={C.text}>o</Text><Text color={C.dim}> browser{maxTop ? `  ${top + 1}-${Math.min(drawn.height, top + rows)}/${drawn.height}` : ""}</Text>
       </Text>
+      {hint ? <Text color={C.dim} wrap="truncate-end"> {hint}</Text> : null}
     </Pane>
   );
 });
