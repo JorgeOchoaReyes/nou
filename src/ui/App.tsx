@@ -49,6 +49,7 @@ import { Terminal } from "./Terminal.js";
 import { forgetScreen } from "./redraw.js";
 import { SHOW_PLACES_NOTE, explainPrompt, showMePrompt, showPlacesTool, showStepsTool, stepsFromReply, stopsFromReply, type GuideStep, type TourStop } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
+import { AGENT_PRESETS, findPreset } from "../flow/agents.js";
 import { DONE, findTab, flowNote, handoffText, nextFromReply, pickLink, sessionsDiagram, tabOfNode, type FlowNode, type FlowTab, type PendingHandoff } from "../flow/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -1787,19 +1788,22 @@ ${snippet}
       const id = activeTab.current;
       if (!words) {
         const role = flowNodes.current.get(id)?.role;
-        return info(role ? `This chat's role: ${role}\n/role off clears it.` : "Give this chat a job, sent with every message it gets: /role Reviewer: check the diff for bugs and say what to fix. (The name before the colon names its tab.)");
+        const presets = AGENT_PRESETS.map((p) => `${p.name} (${p.summary})`).join(", ");
+        return info(role ? `Role: ${role}\n/role off clears it.` : `Built-in agents: ${presets}. /role Reviewer makes this chat one; /role Name: what it does for your own.`);
       }
       if (/^(off|clear|none)$/i.test(words)) {
         setFlowNode(id, ({ role: _role, ...n }) => n);
         return info("This chat has no role now.");
       }
-      const named = /^([\w .'-]{1,24}):\s+([\s\S]+)$/.exec(words);
+      // A built-in agent by name (Reviewer), or "Name: what it does" for your own.
+      const preset = findPreset(words);
+      const named = preset ? [words, preset.name, preset.role] : /^([\w .'-]{1,24}):\s+([\s\S]+)$/.exec(words);
       if (named) {
         chatNames.current.set(conversationId, named[1]!.trim());
         setNamesVersion((v) => v + 1);
       }
       setFlowNode(id, (n) => ({ ...n, role: (named ? named[2]! : words).trim() }));
-      return info(`${named ? `This chat is ${named[1]!.trim()}. ` : ""}Its role goes with every message it gets. /handoff <chat> sends its replies on to another chat; /flow shows them all.`);
+      return info(named ? `This chat is ${named[1]!.trim()}${preset ? `: ${preset.summary}` : ""}.` : "Role set.");
     }
     case "handoff":
     case "hand": {
@@ -1809,7 +1813,7 @@ ${snippet}
       const node = flowNodes.current.get(id) ?? { links: [] };
       const name = (tab: string | null) => tabs.find((t) => t.id === tab)?.name ?? "?";
       const describe = (n: FlowNode) => n.links.length
-        ? `This chat hands its replies to ${n.links.map((l) => `${name(l.to)}${l.when ? ` (when ${l.when})` : ""}`).join(", ")}${n.ask ? ", after asking you" : ""}.`
+        ? `→ ${n.links.map((l) => `${name(l.to)}${l.when ? ` (when ${l.when})` : ""}`).join(", ")}${n.ask ? " · asks you first" : ""}`
         : "This chat doesn't hand its replies on.";
       if (!words) {
         return info(`${describe(node)}\n/handoff <chat> [when <condition>] adds where its reply goes (a chat's number or name; add more with conditions and the agent picks), /handoff ask on|off waits for your OK first, /handoff off stops it, /handoff send|drop for one that's waiting. /flow shows them all.`);
@@ -1846,7 +1850,7 @@ ${snippet}
       const link = { to: target.id, ...(m[2] ? { when: m[2].trim() } : {}) };
       const next = { ...node, links: [...node.links.filter((l) => l.to !== target.id), link] };
       setFlowNode(id, () => next);
-      return info(`${describe(next)}${next.links.length > 1 ? " The agent picks which one each time." : ""} /flow shows the chats and handoffs.`);
+      return info(`${describe(next)}${next.links.length > 1 ? " (the agent picks)" : ""}`);
     }
     case "flow":
     case "flows":
@@ -2152,12 +2156,12 @@ ${snippet}
         const tabs = flowTabs();
         const to = pickLink(node, tabs, next);
         const name = (tab: string | null) => tabs.find((t) => t.id === tab)?.name ?? "";
-        if (to === DONE) infoIn(id, "■ Done: this chat didn't hand its reply on.");
+        if (to === DONE) infoIn(id, "■ Done here.");
         else if (to === null || node.ask) {
           setPendingHandoffs((p) => [...p.filter((h) => h.from !== id), { from: id, to, text: rest }]);
           infoIn(id, to === null
-            ? `◆ It didn't say which chat gets this. /handoff send <chat> sends it (${node.links.map((l) => name(l.to)).join(", ")}), /handoff drop keeps it here.`
-            : `◆ Ready to hand this to ${name(to)}. /handoff send sends it (or /handoff send <chat> to another), /handoff drop keeps it here.`);
+            ? `◆ Which chat gets this? /handoff send <chat> (${node.links.map((l) => name(l.to)).join(", ")}) · /handoff drop`
+            : `◆ Ready to hand to ${name(to)}: /handoff send · /handoff drop`);
         } else handOff(id, to, rest);
       }
       const waiting = inbox.current.get(id);
@@ -2429,11 +2433,11 @@ ${snippet}
         if (pick.from !== activeTab.current) switchChatTab(pick.from);
         return setChatPrefill((p) => ({ text: `/handoff ${name(to)} when `, nonce: (p?.nonce ?? 0) + 1 }));
       }
-      return info(`${name(pick.from)} now hands its replies to ${name(to)}.`);
+      return info(`${name(pick.from)} → ${name(to)}`);
     }
     if (pick.action === "unlink") {
       setFlowNode(pick.from, (n) => ({ ...n, links: n.links.filter((l) => l.to !== to) }));
-      return info(`${name(pick.from)} no longer hands its replies to ${name(to)}.`);
+      return info(`${name(pick.from)} ↛ ${name(to)} (arrow removed)`);
     }
     const pending = pendingHandoffs.find((h) => h.from === pick.from);
     if (!pending) return;
@@ -2457,7 +2461,7 @@ ${snippet}
     case "n": // a new chat, named and given its job in the chat
       newChatTab();
       prefill("/role ");
-      info("A new chat. Give it a name and a job: /role Name: what it does");
+      info(`New chat. Make it a built-in agent (${AGENT_PRESETS.map((p) => p.name).join(", ")}) with /role Reviewer, or your own with /role Name: its job.`);
       return true;
     case "r":
       if (sel !== activeTab.current) switchChatTab(sel);

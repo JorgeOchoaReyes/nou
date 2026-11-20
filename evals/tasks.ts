@@ -5,6 +5,8 @@
 import { spawnSync } from "child_process";
 import { existsSync, readFileSync, readdirSync } from "fs";
 import path from "path";
+import { findPreset, reportFromReply } from "../src/flow/agents.js";
+import { flowNote } from "../src/flow/index.js";
 
 export type CheckContext = {
   dir: string;
@@ -55,6 +57,63 @@ const bigConfig = (() => {
   lines[2599] = "export const MAX_RETRIES = 3;";
   return lines.join("\n") + "\n";
 })();
+
+/**
+ * What a chat in a flow is sent, word for word: the request, then its role and where its report goes (the same
+ * note the app adds). Used to check the built-in agents with real models.
+ */
+function asAgent(preset: string, request: string): string {
+  const role = findPreset(preset)!.role;
+  const tabs = [{ id: "1", name: preset, state: "idle" as const, engine: "nou" }, { id: "2", name: "Next", state: "idle" as const, engine: "nou" }];
+  return `${request}\n\n[Workspace flow]\n${flowNote({ role, links: [{ to: "2" }] }, tabs)}`;
+}
+
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+/** The report's parts: what's under each bold label. */
+function reportParts(report: string): Record<string, string> {
+  const parts: Record<string, string> = {};
+  const re = /\*\*(Result|Key points|Open questions):?\*\*:?/gi;
+  const marks = [...report.matchAll(re)];
+  marks.forEach((m, i) => (parts[m[1]!.toLowerCase()] = report.slice(m.index! + m[0].length, marks[i + 1]?.index ?? report.length).trim()));
+  return parts;
+}
+/**
+ * Every agent's reply ends with the report, in its shape: Result, at most 5 key points, open questions, and
+ * under 200 words besides what it produced under Result. null when it does.
+ */
+export function checkReport(answer: string): string | null {
+  const report = reportFromReply(answer);
+  if (!report) return "no \"## Report\" at the end";
+  const parts = reportParts(report);
+  for (const part of ["result", "key points", "open questions"]) if (!(part in parts)) return `the report has no ${part}`;
+  const bullets = parts["key points"]!.split("\n").filter((l) => /^\s*(?:[-*•]|\d+[.)])\s/.test(l)).length;
+  if (bullets > 5) return `${bullets} key points (at most 5)`;
+  const besides = words(report) - words(parts.result!);
+  if (besides > 200) return `the report is ${besides} words besides its result (at most 200)`;
+  return null;
+}
+
+const CLI = `import { readFileSync } from "fs";
+
+/** Prints the word count of each file named on the command line. */
+export function main(args) {
+  for (const file of args) {
+    const text = readFileSync(file, "utf-8");
+    console.log(\`\${file}: \${text.split(/\\s+/).filter(Boolean).length}\`);
+  }
+}
+
+main(process.argv.slice(2));
+`;
+
+const NOTES = `Tide pools: notes
+- They form in rocky shores when the tide goes out; water stays in hollows in the rock.
+- Live there: anemones, sea stars, hermit crabs, small fish, snails, seaweed.
+- Best time: an hour either side of low tide; check a tide table first.
+- Safety: wet rock is slippery, watch the incoming tide, never turn your back on the waves.
+- Leave animals where they are; turn rocks back over the way you found them.
+- Good for kids; bring shoes that grip, not flip-flops.
+`;
 
 export const TASKS: Task[] = [
   {
@@ -240,6 +299,84 @@ export function parseDuration(text) {
       const changed = changedFiles(ctx);
       if (changed.length) return `changed files: ${changed.join(", ")}`;
       return /5[,_ ]?400[,_ ]?000/.test(ctx.answer) ? null : "the answer doesn't say 5400000";
+    },
+  },
+  // The built-in agents (src/flow/agents.ts), each given what a flow gives it: does it do its job and end with a
+  // concise report the next agent can use?
+  {
+    name: "agent-planner",
+    skill: "built-in Planner: a short, concrete plan and a report, no code",
+    files: { "package.json": PKG, "src/cli.js": CLI },
+    prompt: asAgent("Planner", "Add a --verbose flag to the CLI in src/cli.js that also prints each file's line count."),
+    check(ctx) {
+      const changed = changedFiles(ctx);
+      if (changed.length) return `the planner changed files: ${changed.join(", ")}`;
+      const steps = ctx.answer.split("\n").filter((l) => /^\s*\d+[.)]\s/.test(l)).length;
+      if (steps < 3 || steps > 9) return `${steps} numbered steps (3-7 asked)`;
+      if (!/cli\.js/.test(ctx.answer)) return "the plan doesn't name src/cli.js";
+      return checkReport(ctx.answer);
+    },
+  },
+  {
+    name: "agent-reviewer",
+    skill: "built-in Reviewer: finds the bug, says where and the fix, in a report",
+    files: {
+      "package.json": PKG,
+      "src/page.js": `/** Items on page \`page\` (counting from 1), \`size\` to a page. */
+export function pageOf(items, page, size) {
+  const start = page * size;
+  return items.slice(start, start + size);
+}
+`,
+    },
+    prompt: asAgent("Reviewer", "Review src/page.js: pageOf was just written for the list view (pages count from 1)."),
+    check(ctx) {
+      const changed = changedFiles(ctx);
+      if (changed.length) return `the reviewer changed files: ${changed.join(", ")}`;
+      if (!/page\.js(?::\d+)?/.test(ctx.answer)) return "doesn't say where (page.js)";
+      if (!/page\s*-\s*1|\(page - 1\)|off[- ]by[- ]one|skips? the first page/i.test(ctx.answer)) return "doesn't find that page 1 skips the first page";
+      return checkReport(ctx.answer);
+    },
+  },
+  {
+    name: "agent-researcher",
+    skill: "built-in Researcher: the fact, where it came from, in a report",
+    files: {
+      "package.json": PKG,
+      "src/net/client.js": "import { RETRY } from \"../config/retry.js\";\n\nexport async function get(url) {\n  for (let i = 0; ; i++) {\n    try { return await fetch(url); } catch (e) { if (i >= RETRY.limit) throw e; }\n  }\n}\n",
+      "src/config/retry.js": "export const RETRY = { limit: 4, backoffMs: 250 };\n",
+    },
+    prompt: asAgent("Researcher", "How many times does the HTTP client retry a failed request, and where is that set?"),
+    check(ctx) {
+      if (changedFiles(ctx).length) return "the researcher changed files";
+      if (!/\b4\b|four/i.test(ctx.answer)) return "doesn't say 4";
+      if (!/config\/retry\.js/.test(ctx.answer)) return "doesn't say where (src/config/retry.js)";
+      return checkReport(ctx.answer);
+    },
+  },
+  {
+    name: "agent-writer",
+    skill: "built-in Writer: a short post from notes, handed on in full",
+    files: { "package.json": PKG, "notes.md": NOTES },
+    prompt: asAgent("Writer", "Write a short blog post (under 250 words) for families from notes.md. Don't create any files."),
+    check(ctx) {
+      const result = reportParts(reportFromReply(ctx.answer) ?? "").result ?? "";
+      if (words(result) < 60) return "the post isn't in the report's Result (the next agent gets only the report)";
+      if (words(result) > 320) return `the post is ${words(result)} words (under 250 asked)`;
+      if (!/low tide/i.test(result) || !/slipp|grip|shoes/i.test(result)) return "the post leaves out the timing or the safety notes";
+      return checkReport(ctx.answer);
+    },
+  },
+  {
+    name: "agent-summarizer",
+    skill: "built-in Summarizer: outcome first, under 150 words",
+    files: { "package.json": PKG, "notes.md": NOTES },
+    prompt: asAgent("Summarizer", "Summarize notes.md for a parent planning a trip this weekend."),
+    check(ctx) {
+      if (changedFiles(ctx).length) return "the summarizer changed files";
+      const report = reportFromReply(ctx.answer);
+      if (report && words(ctx.answer) > 320) return `${words(ctx.answer)} words in all (a summary is under 150, plus the report)`;
+      return checkReport(ctx.answer);
     },
   },
 ];

@@ -29,6 +29,13 @@ Each run prints pass/fail per task with steps, time and tools used, then a summa
 | `edit-large-file` | change one line in a 3000-line file and leave the rest alone |
 | `find-the-setting` | find where something lives in an unfamiliar project |
 | `answer-without-editing` | answer a question without touching any files |
+| `agent-planner` | the built-in Planner: 3-7 concrete steps, no code, and the report |
+| `agent-reviewer` | the built-in Reviewer: finds the bug, says where (file:line) and the fix |
+| `agent-researcher` | the built-in Researcher: the fact and where it's set |
+| `agent-writer` | the built-in Writer: a short post from notes, in full in the report (it's all the next agent gets) |
+| `agent-summarizer` | the built-in Summarizer: short, outcome first |
+
+The `agent-*` tasks send exactly what a flow sends a chat (the request, the agent's role and the report format) and check the reply ends with a report in shape: **Result**, at most 5 **Key points**, **Open questions**, under 200 words besides what it produced. Run them after changing an agent's instructions: `npm run eval -- --task agent-reviewer --repeat 3`.
 
 ## Adding a task
 
