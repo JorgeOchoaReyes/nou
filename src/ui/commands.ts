@@ -14,7 +14,7 @@ export type SlashCommand = {
  * Commands that only change what's on screen (or handle a busy Nou themselves): they run right away
  * while Nou works instead of waiting in the queue behind it.
  */
-const INSTANT = new Set(["search", "grep", "rename", "follow", "files", "actions", "palette", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
+const INSTANT = new Set(["role", "handoff", "hand", "flow", "flows", "pipeline", "search", "grep", "rename", "follow", "files", "actions", "palette", "now", "fold", "unfold", "redraw", "new", "tab", "close", "terminal", "games", "open", "settings", "auto", "diff", "sessions", "history", "problems", "copy", "help", "version", "cancel"]);
 
 /** Whether a typed command runs right away while Nou works (see INSTANT); `/showme` counts only to look or step. */
 /**
@@ -62,6 +62,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "open", args: "<file>[:line]", description: "open a file in the code view (part of its name is enough)" },
   { name: "visualize", args: "[question]", description: "explain with a diagram, drawn in the code view (o: in the browser)" },
   { name: "search", args: "[text]", description: "search the text of every file; Enter opens the line (Ctrl+Shift+F)" },
+  { name: "role", args: "[Name: what it does | off]", description: "give this chat a job, sent with every message it gets (the name names its tab)" },
+  { name: "handoff", args: "<chat> [when …] | ask on|off | send | drop | off", description: "hand this chat's replies to another chat when it finishes" },
+  { name: "flow", args: "", description: "the workspace's chats and handoffs, drawn live in the code view (click one to open it)" },
   { name: "rename", args: "[name]", description: "name this chat's tab (alone: back to its first message)" },
   { name: "follow", args: "[on|off]", description: "the code view shows each file the agent reads or edits as it works" },
   { name: "effort", args: "[fastest|fast|balanced|smarter|smartest]", description: "speed vs smarts: how hard the model thinks (cheaper + faster, or smarter)" },

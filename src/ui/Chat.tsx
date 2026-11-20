@@ -107,8 +107,11 @@ function isProjectFile(file: string): boolean {
 function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
   const out: Line[] = [];
   if (entry.kind === "user") {
-    out.push({ text: "you", color: C.cyan, bold: true, lead: BAR, leadColor: C.cyan });
-    for (const line of wrap(entry.text, inner - 3)) out.push({ text: line, color: C.text, lead: BAR, leadColor: C.cyan });
+    // A reply another chat handed over (a flow): headed with who it's from, in their colour, not "you".
+    const handed = /^↘ From (.+?):\n\n/.exec(entry.text);
+    const color = handed ? C.accent2 : C.cyan;
+    out.push({ text: handed ? `↘ from ${handed[1]}` : "you", color, bold: true, lead: BAR, leadColor: color });
+    for (const line of wrap(handed ? entry.text.slice(handed[0].length) : entry.text, inner - 3)) out.push({ text: line, color: C.text, lead: BAR, leadColor: color });
     out.push({ text: "" });
   } else if (entry.kind === "assistant") {
     out.push({ text: "◆ nou", color: C.accent2, bold: true, lead: BAR, leadColor: C.accent2 });

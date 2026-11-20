@@ -1286,5 +1286,42 @@ console.log("Codex sessions as current Codex writes them");
   check("a Codex session with a long first line is found, stray files and all", found.length === 1 && found[0]!.id === "big-one" && found[0]!.title === "add a login page");
 }
 
+console.log("Flows between chats");
+{
+  const { nextFromReply, pickLink, findTab, flowNote, sessionsDiagram, DONE } = await import("../src/flow/index.js");
+  const { hideNouBlocks } = await import("../src/guide/index.js");
+  const { parseFlowchart, drawFlowchart } = await import("../src/diagram/index.js");
+  const tabs = [
+    { id: "1", name: "Planner", state: "idle" as const, engine: "nou" },
+    { id: "2", name: "Coder", state: "busy" as const, engine: "claude-code" },
+    { id: "3", name: "Fixer", state: "idle" as const, engine: "codex" },
+    { id: "4", name: "Reviewer", state: "waiting" as const, engine: "nou" },
+  ];
+  const reply = "Wrote it; the tests fail.\n```nou-next\nFixer\n```";
+  const read = nextFromReply(reply);
+  check("a reply's nou-next block names the next chat, and comes out of the reply", read.next === "Fixer" && read.rest === "Wrote it; the tests fail.");
+  check("a reply without one is left as it is", nextFromReply("hi").next === null && nextFromReply("hi").rest === "hi");
+  check("the block is hidden in the chat, whole or still arriving", hideNouBlocks(reply) === "Wrote it; the tests fail." && hideNouBlocks("ok\n```nou-next\nFix") === "ok");
+  check("a chat is found by its number, its name or the start of it", findTab(tabs, "2")?.name === "Coder" && findTab(tabs, "reviewer")?.id === "4" && findTab(tabs, "fix")?.id === "3" && findTab(tabs, "nobody") === null);
+  const fork = { links: [{ to: "4", when: "tests pass" }, { to: "3", when: "tests fail" }] };
+  check("one handoff without a condition always goes there", pickLink({ links: [{ to: "2" }] }, tabs, null) === "2");
+  check("with several, the one the agent named (by name or condition)", pickLink(fork, tabs, "Fixer") === "3" && pickLink(fork, tabs, "tests pass") === "4");
+  check("with several and none named, it waits for you", pickLink(fork, tabs, null) === null && pickLink(fork, tabs, "someone else") === null);
+  check("done ends it, and so does a chat with no handoffs", pickLink(fork, tabs, "done") === DONE && pickLink(undefined, tabs, "Fixer") === DONE);
+  check("a handoff to a chat that was closed doesn't count", pickLink({ links: [{ to: "9" }] }, tabs, null) === DONE);
+  const note = flowNote({ role: "write the code", ...fork }, tabs);
+  check("each message says the chat's role and where its reply can go, and how to pick", note.includes("Your role in this workspace: write the code") && note.includes("Reviewer (when tests pass); Fixer (when tests fail)") && note.includes("nou-next"));
+  check("a chat that isn't in a flow gets nothing added", flowNote(undefined, tabs) === "" && flowNote({ links: [] }, tabs) === "");
+  const nodes = new Map([["1", { role: "plan the work", links: [{ to: "2" }], ask: true }], ["2", { links: fork.links }]]);
+  const view = sessionsDiagram(tabs, nodes, [{ from: "1", to: "2", text: "plan" }], "1");
+  const chart = parseFlowchart(view.source)!;
+  check("the sessions view has a box per chat and an arrow per handoff", chart.nodes.size === 4 && chart.edges.length === 3 && chart.edges.some((e) => e.from === "t2" && e.to === "t3" && e.label === "tests fail"));
+  check("a box says the chat's state, engine and role", chart.nodes.get("t2")!.lines.join(" ").includes("● working") && chart.nodes.get("t2")!.lines.includes("claude-code") && chart.nodes.get("t1")!.lines.join(" ").includes("plan the work"));
+  check("working and waiting chats are coloured; a handoff that waits for you, too", view.kinds.t2 === "changed" && view.kinds.t4 === "removed" && view.kinds.t1 === "removed" && view.kinds.t3 === "plain");
+  check("an arrow that waits for your OK says so", chart.edges.some((e) => e.from === "t1" && e.label === "ask me"));
+  const text = drawFlowchart(chart).cells.map((r) => r.map((c) => c.ch).join("")).join("\n");
+  check("forked arrows keep both their labels, each by its own arrowhead", text.includes("▼ tests pass") && text.includes("▼ tests fail"));
+}
+
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");
 process.exit(failures ? 1 : 0);
