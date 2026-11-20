@@ -1017,7 +1017,7 @@ console.log("Flows: chats hand their replies to each other");
       const last = String(messages[messages.length - 1].content).replace(/<editor_context>[\s\S]*/, "");
       seen.push(last);
       if (last.includes("role in this workspace: plan the work")) return { text: "Plan: add a Save button to the toolbar.", toolCalls: [] };
-      if (last.includes("role in this workspace: write the code")) return { text: "Wrote the button. The tests fail on a missing label.\n```nou-next\nFixer\n```", toolCalls: [] };
+      if (last.includes("role in this workspace: write the code")) return { text: "Internal working notes nobody downstream needs.\n\n## Report\n**Result:** Wrote the Save button in toolbar.ts; the tests fail on a missing label in the snapshot.\n**Key points:**\n- toolbar.ts:12 adds the button\n- the label text comes from the i18n file\n- the snapshot test needs the new label\n**Open questions:** none\n```nou-next\nFixer\n```", toolCalls: [] };
       if (last.includes("role in this workspace: fix failures")) return { text: "Fixed the label; tests pass.", toolCalls: [] };
       return { text: "ok", toolCalls: [] };
     },
@@ -1044,6 +1044,9 @@ console.log("Flows: chats hand their replies to each other");
     check("the chat answers, and hands its reply to the next chat", await until(() => frame().includes("Plan: add a Save button") && frame().includes("↗ Handed to Coder.")));
     check("the next chat gets it with its role and where its own reply goes", await until(() => seen.some((m) => m.includes("↘ From Planner:") && m.includes("role in this workspace: write the code") && m.includes("Reviewer (when tests pass); Fixer (when tests fail)"))));
     check("the agent picks the next chat, and that one runs too", await until(() => seen.some((m) => m.includes("↘ From Coder:") && m.includes("fix failures"))));
+    const toFixer = seen.find((m) => m.includes("↘ From Coder:"))!;
+    check("only the report is handed on, not the working notes before it", toFixer.includes("**Result:** Wrote the Save button") && !toFixer.includes("Internal working notes"));
+    check("each agent is asked to end with a concise report", toFixer.includes("## Report") && toFixer.includes("under 200 words"));
     await run("/flow", 400);
     check("/flow draws the chats and handoffs in the code view", await until(() => ["Planner", "Coder"].every((n) => frame().includes(n)) && frame().includes("◈ sessions")));
     check("each handoff is an arrow, with its condition", /▼ tests fail/.test(frame()) && /▼ test/.test(frame().replace("▼ tests fail", "")));
@@ -1055,19 +1058,46 @@ console.log("Flows: chats hand their replies to each other");
     await press(click(rows[y]!.search(/[│┃] Fixer/) + 2, y), 400);
     check("clicking a chat's box opens that chat, the handed reply headed with who sent it", await until(() => frame().includes("Fixed the label; tests pass.") && frame().includes("↘ from Coder")));
     check("the nou-next block isn't shown in the chat it came from", !frame().includes("nou-next"));
+    check("a long handed-over report is folded to its first lines", frame().includes("more lines"));
+    const foldRows = frame().split("\n");
+    const fy = foldRows.findIndex((l) => l.includes("more lines"));
+    await press(click(foldRows[fy]!.indexOf("more lines"), fy), 300);
+    check("clicking it shows the rest", await until(() => frame().includes("▾ fold")));
+    // Back to the view (the click went to the chat): Fixer's box again.
+    const back = frame().split("\n");
+    const by = back.findIndex((l) => /[│┃] Fixer/.test(l));
+    await press(click(back[by]!.search(/[│┃] Fixer/) + 2, by), 300);
     // The view is driven from the keyboard too.
     check("the clicked chat is selected, its box drawn heavier", frame().includes("┃ Fixer"));
     await press("\x1b[A", 200);
     await press("\x1b[A", 200);
     check("the arrows move the selection (up to Planner)", await until(() => frame().includes("┃ Planner")));
     await press("d", 300);
-    check("d removes its arrow", await until(() => frame().includes("no longer")));
+    check("d removes its arrow", await until(() => frame().includes("↛ Coder")));
     await press("h", 300);
     check("h asks which chat it hands to", await until(() => frame().includes("Pick the chat")));
     const coderRows = frame().split("\n");
     const cy = coderRows.findIndex((l) => /[│┃] Coder/.test(l));
     await press(click(coderRows[cy]!.search(/[│┃] Coder/) + 2, cy), 300);
-    check("picking a chat (click or arrows and Enter) adds the arrow", await until(() => frame().includes("now hands") && !frame().includes("Pick the chat")));
+    check("picking a chat (click or arrows and Enter) adds the arrow", await until(() => frame().includes("Planner → Coder") && !frame().includes("Pick the chat")));
+    // Drag from one box onto another: an arrow between them.
+    const boxAt = (name: string) => {
+      const all = frame().split("\n");
+      const row = all.findIndex((l) => new RegExp(`[│┃] ${name}`).test(l));
+      return { x: all[row]!.search(new RegExp(`[│┃] ${name}`)) + 2, y: row };
+    };
+    const drag = async (from: { x: number; y: number }, to: { x: number; y: number }, alt = false) => {
+      await press(`\x1b[<0;${from.x + 1};${from.y + 1}M`, 100);
+      await press(`\x1b[<32;${to.x + 1};${to.y + 1}M`, 150);
+      await press(`\x1b[<${alt ? 8 : 0};${to.x + 1};${to.y + 1}m`, 300);
+    };
+    await press(`\x1b[<0;${boxAt("Coder").x + 1};${boxAt("Coder").y + 1}M`, 100);
+    await press(`\x1b[<32;${boxAt("Planner").x + 1};${boxAt("Planner").y + 1}M`, 200);
+    check("while dragging, the view says to let go on the chat to connect", frame().includes("Let go to draw the arrow"));
+    await press(`\x1b[<0;${boxAt("Planner").x + 1};${boxAt("Planner").y + 1}m`, 300);
+    check("letting go on another chat's box draws the arrow", await until(() => frame().includes("Coder → Planner")));
+    await drag(boxAt("Coder"), boxAt("Coder"));
+    check("a drag that ends on the same box draws nothing", !frame().includes("Coder → Coder") && !frame().includes("Let go to draw"));
     await press("n", 300);
     await type("Tester: run the tests");
     await press(KEY.enter, 300);
@@ -1085,8 +1115,11 @@ console.log("Flows: chats hand their replies to each other");
     await delay(400);
     const handedBefore = handed();
     await run("/flow", 300);
+    await press(click(boxAt("Planner").x, boxAt("Planner").y), 300); // the chat whose handoff waits
     await press("y", 600);
     check("y in the view sends the handoff waiting on the selected chat", await until(() => handed() > handedBefore));
+    await drag(boxAt("Planner"), boxAt("Coder"), true);
+    check("letting go with Alt asks for the arrow's condition", await until(() => frame().includes("/handoff Coder when")));
   });
 }
 

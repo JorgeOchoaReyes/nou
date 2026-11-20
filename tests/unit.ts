@@ -40,6 +40,9 @@ console.log("Mouse input");
   check("click press is reported once, then its release", events.filter((e) => e.kind === "click").length === 1 && events[4]?.kind === "release");
   check("moving with the button held is a drag", parseMouse("[<32;30;8M")[0]?.kind === "drag");
   check("positions are 0-based", events[3]?.x === 19 && events[3]?.y === 7);
+  const plain = parseMouse("\x1b[<0;5;5m")[0];
+  const alt = parseMouse("\x1b[<8;5;5m")[0];
+  check("a release says whether Alt was held (a flow arrow with a condition)", plain?.kind === "release" && !plain.alt && alt?.kind === "release" && alt.alt === true);
   check("Ctrl+click, Alt+click and right-click ask for a definition", ["\x1b[<16;3;4M", "\x1b[<8;3;4M", "\x1b[<2;3;4M"].every((c) => { const e = parseMouse(c)[0]; return e?.kind === "click" && e.define === true; }) && !(parseMouse("\x1b[<0;3;4M")[0] as any).define);
   check("ordinary keys are not mouse events", parseMouse("hello\x1b[A").length === 0);
   const { ENABLE } = await import("../src/ui/mouse.js");
@@ -852,6 +855,11 @@ console.log("Evals");
     "edit-large-file": { edit: (f) => void (f["config/defaults.js"] = f["config/defaults.js"]!.replace("MAX_RETRIES = 3;", "MAX_RETRIES = 5;")) },
     "find-the-setting": { edit: (f) => void (f["src/net/http/client.js"] = f["src/net/http/client.js"]!.replace("= 250;", "= 1000;")) },
     "answer-without-editing": { answer: "It returns 5400000 (90 minutes in ms)." },
+    "agent-planner": { answer: "1. In src/cli.js, read a --verbose flag out of args and drop it from the file list.\n2. Count lines with text.split(\"\\n\").length.\n3. When verbose, print the line count after the word count.\n4. Check by running it on a file with and without the flag.\n\n## Report\n**Result:** A 4-step plan to add --verbose to src/cli.js (above).\n**Key points:**\n- Only src/cli.js changes.\n- Lines are counted the same way as words.\n**Open questions:** none" },
+    "agent-reviewer": { answer: "src/page.js:3 skips the first page: pages count from 1, so page 1 starts at size, not 0. Fix: const start = (page - 1) * size;\n\n## Report\n**Result:** One bug: page 1 returns the second page.\n**Key points:**\n- src/page.js:3: use (page - 1) * size.\n**Open questions:** none" },
+    "agent-researcher": { answer: "It retries 4 times: RETRY.limit in src/config/retry.js:1, used by src/net/client.js:5.\n\n## Report\n**Result:** 4 retries, set in src/config/retry.js.\n**Key points:**\n- limit: 4, backoffMs: 250 (src/config/retry.js:1)\n**Open questions:** none" },
+    "agent-writer": { answer: "## Report\n**Result:**\n**Tide pools: a city in a puddle**\n\nWhen the tide goes out on a rocky shore, it leaves water in the hollows of the rock, and each one is a small world. Look closely and you'll find anemones, sea stars, hermit crabs, snails and tiny fish.\n\nGo an hour either side of low tide, and check a tide table before you set off. Wear shoes that grip: wet rock is slippery, and flip-flops won't do. Keep an eye on the incoming tide and never turn your back on the waves.\n\nLook, don't take: leave every animal where it is, and turn rocks back over the way you found them. Kids love it, and it costs nothing but a morning.\n**Key points:**\n- 120 words, family tone.\n**Open questions:** none" },
+    "agent-summarizer": { answer: "Go an hour either side of low tide (check a tide table). Wear shoes that grip, watch the incoming tide, and leave the animals where they are. Expect anemones, sea stars and hermit crabs; it's good for kids.\n\n## Report\n**Result:** A 40-word summary for a weekend trip (above).\n**Key points:**\n- Timing, footwear and safety first.\n**Open questions:** none" },
   };
   check("every task has a reference solution", TASKS.every((t) => solutions[t.name]));
   for (const task of TASKS) {
@@ -1321,6 +1329,25 @@ console.log("Flows between chats");
   check("an arrow that waits for your OK says so", chart.edges.some((e) => e.from === "t1" && e.label === "ask me"));
   const text = drawFlowchart(chart).cells.map((r) => r.map((c) => c.ch).join("")).join("\n");
   check("forked arrows keep both their labels, each by its own arrowhead", text.includes("▼ tests pass") && text.includes("▼ tests fail"));
+}
+
+console.log("Built-in agents and their reports");
+{
+  const { AGENT_PRESETS, findPreset, reportFromReply, REPORT_NOTE } = await import("../src/flow/agents.js");
+  const { flowNote, handoffText } = await import("../src/flow/index.js");
+  const { checkReport } = await import("../evals/tasks.js");
+  const reply = "I looked through the code.\n\nLots of detail here...\n\n## Report\n**Result:** 4 retries.\n**Key points:**\n- set in src/config/retry.js:1\n**Open questions:** none";
+  check("the report is found at the end of a reply", reportFromReply(reply)?.startsWith("**Result:** 4 retries.") === true);
+  check("the last one counts (a reply may quote the format first)", reportFromReply("## Report\nold\n\nmore\n## Report\n**Result:** new") === "**Result:** new");
+  check("a bold **Report** heading counts too; no heading, no report", reportFromReply("x\n**Report**\n**Result:** y") === "**Result:** y" && reportFromReply("no report here") === null);
+  check("only the report is handed on, not the whole reply", handoffText("Researcher", reply) === `↘ From Researcher:\n\n${reportFromReply(reply)}` && !handoffText("Researcher", reply).includes("Lots of detail"));
+  check("a reply without a report is handed on whole", handoffText("A", "just this").endsWith("just this"));
+  const tabs = [{ id: "1", name: "A", state: "idle" as const, engine: "nou" }, { id: "2", name: "B", state: "idle" as const, engine: "nou" }];
+  check("every chat with a job or a next step is asked for the report", flowNote({ role: "x", links: [] }, tabs).includes(REPORT_NOTE) && flowNote({ links: [{ to: "2" }] }, tabs).includes(REPORT_NOTE));
+  check("there are built-in agents for planning, research, code, review, tests, fixes, writing, editing and summing up", ["Planner", "Researcher", "Coder", "Reviewer", "Tester", "Fixer", "Writer", "Editor", "Summarizer"].every((n) => findPreset(n.toLowerCase())?.name === n));
+  check("each one's instructions are short and say what to produce", AGENT_PRESETS.every((p) => p.role.split(/\s+/).length <= 80 && p.summary.length <= 40));
+  check("a report in the right shape passes the evals' check", checkReport(reply) === null);
+  check("one missing a part, or with too many points, doesn't", checkReport("## Report\n**Result:** x") !== null && checkReport(`## Report\n**Result:** x\n**Key points:**\n${"- p\n".repeat(6)}**Open questions:** none`) !== null && checkReport("no report") !== null);
 }
 
 console.log(failures ? `\n${failures} unit check(s) failed` : "\nAll unit checks passed");

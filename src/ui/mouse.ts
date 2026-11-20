@@ -10,7 +10,8 @@ export type MouseEvent =
   /** `define`: Ctrl+click, Alt/Option+click or a right-click, which go to a definition. */
   | { kind: "click"; x: number; y: number; define?: boolean }
   | { kind: "drag"; x: number; y: number }
-  | { kind: "release"; x: number; y: number };
+  /** `alt`: Alt/Option (or Ctrl) held as the button came up. */
+  | { kind: "release"; x: number; y: number; alt?: boolean };
 
 // Report clicks and wheel (1000), and movement while a button is held (1002, without it terminals never
 // send drags: no resizing panes, dragging scrollbars or selecting), using SGR coordinates (1006), which
@@ -32,7 +33,7 @@ export function parseMouse(chunk: string): MouseEvent[] {
     if (button === 64 || button === 65) events.push({ kind: "wheel", dir: button === 64 ? -1 : 1, x, y, horizontal: shift });
     else if (button === 66 || button === 67) events.push({ kind: "wheel", dir: button === 66 ? -1 : 1, x, y, horizontal: true });
     else if (button === 0 && code & 32) events.push({ kind: "drag", x, y }); // 32: moved with the left button held
-    else if (button === 0) events.push(m[4] === "M" ? { kind: "click", x, y, ...(modified ? { define: true } : {}) } : { kind: "release", x, y });
+    else if (button === 0) events.push(m[4] === "M" ? { kind: "click", x, y, ...(modified ? { define: true } : {}) } : { kind: "release", x, y, ...(modified ? { alt: true } : {}) });
     else if (button === 2 && m[4] === "M") events.push({ kind: "click", x, y, define: true }); // right-click
   }
   return events;

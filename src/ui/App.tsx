@@ -34,7 +34,7 @@ import { C, palette } from "./theme.js";
 import { FIND_KEY, isFind, isSearchAll } from "./keys.js";
 import { searchText } from "../search/index.js";
 import { DIAGRAM_NOTE, DIAGRAM_TAB, diagramPage, diagramsFromReply, isDiagramTab, visualizePrompt, type Diagram } from "../diagram/index.js";
-import { DiagramView } from "./DiagramView.js";
+import { DiagramView, type FlowDrag } from "./DiagramView.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
@@ -49,6 +49,7 @@ import { Terminal } from "./Terminal.js";
 import { forgetScreen } from "./redraw.js";
 import { SHOW_PLACES_NOTE, explainPrompt, showMePrompt, showPlacesTool, showStepsTool, stepsFromReply, stopsFromReply, type GuideStep, type TourStop } from "../guide/index.js";
 import { Shell } from "../terminal/index.js";
+import { AGENT_PRESETS, findPreset } from "../flow/agents.js";
 import { DONE, findTab, flowNote, handoffText, nextFromReply, pickLink, sessionsDiagram, tabOfNode, type FlowNode, type FlowTab, type PendingHandoff } from "../flow/index.js";
 import { QuickOpen, listAllFiles, score, type PaletteAction } from "./QuickOpen.js";
 import { Settings } from "./Settings.js";
@@ -346,7 +347,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number; count: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | "flowLink" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -587,6 +588,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [turnsEnded, setTurnsEnded] = useState<string[]>([]);
   /** The chat selected in the sessions view, and what it's picking another chat for (h, w, d, y). */
   const [flowSel, setFlowSel] = useState<string | null>(null);
+  /** A drag in the sessions view, from a box toward another (screen cells in the view), and whether it's let go. */
+  const [flowDrag, setFlowDrag] = useState<FlowDrag | null>(null);
   const [flowPick, setFlowPick] = useState<{ action: "link" | "when" | "unlink" | "send"; from: string } | null>(null);
   const setFlowNode = (id: string, change: (node: FlowNode) => FlowNode) => {
     flowNodes.current.set(id, change(flowNodes.current.get(id) ?? { links: [] }));
@@ -1175,6 +1178,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
       else if (drag === "chatText") chatAt(event.x, event.y, "drag");
+      else if (drag === "flowLink") setFlowDrag((d) => d && { ...d, to: { x: event.x - codeLeft - 1, y: event.y - 3 } });
       else if (drag && typeof drag === "object") scrollPane(drag.scroll, event.y);
       return;
     }
@@ -1187,6 +1191,8 @@ export function App({ initialModel, permContext, resume }: Props) {
       } else if (dragging.current && typeof dragging.current === "object" && "scroll" in dragging.current) scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       if (dragging.current === "chatText") chatAt(event.x, event.y, "release");
+      // Let go over another chat's box: an arrow to it (Alt: with a condition).
+      if (dragging.current === "flowLink") setFlowDrag((d) => d && { ...d, to: { x: event.x - codeLeft - 1, y: event.y - 3 }, done: true, alt: !!event.alt });
       dragging.current = null;
       return;
     }
@@ -1244,6 +1250,11 @@ export function App({ initialModel, permContext, resume }: Props) {
     // A click on a diagram: its box opens the file it names.
     if (event.kind === "click" && pane === "code" && event.y >= 3 && codePanel === "code" && openFile && isDiagramTab(openFile)) {
       setFocus("code");
+      // In the sessions view, a press on a box can be dragged onto another to draw an arrow.
+      if (openFile === SESSIONS_TAB) {
+        dragging.current = "flowLink";
+        setFlowDrag({ from: { x: event.x - codeLeft - 1, y: event.y - 3 }, to: null, done: false, alt: false });
+      }
       setDiagramClick((c) => ({ x: event.x - codeLeft - 1, y: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
       return;
     }
@@ -1787,19 +1798,22 @@ ${snippet}
       const id = activeTab.current;
       if (!words) {
         const role = flowNodes.current.get(id)?.role;
-        return info(role ? `This chat's role: ${role}\n/role off clears it.` : "Give this chat a job, sent with every message it gets: /role Reviewer: check the diff for bugs and say what to fix. (The name before the colon names its tab.)");
+        const presets = AGENT_PRESETS.map((p) => `${p.name} (${p.summary})`).join(", ");
+        return info(role ? `Role: ${role}\n/role off clears it.` : `Built-in agents: ${presets}. /role Reviewer makes this chat one; /role Name: what it does for your own.`);
       }
       if (/^(off|clear|none)$/i.test(words)) {
         setFlowNode(id, ({ role: _role, ...n }) => n);
         return info("This chat has no role now.");
       }
-      const named = /^([\w .'-]{1,24}):\s+([\s\S]+)$/.exec(words);
+      // A built-in agent by name (Reviewer), or "Name: what it does" for your own.
+      const preset = findPreset(words);
+      const named = preset ? [words, preset.name, preset.role] : /^([\w .'-]{1,24}):\s+([\s\S]+)$/.exec(words);
       if (named) {
         chatNames.current.set(conversationId, named[1]!.trim());
         setNamesVersion((v) => v + 1);
       }
       setFlowNode(id, (n) => ({ ...n, role: (named ? named[2]! : words).trim() }));
-      return info(`${named ? `This chat is ${named[1]!.trim()}. ` : ""}Its role goes with every message it gets. /handoff <chat> sends its replies on to another chat; /flow shows them all.`);
+      return info(named ? `This chat is ${named[1]!.trim()}${preset ? `: ${preset.summary}` : ""}.` : "Role set.");
     }
     case "handoff":
     case "hand": {
@@ -1809,7 +1823,7 @@ ${snippet}
       const node = flowNodes.current.get(id) ?? { links: [] };
       const name = (tab: string | null) => tabs.find((t) => t.id === tab)?.name ?? "?";
       const describe = (n: FlowNode) => n.links.length
-        ? `This chat hands its replies to ${n.links.map((l) => `${name(l.to)}${l.when ? ` (when ${l.when})` : ""}`).join(", ")}${n.ask ? ", after asking you" : ""}.`
+        ? `→ ${n.links.map((l) => `${name(l.to)}${l.when ? ` (when ${l.when})` : ""}`).join(", ")}${n.ask ? " · asks you first" : ""}`
         : "This chat doesn't hand its replies on.";
       if (!words) {
         return info(`${describe(node)}\n/handoff <chat> [when <condition>] adds where its reply goes (a chat's number or name; add more with conditions and the agent picks), /handoff ask on|off waits for your OK first, /handoff off stops it, /handoff send|drop for one that's waiting. /flow shows them all.`);
@@ -1846,7 +1860,7 @@ ${snippet}
       const link = { to: target.id, ...(m[2] ? { when: m[2].trim() } : {}) };
       const next = { ...node, links: [...node.links.filter((l) => l.to !== target.id), link] };
       setFlowNode(id, () => next);
-      return info(`${describe(next)}${next.links.length > 1 ? " The agent picks which one each time." : ""} /flow shows the chats and handoffs.`);
+      return info(`${describe(next)}${next.links.length > 1 ? " (the agent picks)" : ""}`);
     }
     case "flow":
     case "flows":
@@ -2152,12 +2166,12 @@ ${snippet}
         const tabs = flowTabs();
         const to = pickLink(node, tabs, next);
         const name = (tab: string | null) => tabs.find((t) => t.id === tab)?.name ?? "";
-        if (to === DONE) infoIn(id, "■ Done: this chat didn't hand its reply on.");
+        if (to === DONE) infoIn(id, "■ Done here.");
         else if (to === null || node.ask) {
           setPendingHandoffs((p) => [...p.filter((h) => h.from !== id), { from: id, to, text: rest }]);
           infoIn(id, to === null
-            ? `◆ It didn't say which chat gets this. /handoff send <chat> sends it (${node.links.map((l) => name(l.to)).join(", ")}), /handoff drop keeps it here.`
-            : `◆ Ready to hand this to ${name(to)}. /handoff send sends it (or /handoff send <chat> to another), /handoff drop keeps it here.`);
+            ? `◆ Which chat gets this? /handoff send <chat> (${node.links.map((l) => name(l.to)).join(", ")}) · /handoff drop`
+            : `◆ Ready to hand to ${name(to)}: /handoff send · /handoff drop`);
         } else handOff(id, to, rest);
       }
       const waiting = inbox.current.get(id);
@@ -2411,6 +2425,15 @@ ${snippet}
     setFocus(how === "enter" ? "chat" : "code");
     return true;
   });
+  // A drag from one box onto another: the arrow between them, as h (or w, with Alt) and a pick would draw it.
+  const onSessionConnect = useEvent((fromNode: string, toNode: string, alt: boolean) => {
+    setFlowDrag(null);
+    const from = tabOfNode(fromNode);
+    const to = tabOfNode(toNode);
+    if (!from || !to || !chatTabs.includes(from) || !chatTabs.includes(to)) return;
+    finishPick({ action: alt ? "when" : "link", from }, to);
+  });
+  const onSessionDragEnd = useEvent(() => setFlowDrag(null));
   const onSessionSelect = useEvent((node: string) => {
     const id = tabOfNode(node);
     if (id) setFlowSel(id);
@@ -2429,11 +2452,11 @@ ${snippet}
         if (pick.from !== activeTab.current) switchChatTab(pick.from);
         return setChatPrefill((p) => ({ text: `/handoff ${name(to)} when `, nonce: (p?.nonce ?? 0) + 1 }));
       }
-      return info(`${name(pick.from)} now hands its replies to ${name(to)}.`);
+      return info(`${name(pick.from)} → ${name(to)}`);
     }
     if (pick.action === "unlink") {
       setFlowNode(pick.from, (n) => ({ ...n, links: n.links.filter((l) => l.to !== to) }));
-      return info(`${name(pick.from)} no longer hands its replies to ${name(to)}.`);
+      return info(`${name(pick.from)} ↛ ${name(to)} (arrow removed)`);
     }
     const pending = pendingHandoffs.find((h) => h.from === pick.from);
     if (!pending) return;
@@ -2457,7 +2480,7 @@ ${snippet}
     case "n": // a new chat, named and given its job in the chat
       newChatTab();
       prefill("/role ");
-      info("A new chat. Give it a name and a job: /role Name: what it does");
+      info(`New chat. Make it a built-in agent (${AGENT_PRESETS.map((p) => p.name).join(", ")}) with /role Reviewer, or your own with /role Name: its job.`);
       return true;
     case "r":
       if (sel !== activeTab.current) switchChatTab(sel);
@@ -2925,7 +2948,7 @@ ${snippet}
             click={diagramClick}
             onOpenRef={openRef}
             onNode={onSessionNode}
-            {...(openFile === SESSIONS_TAB ? { selected: `t${flowSel && chatTabs.includes(flowSel) ? flowSel : activeTabId}`, onSelect: onSessionSelect, hint: flowHint() } : {})}
+            {...(openFile === SESSIONS_TAB ? { drag: flowDrag, onConnect: onSessionConnect, onDragEnd: onSessionDragEnd, selected: `t${flowSel && chatTabs.includes(flowSel) ? flowSel : activeTabId}`, onSelect: onSessionSelect, hint: flowHint() } : {})}
             onOpenBrowser={openDiagramInBrowser}
           />
         ) : showEditor ? (

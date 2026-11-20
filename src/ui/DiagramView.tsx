@@ -5,6 +5,9 @@ import { C } from "./theme.js";
 import { usePaneWheel } from "./scroll.js";
 import { drawFlowchart, parseFlowchart, type Cell, type Diagram, type Kind } from "../diagram/index.js";
 
+/** A mouse drag over the view: where it started and is now (cells of what's on screen), and whether it's let go. */
+export type FlowDrag = { from: { x: number; y: number }; to: { x: number; y: number } | null; done: boolean; alt: boolean };
+
 type Props = {
   width: number;
   height: number;
@@ -22,6 +25,10 @@ type Props = {
   onSelect?(id: string): void;
   /** What the keys do, on a line under the legend. */
   hint?: string;
+  /** Dragging from one box onto another connects them (the sessions view): the drag, and what to do at the end. */
+  drag?: FlowDrag | null;
+  onConnect?(from: string, to: string, alt: boolean): void;
+  onDragEnd?(): void;
   onOpenBrowser(): void;
 };
 
@@ -33,7 +40,7 @@ const BORDER: Record<Kind, string> = { new: "green", changed: "yellow", removed:
  * A diagram the agent drew, in the code view: boxes and arrows in text that scroll like code. A box naming a
  * file opens it when clicked; o opens the same diagram, fully drawn, in the browser.
  */
-export const DiagramView = memo(function DiagramView({ width, height, focused, diagram, tabs, wheelPane, click, onOpenRef, onNode, selected, onSelect, hint, onOpenBrowser }: Props) {
+export const DiagramView = memo(function DiagramView({ width, height, focused, diagram, tabs, wheelPane, click, onOpenRef, onNode, selected, onSelect, hint, drag, onConnect, onDragEnd, onOpenBrowser }: Props) {
   const kindsKey = JSON.stringify(diagram.kinds ?? {});
   const chart = useMemo(() => {
     const parsed = parseFlowchart(diagram.source);
@@ -103,13 +110,25 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
     if (ref) onOpenRef(ref);
   }, [click?.nonce]);
 
+  // A drag between boxes: the box it started on, the box under the pointer now, and an arrow drawn when let go.
+  const nodeAt = (p: { x: number; y: number } | null | undefined) => (p && drawn ? drawn.cells[top + p.y]?.[left + p.x]?.node ?? null : null);
+  const dragFrom = drag ? nodeAt(drag.from) : null;
+  const dragOver = drag?.to && dragFrom ? nodeAt(drag.to) : null;
+  const target = dragOver && dragOver !== dragFrom ? dragOver : null;
+  useEffect(() => {
+    if (!drag?.done) return;
+    if (dragFrom && target) onConnect?.(dragFrom, target, drag.alt);
+    else onDragEnd?.();
+  }, [drag?.done]);
+
   const kindOf = useMemo(() => new Map(drawn?.boxes.map((b) => [b.id, b.kind]) ?? []), [drawn]);
   const colorOf = (cell: Cell): { color: string; bold?: boolean; italic?: boolean } => {
     if (cell.style === "edge") return { color: C.dim };
     if (cell.style === "edgeLabel") return { color: C.dim, italic: true };
     const kind = cell.node ? kindOf.get(cell.node) ?? "plain" : "plain";
-    // The selected box: heavier, in the highlight colour (its state still shows in its title).
-    if (cell.style === "border" && selected && cell.node === selected) return { color: C.accent2, bold: true };
+    // The selected box: heavier, in the highlight colour (its state still shows in its title); the box a drag
+    // would connect to, too.
+    if (cell.style === "border" && cell.node && (cell.node === selected || cell.node === target)) return { color: cell.node === target ? C.green : C.accent2, bold: true };
     if (cell.style === "border") return { color: (C as Record<string, string>)[BORDER[kind]]! };
     if (cell.style === "title") return { color: kind === "plain" ? C.text : (C as Record<string, string>)[BORDER[kind]]!, bold: true };
     return { color: C.text };
@@ -137,7 +156,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
         const runs: { text: string; look: ReturnType<typeof colorOf> }[] = [];
         for (const cell of cells) {
           const look = cell.style ? colorOf(cell) : { color: C.text };
-          const ch = cell.style === "border" && selected && cell.node === selected ? HEAVY[cell.ch] ?? cell.ch : cell.ch;
+          const ch = cell.style === "border" && cell.node && (cell.node === selected || cell.node === target) ? HEAVY[cell.ch] ?? cell.ch : cell.ch;
           const last = runs.at(-1);
           if (last && last.look.color === look.color && last.look.bold === look.bold && last.look.italic === look.italic) last.text += ch;
           else runs.push({ text: ch, look });
@@ -163,7 +182,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
         )}
         <Text color={C.text}>o</Text><Text color={C.dim}> browser{maxTop ? `  ${top + 1}-${Math.min(drawn.height, top + rows)}/${drawn.height}` : ""}</Text>
       </Text>
-      {hint ? <Text color={C.dim} wrap="truncate-end"> {hint}</Text> : null}
+      {hint ? <Text color={C.dim} wrap="truncate-end"> {dragFrom && drag?.to ? (target ? "Let go to draw the arrow (Alt: with a condition) · drag off to cancel" : "Drag onto another chat to connect them") : hint}</Text> : null}
     </Pane>
   );
 });

@@ -83,6 +83,19 @@ function stepLines(steps: ChatEntry[], open: boolean, live: boolean, inner: numb
 }
 const BAR = "▌ ";
 
+/** A reply another chat handed over (a flow) shows this many lines folded; click (or Ctrl+O) for the rest. */
+const HANDOFF_LINES = 6;
+const isHandoff = (entry: ChatEntry) => entry.kind === "user" && entry.text.startsWith("↘ From ");
+function handoffLines(entry: ChatEntry, open: boolean, inner: number): Line[] {
+  const all = cachedLines(entry, inner);
+  const body = all.slice(0, -1); // without the blank line after it
+  if (body.length <= HANDOFF_LINES + 3) return all;
+  const lead = { lead: BAR, leadColor: C.accent2 };
+  if (open) return [...body, { text: "▾ fold", color: C.dim, ...lead, toggle: entry }, { text: "" }];
+  // The header and the first lines, then how many more.
+  return [...body.slice(0, HANDOFF_LINES + 1), { text: `▸ ${body.length - HANDOFF_LINES - 1} more lines`, color: C.dim, ...lead, toggle: entry }, { text: "" }];
+}
+
 // Whether a path in a message is a file in the project, remembered so each one is checked once.
 const knownFiles = new Map<string, boolean>();
 function isProjectFile(file: string): boolean {
@@ -111,7 +124,12 @@ function entryLines(entry: ChatEntry, inner: number, links = true): Line[] {
     const handed = /^↘ From (.+?):\n\n/.exec(entry.text);
     const color = handed ? C.accent2 : C.cyan;
     out.push({ text: handed ? `↘ from ${handed[1]}` : "you", color, bold: true, lead: BAR, leadColor: color });
-    for (const line of wrap(handed ? entry.text.slice(handed[0].length) : entry.text, inner - 3)) out.push({ text: line, color: C.text, lead: BAR, leadColor: color });
+    if (handed) {
+      // Another agent's report: drawn like a reply (bold labels, bullets), not as typed text.
+      for (const line of renderMarkdown(entry.text.slice(handed[0].length), inner - 3, links ? isProjectFile : undefined)) {
+        out.push({ text: "", spans: line.spans, ...(line.kind === "heading" ? { color: C.accent2 } : {}), lead: BAR, leadColor: color });
+      }
+    } else for (const line of wrap(entry.text, inner - 3)) out.push({ text: line, color: C.text, lead: BAR, leadColor: color });
     out.push({ text: "" });
   } else if (entry.kind === "assistant") {
     out.push({ text: "◆ nou", color: C.accent2, bold: true, lead: BAR, leadColor: C.accent2 });
@@ -222,6 +240,11 @@ export const Chat = memo(function Chat({ width, height, focused, entries, stream
   const history = useMemo(() => {
     const out: Line[] = [];
     for (let i = 0; i < entries.length; ) {
+      if (isHandoff(entries[i]!)) {
+        out.push(...handoffLines(entries[i]!, allOpen || openSteps.has(entries[i]!), inner));
+        i++;
+        continue;
+      }
       if (entries[i]!.kind !== "tool") {
         out.push(...cachedLines(entries[i]!, inner));
         i++;

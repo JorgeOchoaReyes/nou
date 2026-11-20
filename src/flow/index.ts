@@ -1,4 +1,5 @@
 import type { Kind } from "../diagram/index.js";
+import { REPORT_NOTE, reportFromReply } from "./agents.js";
 
 /**
  * Handoffs between the conversation tabs of a workspace: each chat is one agent with one job, and when its turn
@@ -62,17 +63,19 @@ export function flowNote(node: FlowNode | undefined, tabs: FlowTab[]): string {
   const links = node.links.filter((l) => tabs.some((t) => t.id === l.to));
   const name = (id: string) => tabs.find((t) => t.id === id)!.name;
   if (links.length === 1 && !links[0]!.when) {
-    parts.push(`When you finish, your reply is handed to "${name(links[0]!.to)}", another agent, as its next task: end with what it needs to carry on. If nothing more is needed from it, end your reply with a fenced block marked nou-next containing just: done`);
+    parts.push(`When you finish, your report is handed to "${name(links[0]!.to)}", another agent, as its next task. If nothing more is needed from it, put a fenced block marked nou-next containing just "done" after the report.`);
   } else if (links.length) {
     const options = links.map((l) => `${name(l.to)}${l.when ? ` (when ${l.when})` : ""}`).join("; ");
-    parts.push(`When you finish, your reply is handed to one of these agents as its next task: ${options}. End your reply with a fenced block marked nou-next containing just the name of the one it goes to, or done if nothing more is needed. Example:\n\`\`\`nou-next\n${name(links[0]!.to)}\n\`\`\``);
+    parts.push(`When you finish, your report is handed to one of these agents as its next task: ${options}. After the report, put a fenced block marked nou-next containing just the name of the one it goes to, or done if nothing more is needed. Example:\n\`\`\`nou-next\n${name(links[0]!.to)}\n\`\`\``);
   }
+  // Every chat with a job or a next step ends the same way: a short report, which is what's handed on.
+  if (parts.length) parts.push(REPORT_NOTE);
   return parts.join("\n\n");
 }
 
-/** What the next chat gets: who it's from and their reply. */
+/** What the next chat gets: who it's from and their report (the whole reply when it didn't write one). */
 export function handoffText(fromName: string, reply: string): string {
-  return `↘ From ${fromName}:\n\n${reply.trim()}`;
+  return `↘ From ${fromName}:\n\n${(reportFromReply(reply) ?? reply).trim()}`;
 }
 
 /** The workspace's chats and handoffs as a flowchart for the code view: a box per chat, an arrow per handoff. */
