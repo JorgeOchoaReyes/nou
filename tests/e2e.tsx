@@ -1080,6 +1080,24 @@ console.log("Flows: chats hand their replies to each other");
     const cy = coderRows.findIndex((l) => /[│┃] Coder/.test(l));
     await press(click(coderRows[cy]!.search(/[│┃] Coder/) + 2, cy), 300);
     check("picking a chat (click or arrows and Enter) adds the arrow", await until(() => frame().includes("Planner → Coder") && !frame().includes("Pick the chat")));
+    // Drag from one box onto another: an arrow between them.
+    const boxAt = (name: string) => {
+      const all = frame().split("\n");
+      const row = all.findIndex((l) => new RegExp(`[│┃] ${name}`).test(l));
+      return { x: all[row]!.search(new RegExp(`[│┃] ${name}`)) + 2, y: row };
+    };
+    const drag = async (from: { x: number; y: number }, to: { x: number; y: number }, alt = false) => {
+      await press(`\x1b[<0;${from.x + 1};${from.y + 1}M`, 100);
+      await press(`\x1b[<32;${to.x + 1};${to.y + 1}M`, 150);
+      await press(`\x1b[<${alt ? 8 : 0};${to.x + 1};${to.y + 1}m`, 300);
+    };
+    await press(`\x1b[<0;${boxAt("Coder").x + 1};${boxAt("Coder").y + 1}M`, 100);
+    await press(`\x1b[<32;${boxAt("Planner").x + 1};${boxAt("Planner").y + 1}M`, 200);
+    check("while dragging, the view says to let go on the chat to connect", frame().includes("Let go to draw the arrow"));
+    await press(`\x1b[<0;${boxAt("Planner").x + 1};${boxAt("Planner").y + 1}m`, 300);
+    check("letting go on another chat's box draws the arrow", await until(() => frame().includes("Coder → Planner")));
+    await drag(boxAt("Coder"), boxAt("Coder"));
+    check("a drag that ends on the same box draws nothing", !frame().includes("Coder → Coder") && !frame().includes("Let go to draw"));
     await press("n", 300);
     await type("Tester: run the tests");
     await press(KEY.enter, 300);
@@ -1097,8 +1115,11 @@ console.log("Flows: chats hand their replies to each other");
     await delay(400);
     const handedBefore = handed();
     await run("/flow", 300);
+    await press(click(boxAt("Planner").x, boxAt("Planner").y), 300); // the chat whose handoff waits
     await press("y", 600);
     check("y in the view sends the handoff waiting on the selected chat", await until(() => handed() > handedBefore));
+    await drag(boxAt("Planner"), boxAt("Coder"), true);
+    check("letting go with Alt asks for the arrow's condition", await until(() => frame().includes("/handoff Coder when")));
   });
 }
 

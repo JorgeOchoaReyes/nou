@@ -34,7 +34,7 @@ import { C, palette } from "./theme.js";
 import { FIND_KEY, isFind, isSearchAll } from "./keys.js";
 import { searchText } from "../search/index.js";
 import { DIAGRAM_NOTE, DIAGRAM_TAB, diagramPage, diagramsFromReply, isDiagramTab, visualizePrompt, type Diagram } from "../diagram/index.js";
-import { DiagramView } from "./DiagramView.js";
+import { DiagramView, type FlowDrag } from "./DiagramView.js";
 import { FileTree } from "./FileTree.js";
 import { CodeView } from "./CodeView.js";
 import { Editor, type EditorMouse, type EditorState } from "./Editor.js";
@@ -347,7 +347,7 @@ export function App({ initialModel, permContext, resume }: Props) {
   /** Where the status bar's parts and the header's model badge are, from the last render. */
   const clickable = useRef<{ status: StatusZone[]; modelFrom: number }>({ status: [], modelFrom: Infinity });
   const lastClick = useRef<{ x: number; y: number; time: number; count: number } | null>(null);
-  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | { scroll: Focus } | null>(null);
+  const dragging = useRef<"tree" | "chat" | "editor" | "game" | "gameSize" | "chatText" | "terminal" | "flowLink" | { scroll: Focus } | null>(null);
   /** Which border is being dragged, for the status bar. */
   const [resizing, setResizing] = useState<"tree" | "chat" | null>(null);
   const pullAbort = useRef<AbortController | null>(null);
@@ -588,6 +588,8 @@ export function App({ initialModel, permContext, resume }: Props) {
   const [turnsEnded, setTurnsEnded] = useState<string[]>([]);
   /** The chat selected in the sessions view, and what it's picking another chat for (h, w, d, y). */
   const [flowSel, setFlowSel] = useState<string | null>(null);
+  /** A drag in the sessions view, from a box toward another (screen cells in the view), and whether it's let go. */
+  const [flowDrag, setFlowDrag] = useState<FlowDrag | null>(null);
   const [flowPick, setFlowPick] = useState<{ action: "link" | "when" | "unlink" | "send"; from: string } | null>(null);
   const setFlowNode = (id: string, change: (node: FlowNode) => FlowNode) => {
     flowNodes.current.set(id, change(flowNodes.current.get(id) ?? { links: [] }));
@@ -1176,6 +1178,7 @@ export function App({ initialModel, permContext, resume }: Props) {
       if (drag === "tree" || drag === "chat") moveBorder(drag, event.x);
       else if (drag === "editor") editorAt(event.x, event.y, "drag");
       else if (drag === "chatText") chatAt(event.x, event.y, "drag");
+      else if (drag === "flowLink") setFlowDrag((d) => d && { ...d, to: { x: event.x - codeLeft - 1, y: event.y - 3 } });
       else if (drag && typeof drag === "object") scrollPane(drag.scroll, event.y);
       return;
     }
@@ -1188,6 +1191,8 @@ export function App({ initialModel, permContext, resume }: Props) {
       } else if (dragging.current && typeof dragging.current === "object" && "scroll" in dragging.current) scrollPane(dragging.current.scroll, event.y);
       if (dragging.current === "editor") editorAt(event.x, event.y, "release");
       if (dragging.current === "chatText") chatAt(event.x, event.y, "release");
+      // Let go over another chat's box: an arrow to it (Alt: with a condition).
+      if (dragging.current === "flowLink") setFlowDrag((d) => d && { ...d, to: { x: event.x - codeLeft - 1, y: event.y - 3 }, done: true, alt: !!event.alt });
       dragging.current = null;
       return;
     }
@@ -1245,6 +1250,11 @@ export function App({ initialModel, permContext, resume }: Props) {
     // A click on a diagram: its box opens the file it names.
     if (event.kind === "click" && pane === "code" && event.y >= 3 && codePanel === "code" && openFile && isDiagramTab(openFile)) {
       setFocus("code");
+      // In the sessions view, a press on a box can be dragged onto another to draw an arrow.
+      if (openFile === SESSIONS_TAB) {
+        dragging.current = "flowLink";
+        setFlowDrag({ from: { x: event.x - codeLeft - 1, y: event.y - 3 }, to: null, done: false, alt: false });
+      }
       setDiagramClick((c) => ({ x: event.x - codeLeft - 1, y: event.y - 3, nonce: (c?.nonce ?? 0) + 1 }));
       return;
     }
@@ -2415,6 +2425,15 @@ ${snippet}
     setFocus(how === "enter" ? "chat" : "code");
     return true;
   });
+  // A drag from one box onto another: the arrow between them, as h (or w, with Alt) and a pick would draw it.
+  const onSessionConnect = useEvent((fromNode: string, toNode: string, alt: boolean) => {
+    setFlowDrag(null);
+    const from = tabOfNode(fromNode);
+    const to = tabOfNode(toNode);
+    if (!from || !to || !chatTabs.includes(from) || !chatTabs.includes(to)) return;
+    finishPick({ action: alt ? "when" : "link", from }, to);
+  });
+  const onSessionDragEnd = useEvent(() => setFlowDrag(null));
   const onSessionSelect = useEvent((node: string) => {
     const id = tabOfNode(node);
     if (id) setFlowSel(id);
@@ -2929,7 +2948,7 @@ ${snippet}
             click={diagramClick}
             onOpenRef={openRef}
             onNode={onSessionNode}
-            {...(openFile === SESSIONS_TAB ? { selected: `t${flowSel && chatTabs.includes(flowSel) ? flowSel : activeTabId}`, onSelect: onSessionSelect, hint: flowHint() } : {})}
+            {...(openFile === SESSIONS_TAB ? { drag: flowDrag, onConnect: onSessionConnect, onDragEnd: onSessionDragEnd, selected: `t${flowSel && chatTabs.includes(flowSel) ? flowSel : activeTabId}`, onSelect: onSessionSelect, hint: flowHint() } : {})}
             onOpenBrowser={openDiagramInBrowser}
           />
         ) : showEditor ? (
