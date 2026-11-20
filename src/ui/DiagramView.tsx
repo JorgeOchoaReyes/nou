@@ -15,6 +15,8 @@ type Props = {
   /** A click in the diagram, in columns and rows from the top left of what's drawn on screen. */
   click: { x: number; y: number; nonce: number } | null;
   onOpenRef(ref: { path: string; line?: number }): void;
+  /** A click on a box: true when it was handled (the sessions view switches to that chat). */
+  onNode?(id: string): boolean;
   onOpenBrowser(): void;
 };
 
@@ -24,8 +26,16 @@ const BORDER: Record<Kind, string> = { new: "green", changed: "yellow", removed:
  * A diagram the agent drew, in the code view: boxes and arrows in text that scroll like code. A box naming a
  * file opens it when clicked; o opens the same diagram, fully drawn, in the browser.
  */
-export const DiagramView = memo(function DiagramView({ width, height, focused, diagram, tabs, wheelPane, click, onOpenRef, onOpenBrowser }: Props) {
-  const chart = useMemo(() => parseFlowchart(diagram.source), [diagram.source]);
+export const DiagramView = memo(function DiagramView({ width, height, focused, diagram, tabs, wheelPane, click, onOpenRef, onNode, onOpenBrowser }: Props) {
+  const kindsKey = JSON.stringify(diagram.kinds ?? {});
+  const chart = useMemo(() => {
+    const parsed = parseFlowchart(diagram.source);
+    for (const [id, kind] of Object.entries(diagram.kinds ?? {})) {
+      const node = parsed?.nodes.get(id);
+      if (node) node.kind = kind;
+    }
+    return parsed;
+  }, [diagram.source, kindsKey]);
   const drawn = useMemo(() => (chart ? drawFlowchart(chart) : null), [chart]);
   const inner = width - 2;
   const rows = Math.max(1, height - 4); // border, title, footer
@@ -42,7 +52,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
   useEffect(() => {
     setTop(0);
     setLeft(0);
-  }, [diagram.source]);
+  }, [diagram.title]);
   useInput((input, key) => {
     if (key.upArrow) setTop((t) => Math.max(0, t - 1));
     else if (key.downArrow) setTop((t) => Math.min(maxTop, t + 1));
@@ -58,6 +68,7 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
   useEffect(() => {
     if (!click || !drawn || !chart) return;
     const id = drawn.cells[top + click.y]?.[left + click.x]?.node;
+    if (id && onNode?.(id)) return;
     const ref = id ? chart.nodes.get(id)?.ref : null;
     if (ref) onOpenRef(ref);
   }, [click?.nonce]);
@@ -106,8 +117,17 @@ export const DiagramView = memo(function DiagramView({ width, height, focused, d
       })}
       <Box flexGrow={1} />
       <Text wrap="truncate-end">
-        <Text color={C.green}> ■</Text><Text color={C.dim}> new </Text>
-        <Text color={C.yellow}>■</Text><Text color={C.dim}> changed · ↑↓←→ scroll · click a box: open its file · </Text>
+        {diagram.legend ? (
+          <>
+            {diagram.legend.map((l, i) => <Text key={i}><Text color={(C as Record<string, string>)[BORDER[l.kind]]!}>{i ? "" : " "}■</Text><Text color={C.dim}> {l.text} </Text></Text>)}
+            <Text color={C.dim}>· click a box: open that chat · </Text>
+          </>
+        ) : (
+          <>
+            <Text color={C.green}> ■</Text><Text color={C.dim}> new </Text>
+            <Text color={C.yellow}>■</Text><Text color={C.dim}> changed · ↑↓←→ scroll · click a box: open its file · </Text>
+          </>
+        )}
         <Text color={C.text}>o</Text><Text color={C.dim}> browser{maxTop ? `  ${top + 1}-${Math.min(drawn.height, top + rows)}/${drawn.height}` : ""}</Text>
       </Text>
     </Pane>

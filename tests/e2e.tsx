@@ -1008,6 +1008,60 @@ console.log("Conversation tabs");
   });
 }
 
+console.log("Flows: chats hand their replies to each other");
+{
+  const seen: string[] = [];
+  const team: any = {
+    id: "fake", label: "Fake", local: true, defaultModel: "fake", unavailable: () => null, listModels: async () => ["fake"],
+    async chat({ messages }: any) {
+      const last = String(messages[messages.length - 1].content).replace(/<editor_context>[\s\S]*/, "");
+      seen.push(last);
+      if (last.includes("role in this workspace: plan the work")) return { text: "Plan: add a Save button to the toolbar.", toolCalls: [] };
+      if (last.includes("role in this workspace: write the code")) return { text: "Wrote the button. The tests fail on a missing label.\n```nou-next\nFixer\n```", toolCalls: [] };
+      if (last.includes("role in this workspace: fix failures")) return { text: "Fixed the label; tests pass.", toolCalls: [] };
+      return { text: "ok", toolCalls: [] };
+    },
+  };
+  await session({ provider: team, model: "fake" }, async ({ press, type, frame }) => {
+    const run = async (text: string, wait = 250) => {
+      await type(text);
+      await press(KEY.enter, wait);
+    };
+    await run("/role Planner: plan the work");
+    check("/role Name: … names the chat and gives it its job", await until(() => frame().includes("This chat is Planner")));
+    await run("/new");
+    await run("/role Coder: write the code");
+    await run("/new");
+    await run("/role Fixer: fix failures");
+    await run("/new");
+    await run("/role Reviewer: review the change");
+    await run("/tab 2");
+    await run("/handoff Reviewer when tests pass");
+    await run("/handoff Fixer when tests fail");
+    await run("/tab 1");
+    await run("/handoff coder");
+    await run("add a save button", 600);
+    check("the chat answers, and hands its reply to the next chat", await until(() => frame().includes("Plan: add a Save button") && frame().includes("↗ Handed to Coder.")));
+    check("the next chat gets it with its role and where its own reply goes", await until(() => seen.some((m) => m.includes("↘ From Planner:") && m.includes("role in this workspace: write the code") && m.includes("Reviewer (when tests pass); Fixer (when tests fail)"))));
+    check("the agent picks the next chat, and that one runs too", await until(() => seen.some((m) => m.includes("↘ From Coder:") && m.includes("fix failures"))));
+    await run("/flow", 400);
+    check("/flow draws the chats and handoffs in the code view", await until(() => ["Planner", "Coder", "Fixer", "Reviewer"].every((n) => frame().includes(n)) && frame().includes("◈ sessions")));
+    check("each handoff is an arrow, with its condition", /▼ tests fail/.test(frame()) && /▼ test/.test(frame().replace("▼ tests fail", "")));
+    const rows = frame().split("\n");
+    const y = rows.findIndex((l) => l.includes("│ Fixer"));
+    await press(click(rows[y]!.indexOf("│ Fixer") + 2, y), 400);
+    check("clicking a chat's box opens that chat, the handed reply headed with who sent it", await until(() => frame().includes("Fixed the label; tests pass.") && frame().includes("↘ from Coder")));
+    check("the nou-next block isn't shown in the chat it came from", !frame().includes("nou-next"));
+    await run("/tab 1");
+    await run("/handoff ask on");
+    await run("again please", 600);
+    check("with ask on, the handoff waits for your OK", await until(() => frame().includes("Ready to hand")));
+    const before = seen.length;
+    await run("/handoff send", 600);
+    check("/handoff send hands it on", await until(() => frame().includes("↗ Handed to Coder.") && seen.length > before));
+  });
+}
+
 console.log("Resuming a conversation");
 {
   let seen: any[] = [];

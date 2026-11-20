@@ -8,7 +8,14 @@ import { pathToFileURL } from "url";
  * drawn in the code view as boxes and arrows in text, so it works in every terminal; the browser shows the
  * same Mermaid fully rendered. Only flowcharts are drawn in text; others still open in the browser.
  */
-export type Diagram = { title: string; source: string };
+export type Diagram = {
+  title: string;
+  source: string;
+  /** Colours for boxes by node id, over what their labels say (the sessions view's working/waiting). */
+  kinds?: Record<string, Kind>;
+  /** The footer's legend, for a diagram that isn't about a change. */
+  legend?: { kind: Kind; text: string }[];
+};
 
 /** A diagram's tab in the code view is named like a file, under this prefix, so tabs work for it unchanged. */
 export const DIAGRAM_TAB = "diagram:/";
@@ -169,15 +176,25 @@ export function drawFlowchart(chart: Flowchart): Drawn {
     into.get(e.to)!.push(e.from);
     out.get(e.from)!.push(e.to);
   }
-  // Layers by longest path from the sources; an edge back up a cycle is left out of the ordering.
+  // An edge back up a cycle is found walking forward from the starts (what nothing points at, in the order
+  // written): one that reaches a box still on the path is the loop's way back, left out of the ordering.
+  const backEdge = new Set<string>();
+  const state = new Map<string, "on" | "done">();
+  const walk = (id: string) => {
+    state.set(id, "on");
+    for (const next of out.get(id)!) {
+      if (state.get(next) === "on") backEdge.add(`${id}>${next}`);
+      else if (!state.has(next)) walk(next);
+    }
+    state.set(id, "done");
+  };
+  for (const id of ids) if (!into.get(id)!.length) walk(id);
+  for (const id of ids) if (!state.has(id)) walk(id);
+  // Layers by longest path from the starts, over the edges that go forward.
   const layer = new Map<string, number>();
-  const visiting = new Set<string>();
   const depth = (id: string): number => {
     if (layer.has(id)) return layer.get(id)!;
-    if (visiting.has(id)) return 0;
-    visiting.add(id);
-    const d = Math.max(0, ...into.get(id)!.filter((p) => !visiting.has(p) || layer.has(p)).map((p) => depth(p) + 1));
-    visiting.delete(id);
+    const d = Math.max(0, ...into.get(id)!.filter((p) => !backEdge.has(`${p}>${id}`)).map((p) => depth(p) + 1));
     layer.set(id, d);
     return d;
   };
@@ -272,6 +289,9 @@ export function drawFlowchart(chart: Flowchart): Drawn {
   const centre = (id: string) => pos.get(id)!.x + Math.floor(size.get(id)!.w / 2);
   const arrows: { x: number; y: number }[] = [];
   const labels: { x: number; y: number; text: string }[] = [];
+  // Arrows that fork from one box share their first rows: their labels go by their own arrowheads instead.
+  const labelled = new Map<string, number>();
+  for (const leg of legs) if (leg.label) labelled.set(leg.from, (labelled.get(leg.from) ?? 0) + 1);
   for (const leg of legs) {
     const a = pos.get(leg.from)!, sa = size.get(leg.from)!;
     const b = pos.get(leg.to)!;
@@ -285,7 +305,7 @@ export function drawFlowchart(chart: Flowchart): Drawn {
     hline(turn, sx, tx);
     vline(tx, turn, size.get(leg.to)!.dummy ? b.y : ty);
     if (leg.last) arrows.push({ x: tx, y: ty });
-    if (leg.label) labels.push({ x: sx, y: sy, text: leg.label });
+    if (leg.label) labels.push(leg.last && labelled.get(leg.from)! > 1 ? { x: tx, y: ty, text: leg.label } : { x: sx, y: sy, text: leg.label });
   }
   for (const e of back) {
     // Back up (a cycle) or across: out of the source's side, round, and into the target's side.

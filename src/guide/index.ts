@@ -197,6 +197,8 @@ export function hideNouBlocks(text: string): string {
   if (!text.includes("nou-") && !text.includes("mermaid")) return text;
   return text
     .replace(/(?:```|~~~)[ \t]*nou-(?:show|steps)[ \t]*\r?\n[\s\S]*?(?:```|~~~)/g, "")
+    // Where a chat in a flow hands its reply (complete, or still arriving).
+    .replace(/(?:```|~~~)[ \t]*nou-next[ \t]*(?:\r?\n[^`~]*)?(?:```|~~~|$)/g, "")
     .replace(/(?:```|~~~)[ \t]*nou-(?:show|steps)[\s\S]*$/, "")
     // A diagram still arriving: it opens in the code view when the reply is done.
     .replace(/(?:```|~~~)[ \t]*(?:nou-diagram|mermaid)[ \t]*\r?\n(?![\s\S]*?(?:```|~~~))[\s\S]*$/, "")
